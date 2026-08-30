@@ -36,7 +36,16 @@ sudo rsync -a --delete "$SRC_DIR/dist/" "$APP_DIR/dist/"
 # node_modules is not needed: the client is bundled and the server imports
 # nothing outside the standard library.
 
-echo "==> Service on :${PORT}"
+SERVICE_USER="${SERVICE_USER:-$(id -un)}"
+
+echo "==> Checking ${SERVICE_USER} can reach tailscaled"
+if ! sudo -u "$SERVICE_USER" tailscale status >/dev/null 2>&1; then
+  echo "  ${SERVICE_USER} cannot query tailscaled." >&2
+  echo "  Grant access with:  sudo tailscale set --operator=${SERVICE_USER}" >&2
+  echo "  Node discovery will fail until then." >&2
+fi
+
+echo "==> Service on :${PORT} as ${SERVICE_USER}"
 sudo tee /etc/systemd/system/tailnet-console.service >/dev/null <<UNIT
 [Unit]
 Description=Tailnet Console — fleet dashboard
@@ -52,10 +61,10 @@ ExecStart=$(command -v node) ${APP_DIR}/dist/server.js
 Restart=always
 RestartSec=5
 
-# Discovery shells out to the tailscale CLI, which needs the daemon socket.
-# Running as root is avoided; the tailscale group owns that socket.
-User=nobody
-SupplementaryGroups=tailscale
+# Discovery shells out to the tailscale CLI, which talks to the daemon over
+# its local socket. Debian's tailscale package creates no group for that
+# socket, so the service runs as the login user, who can already query it.
+User=${SERVICE_USER}
 
 NoNewPrivileges=yes
 PrivateTmp=yes
