@@ -191,6 +191,8 @@ export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessR
     cpu_percent?: number;
     memory_percent?: number;
     memory_info?: { rss?: number };
+    num_threads?: number;
+    io_counters?: number[];
   }>>(host, 'processlist');
   if (!Array.isArray(procs)) return [];
 
@@ -203,6 +205,9 @@ export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessR
       cpuPct: round(p.cpu_percent ?? 0),
       memBytes: p.memory_info?.rss ?? 0,
       memPct: round(p.memory_percent ?? 0),
+      threads: p.num_threads ?? 0,
+      // Glances returns [read_bytes, write_bytes, ...]; index 0 is what we show.
+      diskReadBytes: p.io_counters?.[0] ?? 0,
     }))
     .sort((a, b) => b.cpuPct - a.cpuPct || b.memBytes - a.memBytes)
     .slice(0, limit);

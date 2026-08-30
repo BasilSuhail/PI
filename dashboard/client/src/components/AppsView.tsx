@@ -1,4 +1,4 @@
-import { ChevronRight, Gauge } from 'lucide-react';
+import { Chevron, Gauge } from './icons';
 import type { AppTile } from '../../../shared/fleet';
 import { StatusDot } from './primitives';
 
@@ -10,16 +10,16 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
   const passing = apps.filter((a) => a.healthy).length;
 
   return (
-    <div className="page-stack">
-      <div className="page-heading">
+    <div class="page-stack">
+      <div class="page-heading">
         <div>
-          <p className="eyebrow">
-            APPLICATIONS <span className="mini-led" />
+          <p class="eyebrow">
+            APPLICATIONS <span class="mini-led" />
           </p>
           <h1>Your service shelf.</h1>
-          <p className="subhead">Everything worth opening, one click away.</p>
+          <p class="subhead">Everything worth opening, one click away.</p>
         </div>
-        <div className="app-summary">
+        <div class="app-summary">
           <strong>
             {passing} / {checked.length || apps.length}
           </strong>
@@ -28,7 +28,7 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
       </div>
 
       {apps.length === 0 && (
-        <div className="app-note">
+        <div class="app-note">
           <Gauge size={18} />
           <div>
             <strong>No apps configured yet</strong>
@@ -37,35 +37,35 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
         </div>
       )}
 
-      <div className="apps-grid">
+      <div class="apps-grid">
         {apps.map((app, i) => (
           <a
-            className="app-tile"
+            class="app-tile"
             href={app.healthy ? app.url : undefined}
             target="_blank"
             rel="noreferrer"
             onClick={(e) => !app.healthy && e.preventDefault()}
             key={app.name}
           >
-            <div className={`app-icon ${ACCENTS[i % ACCENTS.length]}`}>
+            <div class={`app-icon ${ACCENTS[i % ACCENTS.length]}`}>
               <span>{app.icon ?? app.name[0]}</span>
             </div>
-            <div className="app-info">
+            <div class="app-info">
               <strong>{app.name}</strong>
               <span>{app.nodeId ?? 'fleet'}</span>
               <small>{new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
             </div>
-            <div className="app-health">
+            <div class="app-health">
               <StatusDot online={!!app.healthy} size="sm" />
               <span>{app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}</span>
             </div>
-            <ChevronRight size={16} className="app-arrow" />
+            <Chevron size={16} class="app-arrow" />
           </a>
         ))}
       </div>
 
       {apps.length > 0 && (
-        <div className="app-note">
+        <div class="app-note">
           <Gauge size={18} />
           <div>
             <strong>Health checks run on every poll</strong>
