@@ -133,16 +133,30 @@ Reachable at `https://pi2.<tailnet>.ts.net` via `tailscale serve` — real certi
 
 ## Order
 
-- [ ] Glances on both boards, confirm JSON
+- [x] Glances on both boards, confirm JSON
 - [ ] cgroup flag on pi1 — needed regardless, and container stats read `0B` without it
-- [ ] Pi-metrics shim: power + throttle
-- [ ] Backend: tailnet discovery, node aggregation, the contract above
-- [ ] Frontend (the operator)
-- [ ] Deploy to k3s, `tailscale serve`, verify on phone
-- [ ] Health checks behind the apps launcher
+- [x] Pi-metrics shim: power + throttle
+- [x] Backend: tailnet discovery, node aggregation, the contract above
+- [x] Frontend (the operator)
+- [x] Deploy, `tailscale serve`, verify on phone
+- [x] Health checks behind the apps launcher
+- [ ] Point `server/apps.json` at the real services — two placeholders today
+- [ ] Move it into k3s. Runs under systemd now, which works; doing it in the cluster is the exercise, not a fix.
 
-## Open questions
+## As built
 
-- Retention. Live-only is simplest and costs nothing. Sparklines need a short buffer — in memory is fine for minutes, a real store only if history past a reboot ever matters.
-- Poll interval. 2s feels live; 5s is kinder to pi1. Probably configurable per client.
-- Auth. Tailnet-only access may be sufficient. Anyone on the tailnet is already trusted with more than this.
+| | |
+|---|---|
+| Client | 218KB, 68KB gzipped |
+| Server | 14KB, `node:http`, no runtime dependencies |
+| Dependencies | 10, down from ~90 in the scaffold |
+| Reachable at | `https://pi2.<tailnet>.ts.net`, tailnet-only, real certificate |
+| Runs as | systemd unit on pi2, capped `MemoryMax=256M` |
+
+Discovery falls back to the local `tailscale` CLI when no API key is set, which is the path in use — running on a node, no key needed. The API key path exists for when this moves into a pod, which has no daemon socket.
+
+## Open questions, resolved
+
+- **Retention.** Live only. Sparklines keep a short in-memory buffer per node, lost on reload. History past a reboot would need a store on the server and has not been worth it.
+- **Poll interval.** 3s for the fleet, 5s for the process and container tables, 15s for app health. Not configurable yet.
+- **Auth.** Tailnet-only is the whole of it. Anyone on the tailnet is already trusted with more than this.

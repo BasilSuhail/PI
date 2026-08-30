@@ -169,6 +169,57 @@ This is the difference from Compose. `restart: always` retries a container on th
 
 ---
 
+## 6. Node agents on both boards
+
+`agent/install.sh` on each board. Two services:
+
+| Port | Service | What |
+|---|---|---|
+| 61208 | `glances.service` | REST API, `--disable-webui`. CPU, memory, disks, network, processes, containers. |
+| 9101 | `pi-metrics.service` | stdlib Python. PMIC power draw and `vcgencmd` throttle state — the two things Glances cannot see. |
+
+The shim returns empty `capabilities` on hardware without `vcgencmd`, so the same file drops onto any Linux node and the frontend renders fewer tiles rather than breaking.
+
+Three things went wrong, all worth recording:
+
+**The shim exited 0 in a restart loop.** Stripping a literal bind address to satisfy the commit guard left a trailing comment ahead of the chained call, so `.serve_forever()` was swallowed into it. The server was constructed and never started. No traceback — the process exited cleanly, so systemd reported `active` between attempts and the port stayed closed.
+
+**Glances kept running under the package's own configuration.** Debian starts it at install time, so `systemctl enable --now` found the unit already active and left it alone — serving XML-RPC on another port rather than the REST API. Needs an explicit `restart`.
+
+**Glances needs `python3-docker`** to read the Docker socket. Without it the containers plugin returns an empty list rather than an error, so pi1 would have shown no containers with nothing indicating why.
+
+## 7. Fleet dashboard
+
+`docs/dashboard.md` is the design. Frontend by the operator, backend here.
+
+Discovery goes through the **Tailscale API, not the Kubernetes node list** — pi1 is on the tailnet but not in the cluster, so asking k8s would miss the busiest machine in the house. Cluster membership is applied afterwards as a label.
+
+The frontend arrived as a Manus scaffold. The stylesheet, layout and view structure were kept as authored; the scaffold around them was removed — tRPC, Drizzle, MySQL, OAuth, S3, LLM and voice endpoints, Google Maps, 52 unused shadcn components, Tailwind (no utility class appears in the markup), wouter, react-query. **Roughly ninety dependencies became ten.** Next.js went with them; this is a static bundle plus a `node:http` server, 218KB of client and 14KB of server with no framework runtime.
+
+Five bugs found by pointing the client at live agents rather than at fixtures:
+
+| | |
+|---|---|
+| `uptime` is a string | `"0:44:03"`, or `"3 days, 2:15:09"` past a day — not a number. Reading `.seconds` returned null forever, and nothing would have looked broken. |
+| `os_version` is the kernel | `hr_name` is a full description string. `platform` is bitness, not architecture. |
+| Virtual interfaces dominate | pi1 reported nine: wlan0 plus a docker bridge and six veth pairs. pi2 nine too, via k3s CNI. Their traffic is already counted on the physical interface. |
+| CPU samples arrive uninitialised | Glances computes CPU as a delta since the previous request, not from its own timer, so requests close together produce a window near zero and a sample where `total` and `idle` are both 0 — impossible on a running system. Retrying is itself a short window and makes it worse. A last-known-good cache with a 30s ceiling covers it. |
+| `apps.json` was never read | Resolved beside the bundle but only present in source, so the launcher silently returned `[]`. |
+
+## 8. Dashboard live on pi2
+
+`deploy/install-dashboard.sh`. Builds on the board — the boards are arm64 and cross-building from the Mac buys nothing — then installs a systemd service.
+
+Node 22 is installed if needed; Debian 13 ships 20, which the build rejects. Only `dist/` is installed: the client is bundled and the server imports nothing outside the standard library, so the runtime needs no packages at all.
+
+The first unit would not start: `status=216/GROUP`, restarting every five seconds, 43 attempts. It set `SupplementaryGroups=tailscale` to reach the tailscaled socket without root, and **Debian's tailscale package creates no such group**. systemd refuses to spawn a process whose supplementary group does not resolve. Runs as the login user instead, who can already query the daemon.
+
+Exposed with `tailscale serve --bg 8080` — real certificate, tailnet-only, no open ports, reachable from a phone with no client beyond Tailscale itself.
+
+```
+https://pi2.<tailnet>.ts.net   →  200
+```
+
 ## Security posture
 
 | | |
@@ -188,14 +239,15 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 ## Open
 
 - [ ] **12V supply for the 8TB.** £15–25. Blocks the entire archive tier — Samba, Kiwix, Jellyfin, Calibre-Web. Highest value item on the list.
-- [ ] **`tailscale up --hostname=pi2`.** Tailscale is installed on pi2 but logged out. Nothing on pi2 is reachable from a phone until this runs.
-- [ ] **cgroup flag on pi1.** Its `mem_limit`s are unenforced today.
-- [ ] Dashboard — separate issue. System stats plus app launcher, served over Tailscale.
+- [ ] **cgroup flag on pi1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
+- [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the home router.
 - [ ] Clear the two dead public keys from pi2's `authorized_keys`.
-- [ ] Image pi1's SD card. It is boot-only and holds no data, but its loss means the board will not start.
+- [ ] Image pi1's SD card. Boot-only and holds no data, but its loss means the board will not start.
+- [ ] Wired ethernet. Both boards are on `wlan0`; issue #1 says a first Time Machine backup over wifi is hours.
 
 Deferred by decision, not oversight:
 
 - **pi1 joining the cluster.** Waits until `llama-server` moves to the Mac Mini and pi1's real free RAM can be measured, since `--kubelet-arg=system-reserved` must be a measured number. A scheduler that cannot see Docker will place pods into RAM that OSINT already holds.
 - **Migrating OSINT into k8s.** Not planned. Issue #2 settled it: containers pinned to their own disk gain nothing from an orchestrator.
+- **Moving the dashboard into k3s.** Runs under systemd today, which works. Doing it in the cluster is a good exercise on a workload that is already trusted — not a fix for anything.
