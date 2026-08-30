@@ -63,7 +63,6 @@ const buildNode = async (
   const capabilities: Capability[] = [];
   if (shim?.power) capabilities.push('power');
   if (shim?.throttled) capabilities.push('throttle');
-  if (roles.has(device.name)) capabilities.push('containers');
 
   return {
     id: device.id,
