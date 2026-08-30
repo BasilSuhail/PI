@@ -1,5 +1,5 @@
 import type { FleetNode, ProcessRow } from '../../../shared/fleet';
-import { bytes, capacity, celsius, cpuTone, memTone, pct, relative, uptime, watts } from '../lib/format';
+import { bytes, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts } from '../lib/format';
 import { Chevron, Cpu, Mem, Nodes, Power, Shield, Thermo } from './icons';
 import { Meter, StatusDot } from './primitives';
 
@@ -40,6 +40,9 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
   const cpu = node.cpu?.usagePct ?? 0;
   const mem = node.mem?.usedPct ?? 0;
   const thr = node.temp?.throttled;
+  // Root filesystem: the boot medium is the SD card on jug1, so the disk the
+  // system actually lives on is the one worth a bar.
+  const disk = node.disks.find((d) => d.mount === '/') ?? node.disks[0];
   const rows = [...node.topProcesses].sort((a, b) => b[sort] - a[sort]).slice(0, ROWS);
 
   return (
@@ -63,6 +66,13 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
       <div class="mrow">
         <span>RAM</span><Meter value={mem} tone={memTone(mem)} /><strong>{pct(mem)}</strong>
       </div>
+      {disk && (
+        <div class="mrow" title={`${disk.device} on ${disk.mount} — ${bytes(disk.usedBytes)} of ${capacity(disk.totalBytes)}`}>
+          <span>DISK</span>
+          <Meter value={disk.usedPct} tone={diskTone(disk.usedPct)} />
+          <strong>{pct(disk.usedPct)}</strong>
+        </div>
+      )}
 
       <div class="c-meta">
         <span><Thermo size={13} />{celsius(node.temp?.cpuC)}</span>

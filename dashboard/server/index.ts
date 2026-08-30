@@ -159,7 +159,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 });
 
 server.listen(PORT, () => {
-  console.log(`tailnet-console listening on :${PORT}`);
+  console.log(`jug-console listening on :${PORT}`);
   if (!process.env.TAILSCALE_API_KEY) {
     console.warn('TAILSCALE_API_KEY is not set — /api/nodes will return 502');
   }

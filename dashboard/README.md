@@ -1,4 +1,4 @@
-# Tailnet Console
+# Jug
 
 Fleet dashboard for the boards. Design and rationale: [`docs/dashboard.md`](../docs/dashboard.md).
 
@@ -59,6 +59,28 @@ directly on a node, and needs no key at all.
 Kubernetes access is optional on purpose. A dashboard that stops working when
 the cluster is down is useless exactly when it is wanted; without it, every node
 simply reads `standalone`.
+
+## Icons
+
+`client/public/icon.svg` is the artwork. Everything else is rendered from it or
+from a variant in `client/icons-src/`, and must be regenerated when it changes:
+
+```bash
+cd client
+rsvg-convert -w 192 -h 192 public/icon.svg        -o public/icon-192.png
+rsvg-convert -w 512 -h 512 public/icon.svg        -o public/icon-512.png
+rsvg-convert -w 180 -h 180 icons-src/apple-touch.svg -o public/apple-touch-icon.png
+rsvg-convert -w 512 -h 512 icons-src/maskable.svg    -o public/icon-maskable-512.png
+```
+
+Two of them are not resized copies, which is why the variants exist.
+`apple-touch.svg` is square and full-bleed: iOS applies its own rounded mask, and
+shipping our corners inside it leaves white slivers at the edges. `maskable.svg`
+draws the same art smaller, because Android crops maskable icons to a circle
+inscribed in the middle 80% of the square.
+
+`icons-src/` sits outside `public/`, so the sources are versioned without being
+served.
 
 ## Node states
 
