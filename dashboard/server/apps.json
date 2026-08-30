@@ -1,4 +1,4 @@
 [
-  { "name": "OSINT", "url": "http://jug:3000", "nodeId": "jug", "icon": "O" },
-  { "name": "OSINT API", "url": "http://jug:8000", "nodeId": "jug", "icon": "A" }
+  { "name": "OSINT", "url": "http://jug.taild9f605.ts.net:3000", "nodeId": "jug", "icon": "O" },
+  { "name": "OSINT API", "url": "http://jug.taild9f605.ts.net:8000/docs", "nodeId": "jug", "icon": "A" }
 ]
