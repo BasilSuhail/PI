@@ -3,7 +3,7 @@
  * contract the frontend consumes.
  */
 
-import type { Capability, FleetNode } from '@/types/fleet';
+import type { Capability, FleetNode } from '../../shared/fleet';
 import { fetchClusterRoles } from './kube';
 import { fetchCpu, fetchDisks, fetchMem, fetchNet, fetchSystem } from './glances';
 import { fetchShim } from './shim';

@@ -6,7 +6,7 @@
  * falls back to 'standalone'.
  */
 
-import type { NodeRole } from '@/types/fleet';
+import type { NodeRole } from '../../shared/fleet';
 
 const TIMEOUT_MS = 3000;
 
