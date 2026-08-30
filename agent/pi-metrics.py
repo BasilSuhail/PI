@@ -171,4 +171,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("", PORT), Handler)  # empty host binds all interfaces.serve_forever()
+    # Empty host binds all interfaces.
+    ThreadingHTTPServer(("", PORT), Handler).serve_forever()
