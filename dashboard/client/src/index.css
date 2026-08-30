@@ -261,10 +261,38 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .sgroup{flex-direction:column}
   .pair{width:100%}
   .cell{flex:1;min-width:0}
-  .prow{grid-template-columns:minmax(96px,1.4fr) 58px 70px 64px 42px;gap:8px;padding:9px 11px}
+  .prow{grid-template-columns:minmax(88px,1.3fr) 56px 68px 62px 40px;gap:8px;padding:9px 11px}
   .head{gap:12px}
   .head-r{width:100%;justify-content:space-between}
   .seg{flex:1}
   .seg button{flex:1;padding:10px 8px}
   .toolbar{overflow-x:auto}
+}
+
+/* ── Phone ───────────────────────────────────────────────────────────────
+   Four value columns need ~266px, which leaves nothing for the process
+   name on a 390px screen. Only the column being sorted on is shown; the
+   others are a tap away on the sort control. Paired readouts stack. */
+@media (max-width:560px){
+  .content{padding:14px 11px 16px}
+  .card{padding:13px 13px 11px}
+
+  .prow{grid-template-columns:minmax(0,1fr) 88px;gap:10px;padding:10px 12px}
+  .prow>[data-col]{display:none}
+  .ptable[data-sort="cpuPct"] .prow>[data-col="cpuPct"],
+  .ptable[data-sort="memBytes"] .prow>[data-col="memBytes"],
+  .ptable[data-sort="diskReadBytes"] .prow>[data-col="diskReadBytes"],
+  .ptable[data-sort="threads"] .prow>[data-col="threads"]{display:block}
+  .pscroll{overflow-x:visible}
+
+  .pair{flex-direction:column}
+  .cell{border-right:0;border-bottom:1px solid var(--panel-line)}
+  .pair .cell:last-child{border-bottom:0}
+
+  .c-meta{flex-wrap:wrap;gap:10px}
+  .c-role{margin-bottom:10px}
+  h1{font-size:20px}
+  .statusbar{flex-direction:column;gap:3px}
+  .tbtn{padding:9px 13px}
+  .ibtn{width:36px;height:34px}
 }

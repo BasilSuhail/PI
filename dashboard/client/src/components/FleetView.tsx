@@ -73,11 +73,13 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
         </span>
       </div>
 
-      <div class="ptable"><div class="pscroll">
+      <div class="ptable" data-sort={sort}><div class="pscroll">
         <div class="prow phead">
           <span>PROCESS</span>
           {SORT_COLUMNS.map((c) => (
-            <span key={c.key} class={c.key === sort ? 'sorted' : ''}>{c.head}{c.key === sort ? ' ▾' : ''}</span>
+            <span key={c.key} data-col={c.key} class={c.key === sort ? 'sorted' : ''}>
+              {c.head}{c.key === sort ? ' ▾' : ''}
+            </span>
           ))}
         </div>
         {rows.length === 0 && (
@@ -87,7 +89,7 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
           <div class="prow body" key={p.pid}>
             <span class="pname">{p.name}</span>
             {SORT_COLUMNS.map((c) => (
-              <span key={c.key}
+              <span key={c.key} data-col={c.key}
                     class={`pval ${c.key === 'cpuPct' && p.cpuPct > 100 ? 'hot' : c.key === sort ? 'lead' : ''}`}>
                 {c.fmt(p)}
               </span>
