@@ -1,6 +1,6 @@
 /** Client for the pi-metrics shim — power and throttle state. */
 
-import type { PowerStats, ThrottleState } from '@/types/fleet';
+import type { PowerStats, ThrottleState } from '../../shared/fleet';
 
 export const SHIM_PORT = 9101;
 

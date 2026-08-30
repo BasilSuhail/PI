@@ -1,0 +1,4 @@
+[
+  { "name": "OSINT", "url": "http://jug:3000", "nodeId": "jug", "icon": "O" },
+  { "name": "OSINT API", "url": "http://jug:8000", "nodeId": "jug", "icon": "A" }
+]

@@ -32,3 +32,9 @@ tailscaled.state
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
