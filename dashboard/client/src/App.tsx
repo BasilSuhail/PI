@@ -49,6 +49,7 @@ export default function App() {
   return (
     <section class="shell">
       <div class="toolbar">
+        <span class="brand"><img src="/icon.svg" alt="" width="20" height="20" /><b>Pi</b></span>
         <button class={`tbtn ${view !== 'apps' ? 'on' : ''}`} onClick={() => setView('fleet')}>
           <Grid size={15} /> Fleet
         </button>

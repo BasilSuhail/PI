@@ -1,4 +1,4 @@
 [
-  { "name": "OSINT", "url": "http://pi:3000", "nodeId": "pi", "icon": "O" },
-  { "name": "OSINT API", "url": "http://pi:8000", "nodeId": "pi", "icon": "A" }
+  { "name": "OSINT", "url": "http://pi.<tailnet>.ts.net:3000", "nodeId": "pi", "icon": "O" },
+  { "name": "OSINT API", "url": "http://pi.<tailnet>.ts.net:8000/docs", "nodeId": "pi", "icon": "A" }
 ]

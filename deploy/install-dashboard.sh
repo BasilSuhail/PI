@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Builds and installs the tailnet console as a service on this node.
+# Builds and installs the Pi Console as a service on this node.
 # Run on pi2. Idempotent — safe to re-run to deploy an update.
 set -euo pipefail
 
-APP_DIR="/opt/tailnet-console"
+APP_DIR="/opt/pi-console"
 SRC_DIR="${1:-$HOME/dashboard}"
 PORT="${PORT:-8080}"
 NODE_MAJOR=22
@@ -30,9 +30,26 @@ cd "$SRC_DIR"
 pnpm install --frozen-lockfile --prod=false
 pnpm run build
 
+# The service and its directory were called tailnet-console before the rename.
+# Carry the old install over rather than leaving a second copy running.
+OLD_DIR="/opt/tailnet-console"
+if [ -f /etc/systemd/system/tailnet-console.service ]; then
+  echo "==> Retiring tailnet-console.service"
+  sudo systemctl disable --now tailnet-console.service
+  sudo rm -f /etc/systemd/system/tailnet-console.service
+  sudo systemctl daemon-reload
+fi
+if [ -d "$OLD_DIR" ] && [ ! -d "$APP_DIR" ]; then
+  echo "==> Moving $OLD_DIR to $APP_DIR"
+  sudo mv "$OLD_DIR" "$APP_DIR"
+fi
+
 echo "==> Installing to $APP_DIR"
 sudo mkdir -p "$APP_DIR"
-sudo rsync -a --delete "$SRC_DIR/dist/" "$APP_DIR/dist/"
+sudo rsync -a --delete --exclude apps.json "$SRC_DIR/dist/" "$APP_DIR/dist/"
+# The launcher config is seeded once and then left alone, so URLs edited on
+# the node are not overwritten by the next deploy.
+[ -f "$APP_DIR/dist/apps.json" ] || sudo cp "$SRC_DIR/dist/apps.json" "$APP_DIR/dist/apps.json"
 # node_modules is not needed: the client is bundled and the server imports
 # nothing outside the standard library.
 
@@ -46,9 +63,9 @@ if ! sudo -u "$SERVICE_USER" tailscale status >/dev/null 2>&1; then
 fi
 
 echo "==> Service on :${PORT} as ${SERVICE_USER}"
-sudo tee /etc/systemd/system/tailnet-console.service >/dev/null <<UNIT
+sudo tee /etc/systemd/system/pi-console.service >/dev/null <<UNIT
 [Unit]
-Description=Tailnet Console — fleet dashboard
+Description=Pi — fleet dashboard
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
@@ -77,8 +94,8 @@ WantedBy=multi-user.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable tailnet-console.service
-sudo systemctl restart tailnet-console.service
+sudo systemctl enable pi-console.service
+sudo systemctl restart pi-console.service
 
 echo
 echo "==> Waiting for the server to bind"
@@ -88,13 +105,13 @@ for _ in $(seq 1 15); do
 done
 
 echo "==> Status"
-systemctl is-active tailnet-console.service || true
+systemctl is-active pi-console.service || true
 ss -tln | grep ":${PORT}\b" || echo "port ${PORT} not bound"
 echo
 echo "==> Probing"
 curl -sf --max-time 20 "http://localhost:${PORT}/api/nodes" >/dev/null \
   && echo "/api/nodes OK" \
-  || echo "/api/nodes failed — check: sudo journalctl -u tailnet-console -n 30"
+  || echo "/api/nodes failed — check: sudo journalctl -u pi-console -n 30"
 echo
 echo "Next: expose it on the tailnet with"
 echo "  sudo tailscale serve --bg ${PORT}"
