@@ -1,0 +1,27 @@
+[Unit]
+Description=Pi metrics shim (power, throttle) for the fleet dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pi-metrics.py
+Restart=always
+RestartSec=5
+
+# vcgencmd needs /dev/vcio, which is group video. No root required.
+User=nobody
+SupplementaryGroups=video
+
+# It reads two sysfs files and shells out to vcgencmd. Nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
