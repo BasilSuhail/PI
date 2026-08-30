@@ -6,9 +6,11 @@
  * workloads being watched instead.
  */
 
+import { createGzip } from 'node:zlib';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
@@ -28,15 +30,33 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
   '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
 
-const sendJson = (res: ServerResponse, status: number, body: unknown) => {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
+/** Below this, framing costs more than compression saves. */
+const GZIP_MIN = 1024;
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript)|image\/svg)/;
+
+const acceptsGzip = (req: IncomingMessage) =>
+  /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+
+const sendJson = (req: IncomingMessage, res: ServerResponse, status: number, body: unknown) => {
+  const payload = Buffer.from(JSON.stringify(body));
+  const head: Record<string, string | number> = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
     'Cache-Control': 'no-store',
-  });
+  };
+  if (payload.length >= GZIP_MIN && acceptsGzip(req)) {
+    head['Content-Encoding'] = 'gzip';
+    head.Vary = 'Accept-Encoding';
+    res.writeHead(status, head);
+    const gz = createGzip();
+    gz.pipe(res);
+    gz.end(payload);
+    return;
+  }
+  head['Content-Length'] = payload.length;
+  res.writeHead(status, head);
   res.end(payload);
 };
 
@@ -46,14 +66,14 @@ const addressFor = async (id: string): Promise<string | null> => {
   return device ? ipv4Of(device) : null;
 };
 
-const handleApi = async (url: URL, res: ServerResponse): Promise<boolean> => {
+const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): Promise<boolean> => {
   if (url.pathname === '/api/nodes') {
-    sendJson(res, 200, await fetchFleet());
+    sendJson(req, res, 200, await fetchFleet());
     return true;
   }
 
   if (url.pathname === '/api/apps') {
-    sendJson(res, 200, await fetchApps());
+    sendJson(req, res, 200, await fetchApps());
     return true;
   }
 
@@ -62,14 +82,14 @@ const handleApi = async (url: URL, res: ServerResponse): Promise<boolean> => {
     const [, rawId, kind] = match;
     const host = await addressFor(decodeURIComponent(rawId));
     if (!host) {
-      sendJson(res, 404, { error: 'unknown node, or it has no IPv4 address' });
+      sendJson(req, res, 404, { error: 'unknown node, or it has no IPv4 address' });
       return true;
     }
     if (kind === 'processes') {
       const limit = Number(url.searchParams.get('limit') ?? 30);
-      sendJson(res, 200, await fetchProcesses(host, Number.isFinite(limit) ? limit : 30));
+      sendJson(req, res, 200, await fetchProcesses(host, Number.isFinite(limit) ? limit : 30));
     } else {
-      sendJson(res, 200, await fetchContainers(host));
+      sendJson(req, res, 200, await fetchContainers(host));
     }
     return true;
   }
@@ -77,7 +97,7 @@ const handleApi = async (url: URL, res: ServerResponse): Promise<boolean> => {
   return false;
 };
 
-const serveStatic = async (pathname: string, res: ServerResponse) => {
+const serveStatic = async (req: IncomingMessage, pathname: string, res: ServerResponse) => {
   // normalize() collapses any ../ before it can escape the static directory.
   const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   let file = join(STATIC_DIR, rel === '/' ? 'index.html' : rel);
@@ -101,11 +121,25 @@ const serveStatic = async (pathname: string, res: ServerResponse) => {
     return;
   }
 
-  res.writeHead(200, {
-    'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
+  const type = MIME[extname(file)] ?? 'application/octet-stream';
+  const head: Record<string, string> = {
+    'Content-Type': type,
     'Cache-Control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable',
-  });
-  createReadStream(file).pipe(res);
+  };
+
+  const { size } = await stat(file);
+  const gzip = COMPRESSIBLE.test(type) && size >= GZIP_MIN && acceptsGzip(req);
+  if (gzip) {
+    head['Content-Encoding'] = 'gzip';
+    head.Vary = 'Accept-Encoding';
+  } else {
+    head['Content-Length'] = String(size);
+  }
+  res.writeHead(200, head);
+
+  const source = createReadStream(file);
+  // A client that leaves mid-transfer aborts the pipeline; that is not an error.
+  await pipeline(gzip ? [source, createGzip(), res] : [source, res]).catch(() => {});
 };
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -113,13 +147,13 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
   try {
     if (url.pathname.startsWith('/api/')) {
-      if (!(await handleApi(url, res))) sendJson(res, 404, { error: 'no such endpoint' });
+      if (!(await handleApi(req, url, res))) sendJson(req, res, 404, { error: 'no such endpoint' });
       return;
     }
-    await serveStatic(url.pathname, res);
+    await serveStatic(req, url.pathname, res);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'internal error';
-    if (url.pathname.startsWith('/api/')) sendJson(res, 502, { error: message });
+    if (url.pathname.startsWith('/api/')) sendJson(req, res, 502, { error: message });
     else res.writeHead(500).end(message);
   }
 });

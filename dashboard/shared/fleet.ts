@@ -91,6 +91,8 @@ export interface FleetNode {
   net: NetStats[];
 
   capabilities: Capability[];
+  /** Busiest few, for the card's table. Full list stays on the detail route. */
+  topProcesses: ProcessRow[];
   /** Set when the node is on the tailnet but its agents did not answer. */
   error?: string;
 }
@@ -103,6 +105,9 @@ export interface ProcessRow {
   cpuPct: number;
   memBytes: number;
   memPct: number;
+  threads: number;
+  /** Cumulative bytes read since the process started. */
+  diskReadBytes: number;
 }
 
 export interface ContainerRow {

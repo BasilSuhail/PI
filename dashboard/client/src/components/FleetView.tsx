@@ -1,29 +1,37 @@
-import { Activity, AlertTriangle, ChevronRight, Power, Router, Thermometer } from 'lucide-react';
-import type { FleetNode } from '../../../shared/fleet';
-import { capacity, celsius, cpuTone, memTone, pct, relative, uptime, watts } from '../lib/format';
-import { Meter, Readout, StatusDot } from './primitives';
+import type { FleetNode, ProcessRow } from '../../../shared/fleet';
+import { bytes, capacity, celsius, cpuTone, memTone, pct, relative, uptime, watts } from '../lib/format';
+import { Chevron, Cpu, Mem, Nodes, Power, Shield, Thermo } from './icons';
+import { Meter, StatusDot } from './primitives';
 
-const NodeCard = ({ node, onOpen }: { node: FleetNode; onOpen: (id: string) => void }) => {
-  // Three states, not two: a board that is off reads differently from one whose
-  // agents have stopped answering.
+export type SortKey = 'cpuPct' | 'memBytes' | 'diskReadBytes' | 'threads';
+
+export const SORT_COLUMNS: Array<{ key: SortKey; tab: string; head: string; fmt: (p: ProcessRow) => string }> = [
+  { key: 'cpuPct',        tab: 'CPU',     head: 'CPU %',  fmt: (p) => p.cpuPct.toFixed(1) },
+  { key: 'memBytes',      tab: 'Memory',  head: 'MEMORY', fmt: (p) => bytes(p.memBytes) },
+  { key: 'diskReadBytes', tab: 'Disk',    head: 'READ',   fmt: (p) => (p.diskReadBytes ? bytes(p.diskReadBytes) : '—') },
+  { key: 'threads',       tab: 'Threads', head: 'THR',    fmt: (p) => String(p.threads) },
+];
+
+const ROWS = 5;
+
+const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOpen: (id: string) => void }) => {
   const unreachable = node.online && !!node.error;
 
   if (!node.online || unreachable) {
     return (
-      <div className={`node-card offline-card ${unreachable ? 'agent-down' : ''}`}>
-        <div className="node-card-head">
-          <div className="node-identity">
+      <div class="card offline-card">
+        <div class="c-head">
+          <div class="c-id">
             <StatusDot online={false} />
-            <span className="node-name">{node.name}</span>
-            <span className="node-address">{node.tailscaleIp}</span>
+            <span class="c-name">{node.name}</span>
+            <span class="c-ip">{node.tailscaleIp}</span>
           </div>
         </div>
-        <div className="node-role">
+        <p class="c-role">
           {unreachable ? `${node.role} · agent not responding` : `offline · ${relative(node.lastSeen)}`}
-        </div>
-        <div className="offline-copy">
+        </p>
+        <div class="offline-copy">
           <span>{unreachable ? 'Node is up but reporting nothing' : 'Waiting for node to return'}</span>
-          <ChevronRight size={16} />
         </div>
       </div>
     );
@@ -31,159 +39,130 @@ const NodeCard = ({ node, onOpen }: { node: FleetNode; onOpen: (id: string) => v
 
   const cpu = node.cpu?.usagePct ?? 0;
   const mem = node.mem?.usedPct ?? 0;
-  const throttled = node.temp?.throttled;
-  const throttleNow = throttled?.now ?? false;
-  const throttledEver = throttled?.everSinceBoot ?? false;
+  const thr = node.temp?.throttled;
+  const rows = [...node.topProcesses].sort((a, b) => b[sort] - a[sort]).slice(0, ROWS);
 
   return (
-    <button className="node-card" onClick={() => onOpen(node.id)}>
-      <div className="node-card-head">
-        <div className="node-identity">
+    <article class="card">
+      <div class="c-head">
+        <div class="c-id">
           <StatusDot online />
-          <span className="node-name">{node.name}</span>
-          <span className="node-address">{node.tailscaleIp}</span>
+          <span class="c-name">{node.name}</span>
+          <span class="c-ip">{node.tailscaleIp}</span>
         </div>
-        <span className="ram-capacity">{capacity(node.mem?.totalBytes)}</span>
+        <span class="c-ram">{capacity(node.mem?.totalBytes)}</span>
       </div>
-      <div className="node-role">{node.role}</div>
+      <p class="c-role">
+        {node.role}
+        {node.cpu ? ` · ${node.cpu.cores} cores · load ${node.cpu.loadAvg.map((l) => l.toFixed(2)).join(' ')}` : ''}
+      </p>
 
-      <div className="meter-row">
-        <span>CPU</span>
-        <Meter value={cpu} tone={cpuTone(cpu)} />
-        <strong>{pct(cpu)}</strong>
+      <div class="mrow">
+        <span>CPU</span><Meter value={cpu} tone={cpuTone(cpu)} /><strong>{pct(cpu)}</strong>
       </div>
-      <div className="meter-row">
-        <span>RAM</span>
-        <Meter value={mem} tone={memTone(mem)} />
-        <strong>{pct(mem)}</strong>
+      <div class="mrow">
+        <span>RAM</span><Meter value={mem} tone={memTone(mem)} /><strong>{pct(mem)}</strong>
       </div>
 
-      <div className="node-card-meta">
-        <span>
-          <Thermometer size={14} /> {celsius(node.temp?.cpuC)}
+      <div class="c-meta">
+        <span><Thermo size={13} />{celsius(node.temp?.cpuC)}</span>
+        {node.capabilities.includes('power') && <span><Power size={13} />{watts(node.power?.watts)}</span>}
+        <span><Cpu size={13} />{uptime(node.uptimeSec)}</span>
+        <span class={`chip ${thr?.now || thr?.everSinceBoot ? 'warn' : 'ok'}`}>
+          {thr?.now ? 'throttling now' : thr?.everSinceBoot ? 'throttled since boot' : '✓ nominal'}
         </span>
-        {/* Power is Pi 5 only — a node without the capability shows nothing here
-            rather than an empty tile. */}
-        {node.capabilities.includes('power') && (
-          <span>
-            <Power size={14} /> {watts(node.power?.watts)}
-          </span>
+      </div>
+
+      <div class="ptable" data-sort={sort}><div class="pscroll">
+        <div class="prow phead">
+          <span>PROCESS</span>
+          {SORT_COLUMNS.map((c) => (
+            <span key={c.key} data-col={c.key} class={c.key === sort ? 'sorted' : ''}>
+              {c.head}{c.key === sort ? ' ▾' : ''}
+            </span>
+          ))}
+        </div>
+        {rows.length === 0 && (
+          <div class="prow body"><span class="pname">—</span><span class="pval">no data</span><span /><span /><span /></div>
         )}
-        <span>
-          <Activity size={14} /> up {uptime(node.uptimeSec)}
-        </span>
-      </div>
+        {rows.map((p) => (
+          <div class="prow body" key={p.pid}>
+            <span class="pname">{p.name}</span>
+            {SORT_COLUMNS.map((c) => (
+              <span key={c.key} data-col={c.key}
+                    class={`pval ${c.key === 'cpuPct' && p.cpuPct > 100 ? 'hot' : c.key === sort ? 'lead' : ''}`}>
+                {c.fmt(p)}
+              </span>
+            ))}
+          </div>
+        ))}
+      </div></div>
 
-      <div className="node-card-footer">
-        <span>
-          {throttleNow ? (
-            <>
-              <AlertTriangle size={13} /> throttling now
-            </>
-          ) : throttledEver ? (
-            <>
-              <AlertTriangle size={13} /> throttled since boot
-            </>
-          ) : (
-            <>
-              <span className="check-mark">✓</span> no throttling
-            </>
-          )}
-        </span>
-        <span className="inspect">
-          inspect <ChevronRight size={14} />
-        </span>
+      <div class="c-foot">
+        <span>top {rows.length} by {SORT_COLUMNS.find((c) => c.key === sort)!.head.toLowerCase()}</span>
+        <button class="inspect" onClick={() => onOpen(node.id)}>inspect<Chevron size={13} /></button>
       </div>
-    </button>
+    </article>
   );
 };
 
-export const FleetView = ({ nodes, onOpen }: { nodes: FleetNode[]; onOpen: (id: string) => void }) => {
+const Cell = ({ icon, tone, label, value, sub, vclass = '' }: {
+  icon: preact.ComponentChildren; tone: string; label: string; value: string; sub: string; vclass?: string;
+}) => (
+  <div class="cell">
+    <span class={`ticon ${tone}`}>{icon}</span>
+    <div><span>{label}</span><strong class={vclass}>{value}</strong><small>{sub}</small></div>
+  </div>
+);
+
+export const FleetView = ({ nodes, sort, onOpen }: {
+  nodes: FleetNode[]; sort: SortKey; onOpen: (id: string) => void;
+}) => {
   const live = nodes.filter((n) => n.online && !n.error);
-  const throttling = live.filter((n) => n.temp?.throttled?.now).length;
-
-  const avgCpu = live.length
-    ? live.reduce((sum, n) => sum + (n.cpu?.usagePct ?? 0), 0) / live.length
-    : 0;
-
-  const warmest = live.reduce<FleetNode | null>(
-    (hot, n) => ((n.temp?.cpuC ?? -1) > (hot?.temp?.cpuC ?? -1) ? n : hot),
-    null,
-  );
-
+  const thr = live.filter((n) => n.temp?.throttled?.now).length;
+  const avgCpu = live.length ? live.reduce((s, n) => s + (n.cpu?.usagePct ?? 0), 0) / live.length : 0;
+  const avgMem = live.length ? live.reduce((s, n) => s + (n.mem?.usedPct ?? 0), 0) / live.length : 0;
   const powered = live.filter((n) => n.power);
-  const totalWatts = powered.reduce((sum, n) => sum + (n.power?.watts ?? 0), 0);
+  const totalW = powered.reduce((s, n) => s + (n.power?.watts ?? 0), 0);
+  const busiest = live.reduce<FleetNode | null>((a, n) => ((n.cpu?.usagePct ?? 0) > (a?.cpu?.usagePct ?? -1) ? n : a), null);
+  const hot = live.reduce<FleetNode | null>((a, n) => ((n.temp?.cpuC ?? -1) > (a?.temp?.cpuC ?? -1) ? n : a), null);
+  const hotC = hot?.temp?.cpuC ?? 0;
 
   return (
-    <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">
-            FLEET OVERVIEW <span className="mini-led" />
-          </p>
-          <h1>Good morning, operator.</h1>
-          <p className="subhead">A quiet watch over your little corner of the internet.</p>
-        </div>
-        <div className="heading-stats">
-          <div>
-            <strong>
-              {live.length}/{nodes.length}
-            </strong>
-            <span>nodes online</span>
-          </div>
-          <div>
-            <strong>{throttling}</strong>
-            <span>throttling</span>
+    <>
+      <div class="grid">
+        {nodes.map((n) => <NodeCard key={n.id} node={n} sort={sort} onOpen={onOpen} />)}
+      </div>
+
+      <div class="striprule"><span>FLEET</span><div /></div>
+      <div class="strip">
+        <div class="sgroup">
+          <div class="pair">
+            <Cell icon={<Nodes />} tone="grey" label="Nodes"
+                  value={`${live.length}/${nodes.length}`} sub="online" />
+            <Cell icon={<Shield />} tone={thr ? 'red' : 'green'} label="Throttling"
+                  value={String(thr)} sub={thr ? 'needs attention' : 'none'} />
           </div>
         </div>
-      </div>
-
-      <div className="discovery-banner">
-        <div className="discovery-icon">
-          <Router size={19} />
+        <div class="sgroup">
+          <div class="pair">
+            <Cell icon={<Cpu />} tone="green" label="CPU" value={pct(avgCpu)}
+                  sub={busiest ? `avg · ${busiest.name} peak ${pct(busiest.cpu?.usagePct ?? 0)}` : 'avg'}
+                  vclass={avgCpu > 80 ? 'critv' : avgCpu > 50 ? 'warnv' : ''} />
+            <Cell icon={<Mem />} tone="aqua" label="Memory" value={pct(avgMem)} sub="fleet average"
+                  vclass={avgMem > 85 ? 'critv' : avgMem > 70 ? 'warnv' : ''} />
+          </div>
+          <div class="pair">
+            <Cell icon={<Power />} tone="aqua" label="Power"
+                  value={powered.length ? watts(totalW) : '—'}
+                  sub={powered.length ? `across ${powered.length} node${powered.length > 1 ? 's' : ''}` : 'no PMIC nodes'} />
+            <Cell icon={<Thermo />} tone={hotC > 70 ? 'red' : 'orange'} label="Temperature"
+                  value={celsius(hot?.temp?.cpuC)}
+                  sub={hot ? `${hot.name} warmest · limit 85°` : '—'}
+                  vclass={hotC > 80 ? 'critv' : hotC > 70 ? 'warnv' : ''} />
+          </div>
         </div>
-        <div>
-          <strong>Auto-discovery is active</strong>
-          <span>New Tailnet devices will appear here automatically.</span>
-        </div>
-        <span className="discovery-count">
-          SCANNING <i />
-        </span>
       </div>
-
-      <div className="node-grid">
-        {nodes.map((node) => (
-          <NodeCard key={node.id} node={node} onOpen={onOpen} />
-        ))}
-      </div>
-
-      <div className="section-rule">
-        <span>QUICK READOUT</span>
-        <div />
-      </div>
-      <div className="readout-grid">
-        <Readout
-          icon={<Activity />}
-          label="Fleet CPU"
-          value={pct(avgCpu)}
-          detail={avgCpu > 80 ? 'saturated' : avgCpu > 50 ? 'busy' : 'nominal'}
-          tone={avgCpu > 80 ? 'orange' : 'green'}
-        />
-        <Readout
-          icon={<Thermometer />}
-          label="Warmest node"
-          value={celsius(warmest?.temp?.cpuC)}
-          detail={warmest ? `${warmest.name} · ${(warmest.temp?.cpuC ?? 0) > 70 ? 'hot' : 'normal'}` : '—'}
-          tone={(warmest?.temp?.cpuC ?? 0) > 70 ? 'orange' : 'aqua'}
-        />
-        <Readout
-          icon={<Power />}
-          label="Power draw"
-          value={powered.length ? watts(totalWatts) : '—'}
-          detail={powered.length ? `across ${powered.length} node${powered.length > 1 ? 's' : ''}` : 'no PMIC nodes'}
-          tone="aqua"
-        />
-      </div>
-    </div>
+    </>
   );
 };

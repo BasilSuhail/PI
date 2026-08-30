@@ -1,0 +1,12 @@
+{
+  "name": "Tailnet Console",
+  "short_name": "Tailnet",
+  "description": "Fleet dashboard for the homelab boards",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e8eff1",
+  "theme_color": "#d9e4e8",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
