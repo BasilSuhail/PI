@@ -1,57 +1,93 @@
-# Fleet dashboard — backend
+# Tailnet Console
 
-Design and data contract: [`docs/dashboard.md`](../docs/dashboard.md).
+Fleet dashboard for the boards. Design and rationale: [`docs/dashboard.md`](../docs/dashboard.md).
 
-Backend, agents and deployment live here. The frontend is the operator's and builds
-against `src/types/fleet.ts`.
+Activity Monitor for the fleet — every machine on the tailnet, whether or not it
+is in the cluster — plus a launcher for the self-hosted services.
 
 ## Layout
 
 ```
-src/types/fleet.ts     the contract — start here
-src/lib/tailnet.ts     node discovery via the Tailscale API
-src/lib/glances.ts     Glances REST client (cpu, mem, fs, net, procs, containers)
-src/lib/shim.ts        pi-metrics client (power, throttle)
-src/lib/kube.ts        cluster membership — labels nodes, never discovers them
-src/lib/fleet.ts       aggregation into FleetNode[]
-src/app/api/…          route handlers
+shared/fleet.ts        the contract, used by both halves
+server/
+  index.ts             node:http — static files + four API routes
+  apps.ts              launcher config and health probes
+  apps.json            editable without a rebuild (or set APPS_CONFIG)
+  lib/tailnet.ts       discovery: Tailscale API, or the local CLI
+  lib/glances.ts       cpu, mem, fs, net, processes, containers
+  lib/shim.ts          power and throttle from pi-metrics
+  lib/kube.ts          cluster membership — labels nodes, never discovers them
+  lib/fleet.ts         aggregation
+client/
+  src/App.tsx          window chrome, view switching, polling
+  src/components/      FleetView, DetailView, AppsView, primitives
+  src/lib/format.ts    raw numbers to human strings
+  src/lib/api.ts       fetch layer, polling hook, temperature history
+  src/index.css        the design
 ```
 
-## Endpoints
+## Running
 
-| | |
-|---|---|
-| `GET /api/nodes` | every tailnet Linux node, online or not |
-| `GET /api/nodes/:id/processes?limit=30` | sorted by CPU |
-| `GET /api/nodes/:id/containers` | Docker containers, via Glances |
+```bash
+pnpm install
+pnpm build
+pnpm start          # :8080
+```
+
+Development runs the two halves separately — Vite proxies `/api` to the server:
+
+```bash
+pnpm dev:server     # :8080
+pnpm dev            # :5173
+```
 
 ## Environment
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `TAILSCALE_API_KEY` | yes | node discovery. Without it `/api/nodes` returns 502. |
-| `TAILSCALE_TAILNET` | no | defaults to `-` (the key's own tailnet) |
-| `KUBE_API_SERVER` | no | cluster role labels. Absent → every node reads `standalone`. |
-| `KUBE_TOKEN` | no | as above |
+| `PORT` | no | default 8080 |
+| `TAILSCALE_API_KEY` | see below | node discovery |
+| `TAILSCALE_TAILNET` | no | defaults to `-`, the key's own tailnet |
+| `KUBE_API_SERVER`, `KUBE_TOKEN` | no | cluster role labels |
+| `APPS_CONFIG` | no | path to the launcher config |
 
-Both Kubernetes variables are optional by design. A dashboard that stops
-working when the cluster is down would be useless exactly when it is wanted.
+**Discovery needs one of two things.** With `TAILSCALE_API_KEY` set it queries
+the Tailscale API, which works anywhere including inside a pod. Without it, it
+shells out to the local `tailscale` CLI — which works when the dashboard runs
+directly on a node, and needs no key at all.
 
-## Three states a node can be in
+Kubernetes access is optional on purpose. A dashboard that stops working when
+the cluster is down is useless exactly when it is wanted; without it, every node
+simply reads `standalone`.
+
+## Node states
 
 | State | Meaning | UI |
 |---|---|---|
-| `online: false` | not seen on the tailnet recently | resting state, not an error |
-| `online: true`, `error` set | on the tailnet, agents silent | needs attention — agent down |
+| `online: false` | not seen on the tailnet recently | resting, not an error |
+| `online: true` + `error` | on the tailnet, agents silent | needs attention |
 | `online: true`, no error | healthy | full card |
 
-## Not yet built
+## Things learned from live agents
 
-- `GET /api/apps` — the launcher, with per-service health checks
-- Dockerfile and k8s manifests
-- Frontend
+Each of these was a bug found by pointing the client at a real node.
 
-## Note on pi1
+- **`uptime` is a string**, `"0:44:03"` or `"3 days, 2:15:09"` — not a number.
+- **`os_version` is the kernel**; `hr_name` is a full description string.
+- **`platform` is bitness** (`"64bit"`), not machine architecture.
+- **Virtual interfaces dominate.** A box running six containers reports nine
+  interfaces. Their traffic is already counted on the physical one.
+- **CPU samples can arrive uninitialised.** Glances computes CPU as a delta
+  since the previous request, so requests close together produce a window near
+  zero and a sample where `total` and `idle` are both `0`. Retrying makes it
+  worse. A short last-known-good cache covers it.
+- **Container memory reads `0B`** on a node without `cgroup_enable=memory`.
+  Names, status and CPU still work.
 
-Its container stats will read `0B` until the cgroup flag is applied there and
-the board is rebooted. Same fix already applied to pi2; see the build log.
+## Origin
+
+The design came from a Manus scaffold. The stylesheet, layout and view structure
+were kept as authored; the scaffold around them — tRPC, Drizzle, MySQL, OAuth,
+S3, LLM and voice endpoints, Google Maps, 52 unused shadcn components, Tailwind,
+wouter, react-query — was removed, along with the sample data the views rendered.
+Roughly ninety dependencies became ten.

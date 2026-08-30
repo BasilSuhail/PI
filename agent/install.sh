@@ -10,6 +10,13 @@ echo "==> Installing Glances"
 sudo apt-get update -qq
 sudo apt-get install -y glances
 
+# Glances reads the Docker socket through the python docker library. Without
+# it the containers plugin returns [] on a box that is running containers.
+if command -v docker >/dev/null; then
+  echo "==> Docker present — installing python3-docker for container stats"
+  sudo apt-get install -y python3-docker
+fi
+
 echo "==> Glances as a service on :${GLANCES_PORT}"
 # --disable-webui serves the REST API without Glances' own frontend.
 sudo tee /etc/systemd/system/glances.service >/dev/null <<UNIT
