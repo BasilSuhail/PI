@@ -105,7 +105,22 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
   }>>(host, 'fs');
   if (!Array.isArray(fs)) return [];
 
-  return fs.map((d) => ({
+  // One row per physical device. A bind mount is the same filesystem seen at a
+  // second path, and Glances reports it as a second entry with identical size
+  // and usage — /srv/browse/archive alongside /. Summing those double-counted
+  // every board's capacity, so pi read 937GB when it holds 468.
+  //
+  // The shallowest mount point wins, which is the real one rather than the
+  // bind: / beats /srv/browse/archive.
+  const byDevice = new Map<string, (typeof fs)[number]>();
+  for (const d of fs) {
+    const device = d.device_name ?? '?';
+    const seen = byDevice.get(device);
+    const depth = (d.mnt_point ?? '').split('/').length;
+    if (!seen || depth < (seen.mnt_point ?? '').split('/').length) byDevice.set(device, d);
+  }
+
+  return [...byDevice.values()].map((d) => ({
     mount: d.mnt_point ?? '?',
     device: d.device_name ?? '?',
     totalBytes: d.size ?? 0,
