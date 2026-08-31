@@ -1,7 +1,7 @@
 /** Thin fetch layer plus the polling hook the views use. */
 
 import { useEffect, useRef, useState } from 'react';
-import type { ContainerRow, FleetNode, ProcessRow } from '../../../shared/fleet';
+import type { ContainerRow, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
 
 const json = async <T>(path: string): Promise<T> => {
   const res = await fetch(path, { cache: 'no-store' });
@@ -95,3 +95,8 @@ export const useHistory = (nodes: FleetNode[] | null, cap = 40) => {
   }, [nodes, cap]);
   return store.current;
 };
+
+export const getRoots = (id: string) =>
+  json<DirRoots>(`/api/nodes/${encodeURIComponent(id)}/files`);
+export const getListing = (id: string, path: string) =>
+  json<DirListing>(`/api/nodes/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`);

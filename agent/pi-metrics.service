@@ -13,7 +13,20 @@ RestartSec=5
 User=nobody
 SupplementaryGroups=video
 
-# It reads two sysfs files and shells out to vcgencmd. Nothing else.
+# The directories the file scanner is allowed to describe. Anything outside
+# these is refused, so widening this line is the only way to widen its reach.
+Environment=BROWSE_ROOTS=/srv/browse:/srv/archive
+
+# Thumbnails. systemd creates /var/cache/pi-thumbs owned by this service and
+# makes it writable despite ProtectSystem=strict — the one path this process
+# may write, and everything in it is derived and safe to delete.
+CacheDirectory=pi-thumbs
+Environment=THUMB_DIR=/var/cache/pi-thumbs
+Environment=THUMB_CACHE_MAX_MB=500
+
+# It reads two sysfs files, shells out to vcgencmd, and walks the browse roots
+# to size them. ProtectSystem=strict keeps every one of those read-only, so a
+# bug in the scanner cannot write anything anywhere.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
@@ -21,7 +34,10 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6
-MemoryMax=64M
+# The scan holds a bounded cache of directory listings, and thumbnailing is a
+# child process rather than a library, so this stays low deliberately. 128M is
+# a kill switch, not an allowance: reaching it means something is wrong.
+MemoryMax=128M
 
 [Install]
 WantedBy=multi-user.target

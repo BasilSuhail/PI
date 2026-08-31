@@ -7,6 +7,9 @@
 NODE ?= pi2
 DASH_NODE ?= pi2
 AGENT_NODES ?= pi pi2
+# Boards with disks worth exposing. Same list today; kept separate because a
+# node can run an agent without holding anything you want to browse.
+STORAGE_NODES ?= pi pi2
 REPO_DIR ?= PI
 DASH_URL ?= https://pi2.<tailnet>.ts.net
 
@@ -21,7 +24,7 @@ SYNC = { [ -d ~/$(REPO_DIR)/.git ] || { echo "no checkout on this board — run:
  && git -C ~/$(REPO_DIR) reset --hard --quiet origin/main \
  && git -C ~/$(REPO_DIR) log --oneline -1
 
-.PHONY: help dashboard agents deploy check logs bootstrap
+.PHONY: help dashboard agents deploy check logs bootstrap browse samba
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
@@ -29,6 +32,8 @@ help:
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
 	@echo "make logs        last 40 lines from the dashboard service"
+	@echo "make browse                rebuild /srv/browse on both boards"
+	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
@@ -52,6 +57,17 @@ check:
 
 logs:
 	ssh $(DASH_NODE) 'journalctl -u pi-console -n 40 --no-pager'
+
+browse:
+	@for node in $(STORAGE_NODES); do \
+		echo "==> $$node"; \
+		ssh $$node '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-browse.sh' || exit 1; \
+	done
+
+# Interactive: smbpasswd prompts on the board, so this one wants a terminal
+# and cannot be looped silently. One node at a time, on purpose.
+samba:
+	ssh -t $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-samba.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
