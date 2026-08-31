@@ -50,7 +50,9 @@ BROWSE_ROOTS = _parse_roots(
 # from a phone should not be one mis-tap away.
 WRITABLE = tuple(
     os.path.realpath(p)
-    for p in os.environ.get("BROWSE_WRITABLE", "/srv/archive:/srv/browse").split(":")
+    for p in os.environ.get(
+        "BROWSE_WRITABLE", "/srv/archive:/srv/browse:/media:/mnt"
+    ).split(":")
     if p
 )
 
@@ -116,6 +118,10 @@ THUMB_CACHE_MAX = int(os.environ.get("THUMB_CACHE_MAX_MB", "500")) * 1024 * 1024
 # Below this much free space the cache stops writing and serves what it has.
 # It must never be the thing that fills the disk it exists to help you watch.
 THUMB_FREE_FLOOR = 5 * 1024 * 1024 * 1024
+# Refuse an upload that would leave the disk with less than this free. Filling
+# the disk a service is running from takes the board out, not just the upload.
+UPLOAD_HEADROOM = 2 * 1024 * 1024 * 1024
+
 # Two at a time. The ingest keeps the other cores whatever the viewer does.
 _thumb_slots = threading.Semaphore(2)
 _thumb_lock = threading.Lock()
@@ -580,6 +586,124 @@ def cache_stats():
             "tool": bool(shutil.which("vipsthumbnail"))}
 
 
+# ── Writing ───────────────────────────────────────────────────────────────
+# Every one of these resolves the path the same way a read does, then asks
+# is_writable() as well. A caller that reaches this with /etc gets 403 from
+# the agent, not from a greyed-out button — and systemd's ReadWritePaths would
+# refuse it underneath that in any case.
+
+
+class Refused(Exception):
+    """A request that resolved fine and is still not allowed."""
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def writable_target(path, must_exist=True):
+    real = resolve_under_root(path)
+    if not real:
+        raise Refused(403, "path is outside the browsable roots")
+    if not is_writable(real):
+        raise Refused(403, "this location is read-only")
+    if must_exist and not os.path.exists(real):
+        raise Refused(404, "no such path")
+    return real
+
+
+def safe_child(parent_real, name):
+    """A new entry inside a directory, from a name the caller chose.
+
+    The name is a name, never a path: a slash or a .. in it would place the
+    result somewhere other than the directory being written to, which is the
+    one thing this must not allow.
+    """
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise Refused(400, "that is not a usable name")
+    child = os.path.join(parent_real, name)
+    if os.path.dirname(os.path.realpath(child)) != os.path.realpath(parent_real):
+        raise Refused(400, "that name would land outside the folder")
+    return child
+
+
+def unique_name(target):
+    """A destination that does not already exist. Nothing here overwrites: a
+    copy landing on a file of the same name becomes "name copy", the way
+    Finder does it, rather than silently replacing something."""
+    if not os.path.exists(target):
+        return target
+    stem, ext = os.path.splitext(target)
+    for n in range(1, 200):
+        suffix = " copy" if n == 1 else f" copy {n}"
+        candidate = f"{stem}{suffix}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+    raise Refused(409, "too many copies of that name already")
+
+
+def do_write(op, body):
+    if op == "mkdir":
+        parent = writable_target(body.get("path", ""))
+        child = safe_child(parent, body.get("name", ""))
+        if os.path.exists(child):
+            raise Refused(409, "something with that name is already here")
+        os.mkdir(child, 0o755)
+        return {"path": child}
+
+    if op == "rename":
+        real = writable_target(body.get("path", ""))
+        child = safe_child(os.path.dirname(real), body.get("name", ""))
+        if os.path.exists(child):
+            raise Refused(409, "something with that name is already here")
+        os.rename(real, child)
+        return {"path": child}
+
+    if op == "delete":
+        real = writable_target(body.get("path", ""))
+        if any(real == root for _, root in BROWSE_ROOTS) or is_mount(real):
+            raise Refused(403, "that is a root of the tree, not a file in it")
+        if os.path.isdir(real) and not os.path.islink(real):
+            shutil.rmtree(real)
+        else:
+            os.unlink(real)
+        return {"deleted": real}
+
+    if op in ("copy", "move"):
+        source = resolve_under_root(body.get("path", ""))
+        if not source or not os.path.exists(source):
+            raise Refused(404, "no such file")
+        # Copying reads, so a file this agent will not serve is a file it will
+        # not duplicate somewhere it might be served from.
+        if is_secret(os.path.basename(source)):
+            raise Refused(403, "credential files are not copied")
+        if op == "move" and not is_writable(source):
+            raise Refused(403, "the source is read-only, so it cannot be moved")
+        into = writable_target(body.get("to", ""))
+        if not os.path.isdir(into):
+            raise Refused(400, "the destination is not a folder")
+        if _under(into, source):
+            raise Refused(400, "a folder cannot be moved inside itself")
+        target = unique_name(os.path.join(into, os.path.basename(source)))
+        if op == "move":
+            shutil.move(source, target)
+        elif os.path.isdir(source):
+            shutil.copytree(source, target, symlinks=True)
+        else:
+            shutil.copy2(source, target)
+        return {"path": target}
+
+    raise Refused(400, f"unknown operation: {op}")
+
+
+def is_mount(real):
+    try:
+        return os.path.ismount(real)
+    except OSError:
+        return False
+
+
 def roots():
     """The tops of the tree, for a client with no path to start from."""
     return {
@@ -668,6 +792,56 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        route = url.path.rstrip("/")
+        try:
+            if route == "/write":
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > 64 * 1024:
+                    raise Refused(413, "that request is too large to be a write")
+                body = json.loads(self.rfile.read(length) or b"{}")
+                result = do_write(str(body.get("op", "")), body)
+                self._send(json.dumps(result).encode())
+                return
+
+            if route == "/upload":
+                q = parse_qs(url.query)
+                into = writable_target(q.get("path", [""])[0])
+                if not os.path.isdir(into):
+                    raise Refused(400, "the destination is not a folder")
+                target = unique_name(safe_child(into, q.get("name", [""])[0]))
+                length = int(self.headers.get("Content-Length") or 0)
+                free = shutil.disk_usage(into).free
+                if length + UPLOAD_HEADROOM > free:
+                    raise Refused(507, "not enough room on that disk")
+                # Written beside the target and renamed, so a connection that
+                # drops halfway leaves a .part behind rather than a file that
+                # looks complete and is not.
+                part = target + ".part"
+                remaining = length
+                with open(part, "wb") as f:
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        remaining -= len(chunk)
+                if remaining:
+                    os.unlink(part)
+                    raise Refused(400, "the upload ended early")
+                os.replace(part, target)
+                self._send(json.dumps({"path": target}).encode())
+                return
+
+            self.send_error(404)
+        except Refused as err:
+            self.send_error(err.status, err.message)
+        except json.JSONDecodeError:
+            self.send_error(400, "that request body is not JSON")
+        except OSError as err:
+            self.send_error(500, err.strerror or "the filesystem refused that")
 
     def log_message(self, *args):
         pass  # journald already timestamps; per-request lines are noise

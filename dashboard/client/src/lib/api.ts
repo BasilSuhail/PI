@@ -105,3 +105,31 @@ export const getListing = (id: string, path: string) =>
  *  when — which is what makes lazy loading actually lazy. */
 export const thumbUrl = (id: string, path: string) =>
   `/api/nodes/${encodeURIComponent(id)}/thumb?path=${encodeURIComponent(path)}`;
+
+/**
+ * One endpoint for every change. The agent's refusal is passed straight back,
+ * so what a person reads is the reason the board gave rather than this layer's
+ * guess at it.
+ */
+export const write = async (id: string, body: Record<string, unknown>): Promise<void> => {
+  const res = await fetch(`/api/nodes/${encodeURIComponent(id)}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(detail?.error ?? `that was refused (${res.status})`);
+  }
+};
+
+export const upload = async (id: string, path: string, file: File): Promise<void> => {
+  const res = await fetch(
+    `/api/nodes/${encodeURIComponent(id)}/upload?path=${encodeURIComponent(path)}&name=${encodeURIComponent(file.name)}`,
+    { method: 'POST', body: file },
+  );
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(detail?.error ?? `upload refused (${res.status})`);
+  }
+};
