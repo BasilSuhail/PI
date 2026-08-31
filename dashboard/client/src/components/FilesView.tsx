@@ -5,7 +5,12 @@
  * the question asked of a homelab disk is almost always "what is eating it"
  * rather than "where is that one file". The board is the first column rather
  * than a control above them, so moving between machines is the same gesture
- * as opening a folder and the fleet's totals read before anything is clicked.
+ * as opening a folder.
+ *
+ * A board holds nothing itself. Everything is on one of its disks, so the
+ * second column is disks and only disks — being "on jug" is not a place a
+ * file could be saved, and the tree should not pretend otherwise. Named roots
+ * like the archive are pinned inside the disk that actually holds them.
  *
  * Every entry is shown, dotfiles included. On these boards the answer is
  * usually a dotfile — .cache, .ollama, a stray .venv — and hiding them would
@@ -13,7 +18,7 @@
  */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { DirEntry, DirListing, FleetNode } from '../../../shared/fleet';
+import type { DirEntry, DirListing, DirRoots, FleetNode } from '../../../shared/fleet';
 import { getListing, getRoots, thumbUrl } from '../lib/api';
 import { bytes } from '../lib/format';
 import { Alert, Chevron, Disk, Grid, List } from './icons';
@@ -77,6 +82,8 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const [sel, setSel] = useState<Picked | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [preview, setPreview] = useState<Picked | null>(null);
+  /** Named roots per board, so a disk's column can pin the ones that live on it. */
+  const [rootsByNode, setRootsByNode] = useState<Record<string, DirRoots['roots']>>({});
   const strip = useRef<HTMLDivElement>(null);
 
   /** Column zero is built here rather than fetched — the fleet is already known. */
@@ -134,11 +141,8 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         const board = nodes.find((n) => n.id === node);
         getRoots(node)
           .then((res) => {
-            // The disks first, each carrying its own used-of-total, then the
-            // named roots that are not simply a disk's own mount point — the
-            // archive, which is a shortcut into one of them.
-            const mounts = new Set((board?.disks ?? []).map((d) => d.mount));
-            const disks: DirEntry[] = (board?.disks ?? []).map((d) => ({
+            setRootsByNode((prev) => ({ ...prev, [node]: res.roots }));
+            const entries: DirEntry[] = (board?.disks ?? []).map((d) => ({
               name: diskName(d.device, d.mount),
               dir: true,
               link: false,
@@ -148,19 +152,6 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
               path: d.mount,
               capacity: d.totalBytes,
             }));
-            const shortcuts: DirEntry[] = res.roots
-              .filter((r) => !mounts.has(r.path))
-              .map((r) => ({
-                name: r.name,
-                dir: true,
-                link: false,
-                bytes: 0,
-                mtime: 0,
-                hidden: false,
-                path: r.path,
-                locked: !r.writable,
-              }));
-            const entries = [...disks, ...shortcuts];
             done({
               path: key,
               parent: null,
@@ -173,7 +164,9 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           })
           .catch(failed);
       } else {
-        getListing(node, key).then(done).catch(failed);
+        getListing(node, key)
+          .then((listing) => done({ ...listing, entries: withPins(listing, node) }))
+          .catch(failed);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,6 +177,30 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     const el = strip.current;
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trail.length]);
+
+  /**
+   * A named root shown at the top of the disk that holds it. Only on the
+   * disk's own column: deeper down it would appear again at every level.
+   */
+  const withPins = (listing: DirListing, node: string): DirEntry[] => {
+    const board = nodes.find((n) => n.id === node);
+    const isMount = (board?.disks ?? []).some((d) => d.mount === listing.path);
+    if (!isMount) return listing.entries;
+    const pins = (rootsByNode[node] ?? [])
+      .filter((r) => r.path !== listing.path && r.path.startsWith(listing.path.replace(/\/$/, '') + '/'))
+      .map((r) => ({
+        name: r.name,
+        dir: true,
+        link: false,
+        bytes: 0,
+        mtime: 0,
+        hidden: false,
+        path: r.path,
+        locked: !r.writable,
+        pinned: true,
+      }));
+    return [...pins, ...listing.entries];
+  };
 
   const here = trail[trail.length - 1];
   const hereListing = cellFor(here).listing;
@@ -408,7 +425,7 @@ const Column = ({
     <div class="fx-col">
       {listing.entries.map((entry) => (
         <button
-          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
+          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''} ${entry.pinned ? 'pin' : ''}`}
           onClick={() => onOpen(entry)}
           key={entry.name}
         >
@@ -422,6 +439,7 @@ const Column = ({
           {/* A locked root is readable and copyable like anything else; what
               it refuses is being changed. Marked so that is visible before
               you try. */}
+          {entry.pinned && <span class="fx-pin" title="A named root on this disk">◆</span>}
           {entry.locked && <span class="fx-lock" title="Read-only — copy from it, never change it">read-only</span>}
           {entry.dir && <Chevron size={13} class="fx-arrow" />}
         </button>
