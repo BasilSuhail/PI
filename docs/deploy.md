@@ -3,6 +3,11 @@
 The commands you actually run are in the [README](../README.md): `make
 dashboard`, `make agents`, `make check`. This is what sits behind them.
 
+Every command on this page runs **on the Mac**, from `~/folders/PI`. The parts
+that happen on a board — the git pull, the build, the systemd install — are run
+there by a script that `make` or `ssh` started. Nothing here is meant to be
+typed into a board's own shell.
+
 ## The shape
 
 Deploys are a **pull on the board**, not a push from the Mac. Each node holds a

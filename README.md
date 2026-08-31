@@ -23,11 +23,19 @@ Issues carry the planning: [#1](../../issues/1) what fits on one board,
 
 ## Deploying
 
-From the Mac, from a checkout of `main`. Tailscale has to be up — a hang or an
-unresolvable hostname is always that (`tailscale status`, then `tailscale up`).
-Each command asks for the board's password once; key auth is off by choice.
+**Every command here runs on the Mac**, from `~/folders/PI`. You never SSH into
+a board yourself — `make` opens the connection, and the script it starts runs
+on the board and builds there. Tailscale has to be up on the Mac; a hang or an
+unresolvable hostname is always that:
 
-Once per node, ever:
+```bash
+tailscale status          # "Tailscale is stopped" means the tunnel is down
+tailscale up
+```
+
+Each command asks for the board's password once — key auth is off by choice.
+
+### Once per board, ever
 
 ```bash
 cd ~/folders/PI
@@ -35,25 +43,29 @@ make bootstrap NODE=jug2
 make bootstrap NODE=jug
 ```
 
-That gives the board a read-only deploy key and its own checkout at `~/PI`, so
-a deploy is the board pulling from GitHub rather than the Mac pushing files at
-it. After a PR is merged:
+This gives the board a read-only deploy key and its own checkout of this repo
+at `~/PI`, so a deploy becomes the board pulling from GitHub instead of the Mac
+pushing files at it. Re-running is safe; it verifies rather than replaces.
+
+### Every time a PR is merged
 
 ```bash
 cd ~/folders/PI
 make dashboard   # dashboard/ or deploy/ changed — launcher tiles included
 make agents      # agent/ changed — both boards
-make deploy      # both
+make deploy      # both of the above
 make check       # services up, dashboard answering
 ```
 
-Each target takes the board to exactly `origin/main`, then builds and installs
-there. Nothing is synced from the Mac, so what runs on the board is what is on
-main — no drift, and `make logs` or `git log` on the board says which commit is
-live. Every script is idempotent; re-running one costs nothing but time.
+`make` on its own lists them. Each target takes the board to exactly
+`origin/main`, then builds and installs there, printing the commit it landed on
+before the build starts. Nothing is copied from the Mac, so what runs on the
+board is what is on `main` — the Mac's own checkout does not even have to be up
+to date. Pull on the Mac to get new `make` targets, not new code. Every script
+is idempotent; re-running one costs nothing but time.
 
-One-time setup, the fallback for when GitHub is unreachable, and what to do
-when a deploy does not take: [`docs/deploy.md`](docs/deploy.md).
+One-time setup, the fallback for when a board cannot reach GitHub, and what to
+do when a deploy does not take: [`docs/deploy.md`](docs/deploy.md).
 
 ## Scope
 
