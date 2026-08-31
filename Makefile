@@ -13,7 +13,10 @@ DASH_URL ?= https://pi2.<tailnet>.ts.net
 # Take the node's checkout to exactly origin/main. Deterministic on purpose:
 # what is on the board afterwards is what is on main, anything edited on the
 # board included. Edit the repo, not the node.
-SYNC = git -C ~/$(REPO_DIR) fetch --quiet origin \
+# Fails with a usable sentence rather than a git fatal when the board has no
+# checkout yet — that is the one-time bootstrap, and it is easy to skip.
+SYNC = { [ -d ~/$(REPO_DIR)/.git ] || { echo "no checkout on this board — run: make bootstrap NODE=<node>" >&2; exit 2; }; } \
+ && git -C ~/$(REPO_DIR) fetch --quiet origin \
  && git -C ~/$(REPO_DIR) checkout --quiet main \
  && git -C ~/$(REPO_DIR) reset --hard --quiet origin/main \
  && git -C ~/$(REPO_DIR) log --oneline -1
