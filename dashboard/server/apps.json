@@ -1,5 +1,5 @@
 [
-  { "name": "OSINT", "url": "https://pi.<tailnet>.ts.net/", "nodeId": "pi", "icon": "O" },
-  { "name": "OSINT News", "url": "https://pi.<tailnet>.ts.net/news", "nodeId": "pi", "icon": "N" },
-  { "name": "OSINT API", "url": "https://pi.<tailnet>.ts.net/api/docs", "nodeId": "pi", "icon": "A" }
+  { "name": "OSINT", "url": "https://pi.<tailnet>.ts.net/", "nodeId": "pi", "icon": "/app-icons/osint.png" },
+  { "name": "OSINT News", "url": "https://pi.<tailnet>.ts.net/news", "nodeId": "pi", "icon": "/app-icons/osint-news.png" },
+  { "name": "OSINT API", "url": "https://pi.<tailnet>.ts.net/api/docs", "nodeId": "pi", "icon": "/app-icons/osint-api.png" }
 ]

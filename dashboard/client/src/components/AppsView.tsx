@@ -5,6 +5,14 @@ import { StatusDot } from './primitives';
 /** Tile colours cycle so a newly added app gets one without being configured. */
 const ACCENTS = ['purple', 'blue', 'orange', 'green', 'pink'] as const;
 
+/**
+ * An icon is either a path to artwork or a character to letter the tile with.
+ * A leading slash or scheme is the whole test — anything else stays a letter,
+ * so tiles configured before this existed are untouched.
+ */
+const isArt = (icon: string | null): icon is string =>
+  !!icon && (icon.startsWith('/') || icon.startsWith('http'));
+
 export const AppsView = ({ apps }: { apps: AppTile[] }) => {
   const checked = apps.filter((a) => a.healthy !== null);
   const passing = apps.filter((a) => a.healthy).length;
@@ -47,8 +55,12 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
             onClick={(e) => !app.healthy && e.preventDefault()}
             key={app.name}
           >
-            <div class={`app-icon ${ACCENTS[i % ACCENTS.length]}`}>
-              <span>{app.icon ?? app.name[0]}</span>
+            <div class={`app-icon ${isArt(app.icon) ? 'art' : ACCENTS[i % ACCENTS.length]}`}>
+              {isArt(app.icon) ? (
+                <img src={app.icon} alt="" loading="lazy" />
+              ) : (
+                <span>{app.icon ?? app.name[0]}</span>
+              )}
             </div>
             <div class="app-info">
               <strong>{app.name}</strong>

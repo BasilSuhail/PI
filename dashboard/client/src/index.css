@@ -353,6 +353,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .app-icon.orange{background:linear-gradient(145deg,#ffcb79,#d76e22)}
 .app-icon.green{background:linear-gradient(145deg,#9ae6b2,#268d60)}
 .app-icon.pink{background:linear-gradient(145deg,#ffabc4,#be4f82)}
+/* Artwork carries its own colour, so the gradient and the gloss come off. The
+   icons are square — the tile's own radius is what rounds them. */
+.app-icon.art{overflow:hidden;background:none;box-shadow:none}
+.app-icon.art img{display:block;width:100%;height:100%;object-fit:contain}
 .app-info{display:flex;flex-direction:column}
 .app-info strong{color:var(--ink);font-size:13px}
 .app-info span{margin-top:3px;color:var(--muted);font-size:9px}
