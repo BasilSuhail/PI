@@ -118,6 +118,16 @@ sudo chmod 0755 "$BROWSE"
 
 echo
 echo "==> $BROWSE"
-findmnt -nlo TARGET,SOURCE,SIZE,USED,AVAIL --target "$BROWSE" -R 2>/dev/null | sed 's/^/  /' || ls -la "$BROWSE" | sed 's/^/  /'
+# One line per disk. `findmnt --target ... -R` was printing every mount on the
+# board — sysfs, proc, and every k3s container overlay — because --target
+# resolves to the filesystem holding the path, which here is the root one.
+printf '  %-16s %8s %8s %8s  %s\n' NAME SIZE USED AVAIL SOURCE
+for point in "$BROWSE"/*; do
+  [ -d "$point" ] || continue
+  read -r size used avail < <(df -h --output=size,used,avail "$point" | tail -1)
+  printf '  %-16s %8s %8s %8s  %s\n' \
+    "$(basename "$point")" "$size" "$used" "$avail" "$(findmnt -no SOURCE "$point" 2>/dev/null || echo '-')"
+done
 echo
-echo "Serve it with:  bash deploy/install-samba.sh   and   bash deploy/install-filebrowser.sh"
+echo "Share it in Finder with:  make samba NODE=$(hostname)"
+echo "It is already in the console under Storage."
