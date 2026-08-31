@@ -507,13 +507,20 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* A dotfile is dimmed, never dropped — findable, but not competing with the
    things a person named themselves. */
 .fx-row.hidden .fx-name,.fx-tile.hidden .fx-tname{opacity:.62}
-.fx-size{flex:0 0 74px;text-align:right;font-family:var(--mono);font-size:10px;
+.fx-size{flex:0 0 auto;min-width:74px;text-align:right;font-family:var(--mono);font-size:10px;
   font-variant-numeric:tabular-nums}
 .fx-size.huge{color:#3f9ee0}
 .fx-size.big{color:#4aa9c9}
 .fx-size.mid{color:#3fa38a}
 .fx-size.small{color:#5aa36a}
 .fx-size.zero{color:var(--faint)}
+/* "48 GB / 512 GB" on the boards. The capacity is the quieter half — it is
+   context for the number in front of it, not a second number to read. */
+.fx-cap{color:var(--faint)}
+.fx-row.on .fx-cap{color:rgba(255,255,255,.72)}
+.fx-lock{flex:none;padding:1px 5px;border:1px solid var(--panel-line);border-radius:99px;
+  color:var(--faint);font-family:var(--mono);font-size:8px;letter-spacing:.02em}
+.fx-row.on .fx-lock{border-color:rgba(255,255,255,.45);color:rgba(255,255,255,.85)}
 .fx-row.on .fx-size,.fx-row.on .fx-name,.fx-row.on .fx-arrow{color:#fff}
 .fx-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:var(--ink);font-size:12px}
@@ -672,13 +679,20 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* A dotfile is dimmed, never dropped — findable, but not competing with the
    things a person named themselves. */
 .fx-row.hidden .fx-name{opacity:.62}
-.fx-size{flex:0 0 74px;text-align:right;font-family:var(--mono);font-size:10px;
+.fx-size{flex:0 0 auto;min-width:74px;text-align:right;font-family:var(--mono);font-size:10px;
   font-variant-numeric:tabular-nums}
 .fx-size.huge{color:#3f9ee0}
 .fx-size.big{color:#4aa9c9}
 .fx-size.mid{color:#3fa38a}
 .fx-size.small{color:#5aa36a}
 .fx-size.zero{color:var(--faint)}
+/* "48 GB / 512 GB" on the boards. The capacity is the quieter half — it is
+   context for the number in front of it, not a second number to read. */
+.fx-cap{color:var(--faint)}
+.fx-row.on .fx-cap{color:rgba(255,255,255,.72)}
+.fx-lock{flex:none;padding:1px 5px;border:1px solid var(--panel-line);border-radius:99px;
+  color:var(--faint);font-family:var(--mono);font-size:8px;letter-spacing:.02em}
+.fx-row.on .fx-lock{border-color:rgba(255,255,255,.45);color:rgba(255,255,255,.85)}
 .fx-row.on .fx-size,.fx-row.on .fx-name{color:#fff}
 .fx-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   color:var(--ink);font-size:12px}

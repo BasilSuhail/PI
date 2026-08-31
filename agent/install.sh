@@ -40,6 +40,21 @@ echo "==> Installing pi-metrics shim on :${SHIM_PORT}"
 sudo install -m 755 "$(dirname "$0")/pi-metrics.py" /usr/local/bin/pi-metrics.py
 sudo install -m 644 "$(dirname "$0")/pi-metrics.service" /etc/systemd/system/pi-metrics.service
 
+# The unit ships with User=nobody so that nothing tracked in the repo names a
+# person. The file browser has to read a home directory, which nobody cannot
+# enter — it saw empty folders where the actual work is — so the login user is
+# dropped in here. Deliberately not root: Docker's internal storage and other
+# root-owned state stay unreadable, which is the point of picking this user.
+SERVICE_USER="${SERVICE_USER:-$(id -un)}"
+SERVICE_HOME=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
+echo "==> Running the shim as ${SERVICE_USER}"
+sudo mkdir -p /etc/systemd/system/pi-metrics.service.d
+sudo tee /etc/systemd/system/pi-metrics.service.d/user.conf >/dev/null <<UNIT
+[Service]
+User=${SERVICE_USER}
+Environment=BROWSE_ROOTS=system=/,home=${SERVICE_HOME},archives=/srv/archive
+UNIT
+
 sudo systemctl daemon-reload
 sudo systemctl enable glances.service pi-metrics.service
 

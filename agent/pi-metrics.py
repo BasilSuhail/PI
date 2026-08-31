@@ -22,13 +22,72 @@ from urllib.parse import parse_qs, urlparse
 PORT = 9101
 VCGENCMD = shutil.which("vcgencmd")
 
-# The only paths this agent will describe. Everything else is refused, so a
-# bug in the caller cannot turn this into a reader of /etc or a home directory.
-BROWSE_ROOTS = tuple(
+# Named tops of the tree, as `label=path` pairs. The whole filesystem is
+# readable on purpose: a file manager that cannot show you your own Docker
+# volumes or a config under /etc is not a file manager, it is a folder.
+#
+# Writing is the opposite — see WRITABLE below. Read everywhere, change almost
+# nothing, which is how Finder treats /System.
+def _parse_roots(raw):
+    out = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or "=" not in item:
+            continue
+        label, path = item.split("=", 1)
+        real = os.path.realpath(path)
+        if os.path.isdir(real):
+            out.append((label.strip(), real))
+    return tuple(out)
+
+
+BROWSE_ROOTS = _parse_roots(
+    os.environ.get("BROWSE_ROOTS", "system=/,archives=/srv/archive")
+)
+
+# Only these may ever be modified, and only once write endpoints exist. Every
+# other path is readable and permanently untouchable — deleting a board's /etc
+# from a phone should not be one mis-tap away.
+WRITABLE = tuple(
     os.path.realpath(p)
-    for p in os.environ.get("BROWSE_ROOTS", "/srv/browse:/srv/archive").split(":")
+    for p in os.environ.get("BROWSE_WRITABLE", "/srv/archive:/srv/browse").split(":")
     if p
 )
+
+
+def _under(real, root):
+    """Whether a resolved path sits at or below a root.
+
+    The separator is appended only when the root does not already end in one,
+    or a root of "/" would build the prefix "//" and match nothing at all.
+    """
+    if real == root:
+        return True
+    return real.startswith(root if root.endswith(os.sep) else root + os.sep)
+
+
+def is_writable(real):
+    return any(_under(real, w) for w in WRITABLE)
+
+
+# Files whose whole point is to hold a credential. They stay visible in a
+# listing, because a tree that quietly omits things stops adding up and you
+# would never know what you were not being shown — but their contents are
+# never served. Seeing that a .env exists is useful; reading it over the
+# tailnet is how a key ends up somewhere it cannot be recalled from.
+SECRET_NAMES = (
+    ".env", ".npmrc", ".netrc", ".pgpass", ".htpasswd",
+    "credentials", "secrets", "id_rsa", "id_ed25519", "kubeconfig",
+    "node-token", "k3s.yaml",
+)
+SECRET_SUFFIXES = (".key", ".pem", ".p12", ".pfx", ".keystore", ".jks", ".kdbx")
+
+
+def is_secret(name):
+    low = name.lower()
+    if low.endswith(SECRET_SUFFIXES):
+        return True
+    return any(low == n or low.startswith(n + ".") for n in SECRET_NAMES)
 
 # A recursive size means walking the whole subtree. On spinning storage that is
 # minutes, so answers are kept and re-used until the directory itself changes.
@@ -205,11 +264,10 @@ def resolve_under_root(path):
 
     realpath first: it collapses ../ and resolves every symlink, so the check
     is against where the path actually lands rather than how it was spelled.
-    A link inside the tree pointing at /etc fails here like any other escape.
     """
     real = os.path.realpath(path or "")
-    for root in BROWSE_ROOTS:
-        if real == root or real.startswith(root + os.sep):
+    for _, root in BROWSE_ROOTS:
+        if _under(real, root):
             return real
     return None
 
@@ -293,6 +351,8 @@ def scan(path):
                 # Sent rather than inferred: the client should not have to know
                 # that a leading dot is what makes something hidden on Unix.
                 "hidden": entry.name.startswith("."),
+                # Listed, sized, never opened. See SECRET_NAMES.
+                "secret": is_secret(entry.name),
             }
         )
 
@@ -304,6 +364,7 @@ def scan(path):
         "count": len(entries),
         "truncated": max(0, len(entries) - MAX_ENTRIES),
         "complete": complete,
+        "writable": is_writable(path),
         "entries": entries[:MAX_ENTRIES],
     }
 
@@ -325,6 +386,8 @@ def open_file(path):
     """
     real = resolve_under_root(path)
     if not real or not os.path.isfile(real):
+        return None
+    if is_secret(os.path.basename(real)):
         return None
     try:
         return real, os.path.getsize(real)
@@ -518,12 +581,14 @@ def cache_stats():
 
 
 def roots():
-    """The tops of the tree, for a client that has no path to start from."""
-    out = []
-    for root in BROWSE_ROOTS:
-        if os.path.isdir(root):
-            out.append({"path": root, "name": os.path.basename(root) or root})
-    return {"roots": out}
+    """The tops of the tree, for a client with no path to start from."""
+    return {
+        "roots": [
+            {"path": path, "name": label, "writable": is_writable(path)}
+            for label, path in BROWSE_ROOTS
+            if os.path.isdir(path)
+        ]
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
