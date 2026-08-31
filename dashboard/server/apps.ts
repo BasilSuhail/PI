@@ -18,6 +18,7 @@ interface AppConfig {
   name: string;
   url: string;
   nodeId?: string;
+  /** A path to artwork under client/public, or a single character to letter the tile. */
   icon?: string;
   /** Skip the probe for services that are not HTTP, e.g. Samba on 445. */
   check?: boolean;
