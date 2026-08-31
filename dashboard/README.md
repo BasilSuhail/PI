@@ -103,8 +103,20 @@ Each of these was a bug found by pointing the client at a real node.
   since the previous request, so requests close together produce a window near
   zero and a sample where `total` and `idle` are both `0`. Retrying makes it
   worse. A short last-known-good cache covers it.
-- **Container memory reads `0B`** on a node without `cgroup_enable=memory`.
-  Names, status and CPU still work.
+- **Container memory reads nothing** on a node without `cgroup_enable=memory`:
+  Glances returns `"memory":{}` and the column shows `—`. Names, status and CPU
+  still work, so the list is worth showing regardless. jug1 is in this state.
+- **Glances reads the Docker socket, not containerd.** A k3s node therefore
+  reports zero containers even while running pods. Cluster workloads are not
+  visible here today; they would need the Kubernetes API, which `lib/kube.ts`
+  already talks to for node roles.
+- **Per-process `cpu_percent` is a spot sample, not an average.** It covers
+  however long it has been since that process was last looked at. Glances
+  samples its own process immediately after building the process list, so it
+  measures its own measurement burst over a very short window: it read 98% and
+  210% of a core on two boards whose true cost, from cumulative `cpu_times`
+  over two minutes, was 0.54% and 0.07%. The number is also the sort key, so
+  sorting by CPU sorted on noise. `cpu_times` is cumulative and honest.
 
 ## Origin
 
