@@ -1,4 +1,5 @@
 [
   { "name": "OSINT", "url": "http://pi.<tailnet>.ts.net:3000", "nodeId": "pi", "icon": "O" },
+  { "name": "OSINT News", "url": "http://pi.<tailnet>.ts.net:3000/news", "nodeId": "pi", "icon": "N" },
   { "name": "OSINT API", "url": "http://pi.<tailnet>.ts.net:8000/docs", "nodeId": "pi", "icon": "A" }
 ]
