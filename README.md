@@ -35,10 +35,62 @@ make dashboard
 
 `make agents` if `agent/` changed. `make check` to confirm. `make` lists the rest.
 
-Storage is two more: `make browse NODE=<node>` after plugging a disk in, and
-`make samba NODE=<node>` once, to share them. See [`docs/storage.md`](docs/storage.md).
-
 Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
+
+<details>
+<summary><strong>Storage — one-time setup</strong></summary>
+
+On the Mac. Every command, in order.
+
+```bash
+cd ~/folders/PI
+```
+
+```bash
+make bootstrap NODE=pi
+```
+
+```bash
+make agents
+```
+
+```bash
+make browse
+```
+
+```bash
+ssh pi 'sudo apt-get install -y libvips-tools'
+```
+
+```bash
+ssh pi2 'sudo apt-get install -y libvips-tools'
+```
+
+Check it worked:
+
+```bash
+curl -s http://pi.<tailnet>.ts.net:9101/files
+```
+
+Optional, for Finder:
+
+```bash
+make samba NODE=pi
+```
+
+```bash
+make samba NODE=pi2
+```
+
+After adding a disk, only this:
+
+```bash
+make browse
+```
+
+What each does: [`docs/storage.md`](docs/storage.md).
+
+</details>
 
 ## Scope
 
