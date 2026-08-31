@@ -456,3 +456,46 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .disk-row .mount{width:58px}
   .memory-legend{grid-template-columns:1fr}
 }
+
+/* ── Storage ───────────────────────────────────────────────────────────── */
+/* Miller columns. The strip scrolls sideways and each column scrolls down,
+   so a deep tree never widens the page or pushes the status bar off. */
+.fx-strip{display:flex;overflow-x:auto;overflow-y:hidden;gap:0;height:min(62vh,560px);
+  border:1px solid var(--panel-edge);border-radius:6px;background:var(--panel);
+  box-shadow:0 2px 4px rgba(44,80,91,.10),inset 0 1px var(--gloss-soft)}
+.fx-col{flex:0 0 268px;min-width:0;height:100%;overflow-y:auto;
+  border-right:1px solid var(--panel-line)}
+.fx-col:last-child{border-right:0}
+.fx-row{display:flex;align-items:center;gap:9px;width:100%;padding:4px 8px;border:0;
+  background:none;font:inherit;text-align:left;cursor:pointer}
+.fx-row:hover{background:var(--gloss-soft)}
+.fx-row.on{background:var(--link);color:#fff}
+/* A dotfile is dimmed, never dropped — findable, but not competing with the
+   things a person named themselves. */
+.fx-row.hidden .fx-name{opacity:.62}
+.fx-size{flex:0 0 74px;text-align:right;font-family:var(--mono);font-size:10px;
+  font-variant-numeric:tabular-nums}
+.fx-size.huge{color:#3f9ee0}
+.fx-size.big{color:#4aa9c9}
+.fx-size.mid{color:#3fa38a}
+.fx-size.small{color:#5aa36a}
+.fx-size.zero{color:var(--faint)}
+.fx-row.on .fx-size,.fx-row.on .fx-name{color:#fff}
+.fx-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--ink);font-size:12px}
+.fx-name.link{font-style:italic}
+.fx-arrow{flex:none;color:var(--faint)}
+.fx-row.on .fx-arrow{color:#fff}
+.fx-note{display:flex;align-items:center;gap:7px;padding:10px 9px;color:var(--muted);
+  font-family:var(--mono);font-size:9px}
+.fx-note.bad{color:var(--warn,#b4622a)}
+.fx-spinner{width:10px;height:10px;border:2px solid var(--panel-line);border-top-color:var(--link);
+  border-radius:50%;animation:fx-spin .7s linear infinite}
+@keyframes fx-spin{to{transform:rotate(360deg)}}
+.fx-status{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  margin-top:9px;color:var(--muted);font-family:var(--mono);font-size:9px}
+.fx-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+@media (max-width:720px){
+  .fx-col{flex-basis:82vw}
+  .fx-strip{height:min(66vh,520px)}
+}

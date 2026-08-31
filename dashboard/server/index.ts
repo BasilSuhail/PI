@@ -14,6 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
+import { fetchListing, fetchRoots } from './lib/files';
 import { fetchFleet } from './lib/fleet';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
@@ -74,6 +75,26 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
 
   if (url.pathname === '/api/apps') {
     sendJson(req, res, 200, await fetchApps());
+    return true;
+  }
+
+  const files = url.pathname.match(/^\/api\/nodes\/([^/]+)\/files$/);
+  if (files) {
+    const host = await addressFor(decodeURIComponent(files[1]));
+    if (!host) {
+      sendJson(req, res, 404, { error: 'unknown node, or it has no IPv4 address' });
+      return true;
+    }
+    // The path is not validated here. The shim owns that decision and refuses
+    // anything outside its roots; duplicating the rule in two places is how
+    // the two drift apart.
+    const path = url.searchParams.get('path');
+    try {
+      sendJson(req, res, 200, path ? await fetchListing(host, path) : await fetchRoots(host));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'scan failed';
+      sendJson(req, res, 502, { error: message });
+    }
     return true;
   }
 
