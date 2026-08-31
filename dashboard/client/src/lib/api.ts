@@ -100,3 +100,8 @@ export const getRoots = (id: string) =>
   json<DirRoots>(`/api/nodes/${encodeURIComponent(id)}/files`);
 export const getListing = (id: string, path: string) =>
   json<DirListing>(`/api/nodes/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`);
+
+/** A URL rather than a fetch: <img> does the request, so the browser decides
+ *  when — which is what makes lazy loading actually lazy. */
+export const thumbUrl = (id: string, path: string) =>
+  `/api/nodes/${encodeURIComponent(id)}/thumb?path=${encodeURIComponent(path)}`;

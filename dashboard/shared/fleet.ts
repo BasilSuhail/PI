@@ -142,6 +142,11 @@ export interface DirEntry {
   /** Unix seconds. */
   mtime: number;
   hidden: boolean;
+  /**
+   * Set only on the synthetic columns — the fleet and a board's roots — where
+   * a child's key cannot be made by joining a name onto its parent.
+   */
+  path?: string;
 }
 
 export interface DirListing {
@@ -161,4 +166,13 @@ export interface DirListing {
 
 export interface DirRoots {
   roots: Array<{ path: string; name: string }>;
+}
+
+/** What the cache holds, and whether the board can make thumbnails at all. */
+export interface ThumbCache {
+  bytes: number;
+  count: number;
+  capBytes: number;
+  /** False when vipsthumbnail is not installed — only Exif thumbs are possible. */
+  tool: boolean;
 }

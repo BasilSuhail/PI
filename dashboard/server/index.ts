@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
-import { fetchListing, fetchRoots } from './lib/files';
+import { fetchCache, fetchListing, fetchRoots, openStream } from './lib/files';
 import { fetchFleet } from './lib/fleet';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
@@ -94,6 +94,54 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
     } catch (err) {
       const message = err instanceof Error ? err.message : 'scan failed';
       sendJson(req, res, 502, { error: message });
+    }
+    return true;
+  }
+
+  // Bytes rather than JSON: the body is piped straight through so a download
+  // never lands in this process's memory.
+  const stream = url.pathname.match(/^\/api\/nodes\/([^/]+)\/(download|thumb)$/);
+  if (stream) {
+    const [, rawId, kind] = stream;
+    const host = await addressFor(decodeURIComponent(rawId));
+    const path = url.searchParams.get('path');
+    if (!host || !path) {
+      sendJson(req, res, 404, { error: 'unknown node, or no path given' });
+      return true;
+    }
+    const upstream = await openStream(host, kind as 'download' | 'thumb', path);
+    if (!upstream.ok || !upstream.body) {
+      sendJson(req, res, upstream.status, { error: upstream.statusText });
+      return true;
+    }
+    const name = path.split('/').pop() ?? 'file';
+    res.writeHead(200, {
+      'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+      ...(upstream.headers.get('content-length')
+        ? { 'Content-Length': upstream.headers.get('content-length')! }
+        : {}),
+      // A thumbnail is keyed on the file's mtime upstream, so it is safe to
+      // keep. A download is not cached: the file may have changed.
+      'Cache-Control': kind === 'thumb' ? 'private, max-age=86400' : 'no-store',
+      ...(kind === 'download'
+        ? { 'Content-Disposition': `attachment; filename="${name.replace(/"/g, '')}"` }
+        : {}),
+    });
+    await pipeline(upstream.body as unknown as NodeJS.ReadableStream, res).catch(() => {});
+    return true;
+  }
+
+  const cache = url.pathname.match(/^\/api\/nodes\/([^/]+)\/cache$/);
+  if (cache) {
+    const host = await addressFor(decodeURIComponent(cache[1]));
+    if (!host) {
+      sendJson(req, res, 404, { error: 'unknown node' });
+      return true;
+    }
+    try {
+      sendJson(req, res, 200, await fetchCache(host));
+    } catch (err) {
+      sendJson(req, res, 502, { error: err instanceof Error ? err.message : 'unreachable' });
     }
     return true;
   }

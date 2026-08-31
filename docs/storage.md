@@ -47,6 +47,15 @@ Finder with no further configuration.
 OmniDiskSweeper uses — because the question asked of a homelab disk is nearly
 always "what is eating it", not "where is that one file".
 
+The first column is the fleet, the second is that board's disks, and the rest
+are directories. Moving between boards is the same gesture as opening a
+folder, and each board's total reads before anything is clicked. Clicking an
+open folder again collapses it; clicking the empty space under a column
+targets that column's own folder.
+
+`Grid` swaps the columns for thumbnails — list stays the default. Space opens
+Quick Look on an image, arrow keys step through the folder.
+
 Sizes on directories are the whole subtree. That means a walk, so the first
 visit to a large tree takes time; the answer is then cached until that
 directory changes. If a scan passes twenty seconds it returns what it has and
@@ -55,6 +64,34 @@ says the numbers are floors.
 Dotfiles are shown, dimmed but never dropped. On these boards `.cache` and
 `.ollama` are usually the answer, and hiding them would also make a column
 stop adding up to its parent.
+
+## Thumbnails
+
+Grid view asks the agent for a 256px WebP per image, and only for tiles
+actually scrolled into view. There is no background pass over the disks: a
+nightly crawl is what rules out the photo managers that would otherwise do
+this job.
+
+The board needs libvips for this:
+
+```bash
+sudo apt-get install -y libvips-tools
+```
+
+Without it, only images carrying an Exif thumbnail preview — which is few.
+Across a sample of 144 photos here, 5 had one; downloads and export pipelines
+strip them. `/api/nodes/<id>/cache` reports whether the tool is present.
+
+The agent shells out to `vipsthumbnail` rather than importing an imaging
+library, so its own memory never grows: measured over a cold batch of eight
+photos, resident memory moved 26320K to 26352K. Generation was 52-113ms per
+image on a laptop; expect a few hundred on a board, once per file ever.
+
+The cache lives in systemd's `CacheDirectory` — `/var/cache/jug-thumbs`, the
+one path the service may write under `ProtectSystem=strict`. It is bounded
+three ways: 500MB with least-recently-used pruning, a refusal to write below
+5GB free, and a key of path plus mtime plus size. Everything in it is derived,
+so deleting the directory costs nothing but the next regeneration.
 
 The scanner lives in the metrics agent on each board, restricted to the roots
 in `BROWSE_ROOTS` in `agent/pi-metrics.service`. It is read-only, it never
