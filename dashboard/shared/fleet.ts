@@ -8,7 +8,7 @@
 
 export type NodeRole = 'control-plane' | 'worker' | 'standalone';
 
-export type Capability = 'power' | 'throttle' | 'containers';
+export type Capability = 'power' | 'throttle';
 
 export interface CpuStats {
   cores: number;
@@ -116,8 +116,6 @@ export interface ContainerRow {
   status: string;
   cpuPct: number | null;
   memBytes: number | null;
-  /** 'docker' on standalone nodes, 'kubernetes' on cluster members. */
-  source: 'docker' | 'kubernetes';
 }
 
 export interface AppTile {

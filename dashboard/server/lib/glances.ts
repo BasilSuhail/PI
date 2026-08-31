@@ -182,33 +182,92 @@ export const fetchSystem = async (host: string) => {
   };
 };
 
+interface RawProcess {
+  pid?: number;
+  name?: string;
+  cmdline?: string[];
+  username?: string;
+  cpu_percent?: number;
+  cpu_times?: { user?: number; system?: number };
+  memory_percent?: number;
+  memory_info?: { rss?: number };
+  num_threads?: number;
+  io_counters?: number[];
+}
+
+/**
+ * Per-process CPU, averaged over the gap between polls.
+ *
+ * Glances' own `cpu_percent` is a spot sample taken over however long it has
+ * been since that process was last looked at, which makes it unusable here.
+ * Worst affected is Glances itself: it samples its own process immediately
+ * after doing the work of building the process list, so it measures its own
+ * measurement burst over a very short window. Observed at 98% and 210% of a
+ * core on two idle boards whose true cost, taken from cumulative CPU time over
+ * two minutes, was 0.54% and 0.07%.
+ *
+ * `cpu_times` is cumulative and does not have this problem. The difference
+ * between two readings, over the real elapsed time, is the honest average.
+ */
+const cpuHistory = new Map<string, Map<number, { cpuSec: number; at: number; pct: number }>>();
+
+/** Below this the divisor is small enough to inflate the result — the exact
+ *  failure being fixed. Two clients polling at once produce such a gap. */
+const MIN_WINDOW_MS = 1000;
+
+const cpuPctOf = (host: string, p: RawProcess, now: number): number => {
+  const pid = p.pid ?? 0;
+  const times = p.cpu_times;
+  // Without cumulative time there is nothing better than the spot sample.
+  if (!times) return round(p.cpu_percent ?? 0);
+
+  let seen = cpuHistory.get(host);
+  if (!seen) cpuHistory.set(host, (seen = new Map()));
+
+  const cpuSec = (times.user ?? 0) + (times.system ?? 0);
+  const prev = seen.get(pid);
+
+  // First sighting, or a pid reused by a younger process: the spot sample is
+  // all there is. One poll later there is a real window to divide by.
+  if (!prev || cpuSec < prev.cpuSec) {
+    const pct = round(p.cpu_percent ?? 0);
+    seen.set(pid, { cpuSec, at: now, pct });
+    return pct;
+  }
+
+  const elapsed = now - prev.at;
+  if (elapsed < MIN_WINDOW_MS) return prev.pct;
+
+  const pct = round(Math.max(0, (100 * (cpuSec - prev.cpuSec)) / (elapsed / 1000)));
+  seen.set(pid, { cpuSec, at: now, pct });
+  return pct;
+};
+
 export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessRow[]> => {
-  const procs = await get<Array<{
-    pid?: number;
-    name?: string;
-    cmdline?: string[];
-    username?: string;
-    cpu_percent?: number;
-    memory_percent?: number;
-    memory_info?: { rss?: number };
-    num_threads?: number;
-    io_counters?: number[];
-  }>>(host, 'processlist');
+  const procs = await get<RawProcess[]>(host, 'processlist');
   if (!Array.isArray(procs)) return [];
 
-  return procs
-    .map((p) => ({
-      pid: p.pid ?? 0,
-      name: p.name ?? '?',
-      cmdline: p.cmdline?.length ? p.cmdline.join(' ') : null,
-      user: p.username ?? null,
-      cpuPct: round(p.cpu_percent ?? 0),
-      memBytes: p.memory_info?.rss ?? 0,
-      memPct: round(p.memory_percent ?? 0),
-      threads: p.num_threads ?? 0,
-      // Glances returns [read_bytes, write_bytes, ...]; index 0 is what we show.
-      diskReadBytes: p.io_counters?.[0] ?? 0,
-    }))
+  const now = Date.now();
+  const rows = procs.map((p) => ({
+    pid: p.pid ?? 0,
+    name: p.name ?? '?',
+    cmdline: p.cmdline?.length ? p.cmdline.join(' ') : null,
+    user: p.username ?? null,
+    cpuPct: cpuPctOf(host, p, now),
+    memBytes: p.memory_info?.rss ?? 0,
+    memPct: round(p.memory_percent ?? 0),
+    threads: p.num_threads ?? 0,
+    // Glances returns [read_bytes, write_bytes, ...]; index 0 is what we show.
+    diskReadBytes: p.io_counters?.[0] ?? 0,
+  }));
+
+  // Processes that have exited would otherwise accumulate for the life of the
+  // server. The full list is walked above, so what is missing here has gone.
+  const live = new Set(rows.map((r) => r.pid));
+  const seen = cpuHistory.get(host);
+  if (seen) for (const pid of seen.keys()) if (!live.has(pid)) seen.delete(pid);
+
+  return rows
     .sort((a, b) => b.cpuPct - a.cpuPct || b.memBytes - a.memBytes)
     .slice(0, limit);
 };
@@ -226,7 +285,6 @@ export const fetchContainers = async (host: string) => {
     status?: string;
     cpu?: { total?: number };
     memory?: { usage?: number };
-    engine?: string;
   }>>(host, 'containers');
   if (!Array.isArray(raw)) return [];
 
@@ -236,6 +294,5 @@ export const fetchContainers = async (host: string) => {
     status: c.status ?? 'unknown',
     cpuPct: c.cpu?.total != null ? round(c.cpu.total) : null,
     memBytes: c.memory?.usage ?? null,
-    source: (c.engine === 'podman' ? 'docker' : 'docker') as 'docker' | 'kubernetes',
   }));
 };
