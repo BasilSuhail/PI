@@ -86,6 +86,9 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         mtime: 0,
         hidden: false,
         path: NODE_PREFIX + n.id,
+        // Only the boards show a capacity. Deeper down "used of total" would
+        // repeat the same disk figure on every row of every column.
+        capacity: n.disks.reduce((sum, d) => sum + d.totalBytes, 0),
       })),
     },
   };
@@ -133,6 +136,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
                 mtime: 0,
                 hidden: false,
                 path: r.path,
+                locked: !r.writable,
               })),
             }),
           )
@@ -353,10 +357,17 @@ const Column = ({
           onClick={() => onOpen(entry)}
           key={entry.name}
         >
-          <span class={`fx-size ${magnitude(entry.bytes)}`}>{entry.bytes ? bytes(entry.bytes) : '—'}</span>
+          <span class={`fx-size ${magnitude(entry.bytes)}`}>
+            {entry.bytes ? bytes(entry.bytes) : '—'}
+            {entry.capacity ? <span class="fx-cap"> / {bytes(entry.capacity)}</span> : null}
+          </span>
           {/* Italic for a symlink, the way a file manager sets one, so a link
               to something huge is not mistaken for the thing itself. */}
           <span class={`fx-name ${entry.link ? 'link' : ''}`}>{entry.name}</span>
+          {/* A locked root is readable and copyable like anything else; what
+              it refuses is being changed. Marked so that is visible before
+              you try. */}
+          {entry.locked && <span class="fx-lock" title="Read-only — copy from it, never change it">read-only</span>}
           {entry.dir && <Chevron size={13} class="fx-arrow" />}
         </button>
       ))}
