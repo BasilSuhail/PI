@@ -27,13 +27,12 @@ On the Mac. Not on the Pi.
 
 ```bash
 cd ~/folders/PI
-git pull
+git checkout main && git pull
+make bootstrap NODE=jug2    # first time on a board only
 make dashboard
 ```
 
 `make agents` if `agent/` changed. `make check` to confirm. `make` lists the rest.
-
-First time on a board only: `make bootstrap NODE=jug2`.
 
 Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
 
