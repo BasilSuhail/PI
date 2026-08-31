@@ -13,7 +13,13 @@ RestartSec=5
 User=nobody
 SupplementaryGroups=video
 
-# It reads two sysfs files and shells out to vcgencmd. Nothing else.
+# The directories the file scanner is allowed to describe. Anything outside
+# these is refused, so widening this line is the only way to widen its reach.
+Environment=BROWSE_ROOTS=/srv/browse:/srv/archive
+
+# It reads two sysfs files, shells out to vcgencmd, and walks the browse roots
+# to size them. ProtectSystem=strict keeps every one of those read-only, so a
+# bug in the scanner cannot write anything anywhere.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
@@ -21,7 +27,9 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6
-MemoryMax=64M
+# The scan holds a bounded cache of directory listings. 64M was enough when
+# this only reported power and temperature; it is not enough now.
+MemoryMax=128M
 
 [Install]
 WantedBy=multi-user.target

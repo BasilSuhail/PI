@@ -125,3 +125,40 @@ export interface AppTile {
   icon: string | null;
   healthy: boolean | null;
 }
+
+/**
+ * One entry in a directory, as the shim's scanner reports it.
+ *
+ * `bytes` on a directory is its whole subtree, which is the number that makes
+ * a size-sorted listing useful. Hidden entries are included — a dotfile is
+ * usually what is eating the disk, and dropping them would make the totals
+ * disagree with the parent.
+ */
+export interface DirEntry {
+  name: string;
+  dir: boolean;
+  link: boolean;
+  bytes: number;
+  /** Unix seconds. */
+  mtime: number;
+  hidden: boolean;
+}
+
+export interface DirListing {
+  path: string;
+  /** Null at a root: there is nowhere further up that may be read. */
+  parent: string | null;
+  total: number;
+  count: number;
+  /** Entries beyond the cap, which are the smallest ones. */
+  truncated: number;
+  /** False when the sizing hit its deadline. The numbers are then floors. */
+  complete: boolean;
+  entries: DirEntry[];
+  /** Set when the directory could not be read at all. */
+  error?: string;
+}
+
+export interface DirRoots {
+  roots: Array<{ path: string; name: string }>;
+}

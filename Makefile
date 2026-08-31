@@ -21,7 +21,7 @@ SYNC = { [ -d ~/$(REPO_DIR)/.git ] || { echo "no checkout on this board — run:
  && git -C ~/$(REPO_DIR) reset --hard --quiet origin/main \
  && git -C ~/$(REPO_DIR) log --oneline -1
 
-.PHONY: help dashboard agents deploy check logs bootstrap
+.PHONY: help dashboard agents deploy check logs bootstrap browse samba
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
@@ -29,6 +29,8 @@ help:
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
 	@echo "make logs        last 40 lines from the dashboard service"
+	@echo "make browse NODE=jug2      rebuild /srv/browse after adding a disk"
+	@echo "make samba NODE=jug2       share the disks over SMB, asks for a password"
 	@echo "make bootstrap NODE=jug2   once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
@@ -52,6 +54,13 @@ check:
 
 logs:
 	ssh $(DASH_NODE) 'journalctl -u jug-console -n 40 --no-pager'
+
+browse:
+	ssh $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-browse.sh'
+
+# Interactive: smbpasswd prompts on the board, so this one wants a terminal.
+samba:
+	ssh -t $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-samba.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)

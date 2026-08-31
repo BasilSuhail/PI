@@ -12,6 +12,7 @@ not the silicon.
 |---|---|
 | `docs/build-log.md` | what was done to each board, in order, with the reasoning and the measured numbers |
 | `docs/dashboard.md` | fleet dashboard design and data contract |
+| `docs/storage.md` | the browse root, the Storage view, and the Samba shares |
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
 | `deploy/` | installs the dashboard as a service on a node |
@@ -34,6 +35,9 @@ make dashboard
 
 `make agents` if `agent/` changed. `make check` to confirm. `make` lists the rest.
 
+Storage is two more: `make browse NODE=<node>` after plugging a disk in, and
+`make samba NODE=<node>` once, to share them. See [`docs/storage.md`](docs/storage.md).
+
 Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
 
 ## Scope
@@ -47,6 +51,9 @@ Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
 
 k3s running on jug2. Agents on both boards. Dashboard live over Tailscale.
 
-The 8TB is still blocked on a 12V supply, which holds up the whole archive
-tier. jug1 has not had the cgroup flag applied, so its `mem_limit`s are
-unenforced and container memory reads blank on the dashboard.
+The disks already attached are browsable from the console and mountable in
+Finder — neither waits on the 8TB, which is still blocked on a 12V supply and
+still holds up the archive tier proper.
+
+jug1 has not had the cgroup flag applied, so its `mem_limit`s are unenforced
+and container memory reads blank on the dashboard.
