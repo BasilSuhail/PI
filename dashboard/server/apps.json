@@ -1,5 +1,5 @@
 [
-  { "name": "OSINT", "url": "http://jug.taild9f605.ts.net:3000", "nodeId": "jug", "icon": "O" },
-  { "name": "OSINT News", "url": "http://jug.taild9f605.ts.net:3000/news", "nodeId": "jug", "icon": "N" },
-  { "name": "OSINT API", "url": "http://jug.taild9f605.ts.net:8000/docs", "nodeId": "jug", "icon": "A" }
+  { "name": "OSINT", "url": "https://jug.taild9f605.ts.net/", "nodeId": "jug", "icon": "O" },
+  { "name": "OSINT News", "url": "https://jug.taild9f605.ts.net/news", "nodeId": "jug", "icon": "N" },
+  { "name": "OSINT API", "url": "https://jug.taild9f605.ts.net/api/docs", "nodeId": "jug", "icon": "A" }
 ]
