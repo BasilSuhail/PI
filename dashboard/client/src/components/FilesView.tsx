@@ -69,10 +69,14 @@ const diskName = (device: string, mount: string): string => {
   return mount === '/' ? dev : mount;
 };
 
+/**
+ * Where a row leads. An entry carrying its own path is followed to it — that
+ * covers boards, disks, and a root pinned into a disk's listing, none of which
+ * sit where their name would put them. Joining the name onto the parent is the
+ * fallback for ordinary directories, not the rule.
+ */
 const childKey = (parent: string, entry: DirEntry): string =>
-  isNodeCol(parent) || parent === FLEET
-    ? entry.path ?? entry.name
-    : `${parent.replace(/\/$/, '')}/${entry.name}`;
+  entry.path ?? `${parent.replace(/\/$/, '')}/${entry.name}`;
 
 export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const reachable = nodes.filter((n) => n.online && !n.error);
