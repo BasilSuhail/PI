@@ -15,6 +15,7 @@ not the silicon.
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
 | `deploy/` | installs the dashboard as a service on a node |
+| `Makefile` | the deploy commands — `make` on its own lists them |
 
 Issues carry the planning: [#1](../../issues/1) what fits on one board,
 [#2](../../issues/2) what a single big box would take,
@@ -22,48 +23,49 @@ Issues carry the planning: [#1](../../issues/1) what fits on one board,
 
 ## Deploying
 
-From the Mac, from a checkout of `main`. Tailscale has to be up — a hang or an
-unresolvable hostname is always that (`tailscale status`, then `tailscale up`).
-Both boards prompt for a password; key auth is off by choice. Every script is
-idempotent, so re-running one costs nothing but time.
+**Every command here runs on the Mac**, from `~/folders/PI`. You never SSH into
+a board yourself — `make` opens the connection, and the script it starts runs
+on the board and builds there. Tailscale has to be up on the Mac; a hang or an
+unresolvable hostname is always that:
 
-After merging a PR:
+```bash
+tailscale status          # "Tailscale is stopped" means the tunnel is down
+tailscale up
+```
+
+Each command asks for the board's password once — key auth is off by choice.
+
+### Once per board, ever
 
 ```bash
 cd ~/folders/PI
-git checkout main && git pull
+make bootstrap NODE=jug2
+make bootstrap NODE=jug
 ```
 
-Then run whichever matches what changed.
+This gives the board a read-only deploy key and its own checkout of this repo
+at `~/PI`, so a deploy becomes the board pulling from GitHub instead of the Mac
+pushing files at it. Re-running is safe; it verifies rather than replaces.
 
-**Dashboard** — anything under `dashboard/` or `deploy/`, launcher tiles
-included. Takes a few minutes; it builds on the board.
+### Every time a PR is merged
 
 ```bash
-rsync -a --delete --exclude node_modules --exclude dist dashboard/ jug2:~/dashboard/
-scp deploy/install-dashboard.sh jug2:~/
-ssh jug2 'bash ~/install-dashboard.sh'
+cd ~/folders/PI
+make dashboard   # dashboard/ or deploy/ changed — launcher tiles included
+make agents      # agent/ changed — both boards
+make deploy      # both of the above
+make check       # services up, dashboard answering
 ```
 
-**Agents** — anything under `agent/`.
+`make` on its own lists them. Each target takes the board to exactly
+`origin/main`, then builds and installs there, printing the commit it landed on
+before the build starts. Nothing is copied from the Mac, so what runs on the
+board is what is on `main` — the Mac's own checkout does not even have to be up
+to date. Pull on the Mac to get new `make` targets, not new code. Every script
+is idempotent; re-running one costs nothing but time.
 
-```bash
-rsync -a agent/ jug:~/agent/  && ssh jug  'bash ~/agent/install.sh'
-rsync -a agent/ jug2:~/agent/ && ssh jug2 'bash ~/agent/install.sh'
-```
-
-**Then check it worked.**
-
-```bash
-ssh jug2 'systemctl is-active jug-console glances pi-metrics'
-ssh jug  'systemctl is-active glances pi-metrics'
-curl -s -o /dev/null -w 'dashboard: %{http_code}\n' https://jug2.taild9f605.ts.net/api/nodes
-```
-
-Three `active` on jug2, two on jug, `200` from the dashboard.
-
-One-time setup, why these commands are shaped this way, and what to do when a
-deploy goes wrong: [`docs/deploy.md`](docs/deploy.md).
+One-time setup, the fallback for when a board cannot reach GitHub, and what to
+do when a deploy does not take: [`docs/deploy.md`](docs/deploy.md).
 
 ## Scope
 
