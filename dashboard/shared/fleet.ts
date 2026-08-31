@@ -147,6 +147,10 @@ export interface DirEntry {
    * a child's key cannot be made by joining a name onto its parent.
    */
   path?: string;
+  /** Total size of the board's disks. Column zero only. */
+  capacity?: number;
+  /** A root that refuses every write. Shown before you try, not after. */
+  locked?: boolean;
 }
 
 export interface DirListing {
@@ -162,10 +166,14 @@ export interface DirListing {
   entries: DirEntry[];
   /** Set when the directory could not be read at all. */
   error?: string;
+  /** False for anything outside the writable roots — the system, in practice. */
+  writable?: boolean;
 }
 
 export interface DirRoots {
-  roots: Array<{ path: string; name: string }>;
+  /** `writable` is the agent's answer, not the UI's guess: a read-only root
+   *  refuses a write whatever the interface offers. */
+  roots: Array<{ path: string; name: string; writable: boolean }>;
 }
 
 /** What the cache holds, and whether the board can make thumbnails at all. */

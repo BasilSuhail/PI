@@ -9,13 +9,23 @@ ExecStart=/usr/local/bin/pi-metrics.py
 Restart=always
 RestartSec=5
 
-# vcgencmd needs /dev/vcio, which is group video. No root required.
+# install.sh drops in the login user. Not root, and not nobody either: nobody
+# cannot enter a home directory, so the browser showed empty folders where the
+# actual work is. As the login user it sees what an ssh session would see, and
+# no more — Docker's internal storage stays root-owned and invisible.
+#
+# vcgencmd needs /dev/vcio, which is group video.
 User=nobody
 SupplementaryGroups=video
 
-# The directories the file scanner is allowed to describe. Anything outside
-# these is refused, so widening this line is the only way to widen its reach.
-Environment=BROWSE_ROOTS=/srv/browse:/srv/archive
+# Named tops of the tree, as label=path. Everything under them is readable —
+# a browser that cannot show your own code or a config under /etc is a folder,
+# not a file manager. install.sh adds a home= shortcut for the login user.
+Environment=BROWSE_ROOTS=system=/,archives=/srv/archive
+
+# The only paths that may ever be modified, once write endpoints exist.
+# Everything else is permanently read-only, whatever the interface offers.
+Environment=BROWSE_WRITABLE=/srv/archive:/srv/browse
 
 # Thumbnails. systemd creates /var/cache/pi-thumbs owned by this service and
 # makes it writable despite ProtectSystem=strict — the one path this process

@@ -16,8 +16,6 @@ OWNER="${OWNER:-$(id -un)}"
 # Wikipedia alone is ~100GB; refuse to start somewhere that cannot hold it.
 MIN_FREE_GB="${MIN_FREE_GB:-200}"
 
-DIRS=(backups documents photos movies books wikipedia repos)
-
 # $ARCHIVE does not exist yet, and nor may its parent if it was overridden.
 probe="$ARCHIVE"
 while [ ! -d "$probe" ]; do probe=$(dirname "$probe"); done
@@ -27,16 +25,16 @@ if [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
   exit 1
 fi
 
+# No subdirectories. The tree used to be seeded with backups/, documents/,
+# photos/ and the rest, which is someone else deciding how you file things.
+# This is your space; make the folders you actually want.
 echo "==> Creating $ARCHIVE (${free_gb}GB free)"
 sudo mkdir -p "$ARCHIVE"
-for d in "${DIRS[@]}"; do sudo mkdir -p "$ARCHIVE/$d"; done
 sudo chown -R "$OWNER:$(id -gn "$OWNER")" "$ARCHIVE"
 # Group-writable and setgid, so anything added later inherits the group rather
 # than depending on whichever daemon happened to write the file.
 sudo chmod -R 2775 "$ARCHIVE"
 
-echo
-for d in "${DIRS[@]}"; do printf '  %s/%s\n' "$ARCHIVE" "$d"; done
 echo
 df -h "$ARCHIVE" | sed 's/^/  /'
 
