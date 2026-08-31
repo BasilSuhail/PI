@@ -220,6 +220,44 @@ Exposed with `tailscale serve --bg 8080` — real certificate, tailnet-only, no 
 https://pi2.<tailnet>.ts.net   →  200
 ```
 
+## 9. Archive tree on pi2
+
+`deploy/setup-archive.sh`. Creates `/srv/archive` and seven directories under it.
+
+The 8TB is still blocked on 12V, and the archive did not need to wait for it.
+pi2 holds 873GB free, which covers Wikipedia at ~100GB, the book library and a
+first laptop backup with room left. The tier that issue #1 describes — Samba,
+Kiwix, Jellyfin, Calibre-Web — can be built now and moved later, because every
+service is pointed at the path and never at a device.
+
+```
+/srv/archive/
+├── backups/      laptops, Time Machine target
+├── documents/
+├── photos/
+├── movies/
+├── books/
+├── wikipedia/    kiwix .zim files
+└── repos/        git mirrors
+```
+
+Directories are `2775`: group-writable with the setgid bit, so anything written
+later inherits the group rather than depending on which daemon created it.
+
+**The trap this sets, and how the script defuses it.** `/srv/archive` is a plain
+directory on `/dev/sda2` today and a mount point later. Mounting a disk over a
+directory does not move what is underneath — those files stay on the root
+filesystem, keep consuming it, and become invisible while the mount is live. The
+script detects it is not on a mount point and prints the migration in full:
+copy to the new disk mounted elsewhere, verify, then swap and delete. It also
+refuses to run anywhere with less than 200GB free, since Wikipedia alone would
+not fit.
+
+Placement was decided by measurement rather than by which board has the SATA
+HAT. pi1 sustains ~350% of a core during ingest bursts against a load average
+of 4.33 on four cores; pi2 idles at 1.6% with load 0.038. Reads for Jellyfin
+and Samba belong on the board that has cycles to serve them.
+
 ## Security posture
 
 | | |
@@ -238,7 +276,7 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 
 ## Open
 
-- [ ] **12V supply for the 8TB.** £15–25. Blocks the entire archive tier — Samba, Kiwix, Jellyfin, Calibre-Web. Highest value item on the list.
+- [ ] **12V supply for the 8TB.** £15–25. No longer blocks the archive tier: `/srv/archive` lives on pi2's spare 873GB and the disk swaps in underneath later, per the migration `deploy/setup-archive.sh` prints. Still blocks the archive being an archive — one drive holding the only copy is a countdown.
 - [ ] **cgroup flag on pi1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the home router.
