@@ -7,7 +7,7 @@
  * to stay connected long enough to receive.
  */
 
-import type { DirListing, DirRoots } from '../../shared/fleet';
+import type { DirListing, DirRoots, ThumbCache } from '../../shared/fleet';
 import { SHIM_PORT } from './shim';
 
 const TIMEOUT_MS = 25_000;
@@ -36,3 +36,19 @@ export const fetchRoots = (host: string) => get<DirRoots>(host, '');
 
 export const fetchListing = (host: string, path: string) =>
   get<DirListing>(host, `?path=${encodeURIComponent(path)}`);
+
+export const fetchCache = async (host: string): Promise<ThumbCache> => {
+  const res = await fetch(`http://${host}:${SHIM_PORT}/cache`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as ThumbCache;
+};
+
+/**
+ * File bytes and thumbnails are streamed rather than parsed, so these hand
+ * back the response for the caller to pipe. A thumbnail is small; a download
+ * can be gigabytes, and buffering one would take the board out.
+ */
+export const openStream = (host: string, kind: 'download' | 'thumb', path: string) =>
+  fetch(`http://${host}:${SHIM_PORT}/${kind}?path=${encodeURIComponent(path)}`, {
+    cache: 'no-store',
+  });

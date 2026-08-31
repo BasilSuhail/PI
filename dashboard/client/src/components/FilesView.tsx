@@ -1,7 +1,11 @@
 /**
- * Miller columns over the browsable disks, biggest first — the OmniDiskSweeper
- * layout, because the question being asked of a homelab disk is almost always
- * "what is eating it" rather than "where is that one file".
+ * The disks, as columns: board, then disk, then folder, then file.
+ *
+ * Miller columns sorted biggest first — the OmniDiskSweeper layout, because
+ * the question asked of a homelab disk is almost always "what is eating it"
+ * rather than "where is that one file". The board is the first column rather
+ * than a control above them, so moving between machines is the same gesture
+ * as opening a folder and the fleet's totals read before anything is clicked.
  *
  * Every entry is shown, dotfiles included. On these boards the answer is
  * usually a dotfile — .cache, .ollama, a stray .venv — and hiding them would
@@ -10,9 +14,17 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DirEntry, DirListing, FleetNode } from '../../../shared/fleet';
-import { getListing, getRoots } from '../lib/api';
-import { bytes, relative } from '../lib/format';
-import { Alert, Chevron, Disk } from './icons';
+import { getListing, getRoots, thumbUrl } from '../lib/api';
+import { bytes } from '../lib/format';
+import { Alert, Chevron, Disk, Grid, List } from './icons';
+
+/** A board is column zero; below it, paths are real. `@node:<id>` marks one. */
+const NODE_PREFIX = '@node:';
+const isNodeCol = (key: string) => key.startsWith(NODE_PREFIX);
+const nodeOf = (key: string) => key.slice(NODE_PREFIX.length);
+
+/** Column zero itself. Not a path — the fleet. */
+const FLEET = '@fleet';
 
 interface Cell {
   listing: DirListing | null;
@@ -20,49 +32,297 @@ interface Cell {
   loading: boolean;
 }
 
+interface Picked {
+  entry: DirEntry;
+  /** The column the entry lives in, so opening it truncates the right tail. */
+  depth: number;
+  /** Key of the column, which is what its children are fetched against. */
+  parent: string;
+  /** Board the entry is on. Null in column zero. */
+  node: string | null;
+  path: string;
+}
+
 /**
- * Size drives the colour, so a column reads at a glance without comparing
- * numbers. The thresholds are deliberately coarse — this is meant to be
- * skimmed, not measured.
+ * Size drives the colour so a column reads without comparing numbers. Coarse
+ * on purpose — this is meant to be skimmed, not measured.
  */
-const magnitude = (n: number): string => {
-  if (n === 0) return 'zero';
-  if (n >= 1e9) return 'huge';
-  if (n >= 1e8) return 'big';
-  if (n >= 1e6) return 'mid';
-  return 'small';
+const magnitude = (n: number): string =>
+  n === 0 ? 'zero' : n >= 1e9 ? 'huge' : n >= 1e8 ? 'big' : n >= 1e6 ? 'mid' : 'small';
+
+const IMAGE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
+
+const childKey = (parent: string, entry: DirEntry): string =>
+  isNodeCol(parent) || parent === FLEET
+    ? entry.path ?? entry.name
+    : `${parent.replace(/\/$/, '')}/${entry.name}`;
+
+export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
+  const reachable = nodes.filter((n) => n.online && !n.error);
+  const [trail, setTrail] = useState<string[]>([FLEET]);
+  const [cells, setCells] = useState<Record<string, Cell>>({});
+  const [picked, setPicked] = useState<Record<number, string>>({});
+  const [sel, setSel] = useState<Picked | null>(null);
+  const [view, setView] = useState<'list' | 'grid'>('list');
+  const [preview, setPreview] = useState<Picked | null>(null);
+  const strip = useRef<HTMLDivElement>(null);
+
+  /** Column zero is built here rather than fetched — the fleet is already known. */
+  const fleetCell: Cell = {
+    loading: false,
+    error: reachable.length === 0 ? 'No board is answering. The disks are only readable through one.' : null,
+    listing: {
+      path: FLEET,
+      parent: null,
+      total: 0,
+      count: reachable.length,
+      truncated: 0,
+      complete: true,
+      entries: reachable.map((n) => ({
+        name: n.name,
+        dir: true,
+        link: false,
+        bytes: n.disks.reduce((sum, d) => sum + d.usedBytes, 0),
+        mtime: 0,
+        hidden: false,
+        path: NODE_PREFIX + n.id,
+      })),
+    },
+  };
+
+  const cellFor = (key: string): Cell =>
+    key === FLEET ? fleetCell : (cells[key] ?? { listing: null, error: null, loading: true });
+
+  /** The board a column belongs to, walking back up the trail. */
+  const nodeAt = (depth: number): string | null => {
+    for (let i = depth; i >= 0; i -= 1) {
+      if (isNodeCol(trail[i])) return nodeOf(trail[i]);
+    }
+    return null;
+  };
+
+  // Fetch any open column that has no answer yet. A board's column asks for
+  // its roots; everything deeper asks for one directory.
+  useEffect(() => {
+    trail.forEach((key, depth) => {
+      if (key === FLEET || cells[key]) return;
+      const node = nodeAt(depth);
+      if (!node) return;
+      setCells((prev) => ({ ...prev, [key]: { listing: null, error: null, loading: true } }));
+
+      const done = (listing: DirListing) =>
+        setCells((prev) => ({ ...prev, [key]: { listing, error: null, loading: false } }));
+      const failed = (err: Error) =>
+        setCells((prev) => ({ ...prev, [key]: { listing: null, error: err.message, loading: false } }));
+
+      if (isNodeCol(key)) {
+        getRoots(node)
+          .then((res) =>
+            done({
+              path: key,
+              parent: null,
+              total: 0,
+              count: res.roots.length,
+              truncated: 0,
+              complete: true,
+              entries: res.roots.map((r) => ({
+                name: r.name,
+                dir: true,
+                link: false,
+                bytes: 0,
+                mtime: 0,
+                hidden: false,
+                path: r.path,
+              })),
+            }),
+          )
+          .catch(failed);
+      } else {
+        getListing(node, key).then(done).catch(failed);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trail]);
+
+  // A new column arrives off the right edge; follow it, the way Finder does.
+  useEffect(() => {
+    const el = strip.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [trail.length]);
+
+  const here = trail[trail.length - 1];
+  const hereListing = cellFor(here).listing;
+
+  const select = (entry: DirEntry, parent: string, depth: number) => {
+    setSel({ entry, parent, depth, node: nodeAt(depth), path: childKey(parent, entry) });
+    setPicked((prev) => ({ ...prev, [depth]: entry.name }));
+  };
+
+  const open = (entry: DirEntry, parent: string, depth: number) => {
+    const key = childKey(parent, entry);
+    select(entry, parent, depth);
+    // Clicking the open folder again folds it back up. Anything to its right
+    // belonged to it and goes with it.
+    const alreadyOpen = trail[depth + 1] === key;
+    setTrail(entry.dir && !alreadyOpen ? [...trail.slice(0, depth + 1), key] : trail.slice(0, depth + 1));
+  };
+
+  /** Clicking under the rows drops the row selection and targets the column. */
+  const targetColumn = (depth: number) => {
+    setSel(null);
+    setPicked((prev) => Object.fromEntries(Object.entries(prev).filter(([d]) => +d < depth)));
+    setTrail(trail.slice(0, depth + 1));
+  };
+
+  const download = () => {
+    if (!sel || !sel.node || sel.entry.dir) return;
+    // A plain navigation, so the browser's own download handling takes over
+    // rather than this holding the bytes in memory.
+    window.location.href = `/api/nodes/${encodeURIComponent(sel.node)}/download?path=${encodeURIComponent(sel.path)}`;
+  };
+
+  const siblings = (): DirEntry[] =>
+    (cellFor(sel?.parent ?? here).listing?.entries ?? []).filter((e) => !e.dir && IMAGE.test(e.name));
+
+  const step = (dir: number) => {
+    if (!preview) return;
+    const list = siblings();
+    const at = list.findIndex((e) => e.name === preview.entry.name);
+    if (at < 0 || list.length === 0) return;
+    const next = list[(at + dir + list.length) % list.length];
+    setPreview({ ...preview, entry: next, path: childKey(preview.parent, next) });
+  };
+
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setPreview(null);
+        return;
+      }
+      if (ev.key === ' ' && (sel || preview)) {
+        ev.preventDefault();
+        if (preview) setPreview(null);
+        else if (sel && !sel.entry.dir && IMAGE.test(sel.entry.name)) setPreview(sel);
+        return;
+      }
+      if (preview && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
+        ev.preventDefault();
+        step(ev.key === 'ArrowRight' ? 1 : -1);
+      }
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  });
+
+  const canPreview = !!sel && !sel.entry.dir && IMAGE.test(sel.entry.name);
+
+  return (
+    <div class="page-stack">
+      <div class="fx-bar">
+        <div class="fx-sel">
+          <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing) : 'Storage'}</strong>
+          <span class="fx-meta">
+            <span>{bytes(sel ? sel.entry.bytes : (hereListing?.total ?? 0))}</span>
+            <span class="fx-where">{sel ? sel.path : (hereListing?.path ?? '')}</span>
+          </span>
+        </div>
+
+        <div class="fx-actions">
+          <button class="fx-act" disabled={!canPreview} onClick={() => sel && setPreview(sel)}>
+            Quick Look
+          </button>
+          <button class="fx-act" disabled={!sel || sel.entry.dir} onClick={download}>
+            Download
+          </button>
+          <button
+            class="fx-act"
+            disabled={!sel}
+            onClick={() => sel && navigator.clipboard?.writeText(sel.path).catch(() => {})}
+          >
+            Copy path
+          </button>
+          {/* Present and dead until the agent may write. Hiding them would
+              make the view look finished when it is not. */}
+          <button class="fx-act" disabled title="Needs write access — not enabled yet">Rename</button>
+          <button class="fx-act danger" disabled title="Needs write access — not enabled yet">Delete</button>
+        </div>
+
+        <div class="fx-view">
+          <button class={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+            <List size={13} /> List
+          </button>
+          <button class={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>
+            <Grid size={13} /> Grid
+          </button>
+        </div>
+      </div>
+
+      {view === 'list' ? (
+        <div class="fx-strip" ref={strip}>
+          {trail.map((key, depth) => (
+            <Column
+              key={key}
+              cell={cellFor(key)}
+              selectedName={picked[depth] ?? null}
+              node={nodeAt(depth)}
+              onOpen={(entry) => open(entry, key, depth)}
+              onTarget={() => targetColumn(depth)}
+            />
+          ))}
+        </div>
+      ) : (
+        <Grille
+          cell={cellFor(here)}
+          node={nodeAt(trail.length - 1)}
+          selectedName={sel?.entry.name ?? null}
+          onSelect={(entry) => select(entry, here, trail.length - 1)}
+          onOpen={(entry) => open(entry, here, trail.length - 1)}
+          onPreview={(entry) => setPreview({ entry, parent: here, depth: trail.length - 1, node: nodeAt(trail.length - 1), path: childKey(here, entry) })}
+        />
+      )}
+
+      {hereListing && (
+        <div class="fx-status">
+          <span class="fx-where">{hereListing.path === FLEET ? 'fleet' : hereListing.path}</span>
+          <span>
+            {hereListing.count} {hereListing.count === 1 ? 'entry' : 'entries'}
+            {hereListing.truncated > 0 && ` · ${hereListing.truncated} smaller not shown`}
+            {!hereListing.complete && ' · sizing timed out, totals are floors'}
+          </span>
+        </div>
+      )}
+
+      {preview && preview.node && (
+        <div class="fx-ql" onClick={() => setPreview(null)}>
+          <figure onClick={(e) => e.stopPropagation()}>
+            <img src={thumbUrl(preview.node, preview.path)} alt={preview.entry.name} />
+            <figcaption>
+              <span>{preview.entry.name}</span>
+              <span>{bytes(preview.entry.bytes)} · ← → to step · Esc to close</span>
+            </figcaption>
+          </figure>
+        </div>
+      )}
+    </div>
+  );
 };
 
-const Row = ({
-  entry,
-  selected,
-  onOpen,
-}: {
-  entry: DirEntry;
-  selected: boolean;
-  onOpen: () => void;
-}) => (
-  <button
-    class={`fx-row ${selected ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
-    onClick={onOpen}
-    title={`${entry.name} · ${bytes(entry.bytes)} · ${relative(new Date(entry.mtime * 1000).toISOString())}`}
-  >
-    <span class={`fx-size ${magnitude(entry.bytes)}`}>{bytes(entry.bytes)}</span>
-    {/* A symlink is set in italic, the way a file manager does, so a link to
-        somewhere huge is not mistaken for the thing itself. */}
-    <span class={`fx-name ${entry.link ? 'link' : ''}`}>{entry.name}</span>
-    {entry.dir && <Chevron size={13} class="fx-arrow" />}
-  </button>
-);
+/** A board column and a roots column have no path worth printing. */
+const label = (key: string, listing: DirListing): string =>
+  key === FLEET ? 'Fleet' : isNodeCol(key) ? nodeOf(key) : listing.path.split('/').pop() || listing.path;
 
 const Column = ({
   cell,
   selectedName,
+  node,
   onOpen,
+  onTarget,
 }: {
   cell: Cell;
   selectedName: string | null;
+  node: string | null;
   onOpen: (entry: DirEntry) => void;
+  onTarget: () => void;
 }) => {
   if (cell.loading && !cell.listing) {
     return (
@@ -88,160 +348,76 @@ const Column = ({
   return (
     <div class="fx-col">
       {listing.entries.map((entry) => (
-        <Row
+        <button
+          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
+          onClick={() => onOpen(entry)}
           key={entry.name}
-          entry={entry}
-          selected={entry.name === selectedName}
-          onOpen={() => onOpen(entry)}
-        />
+        >
+          <span class={`fx-size ${magnitude(entry.bytes)}`}>{entry.bytes ? bytes(entry.bytes) : '—'}</span>
+          {/* Italic for a symlink, the way a file manager sets one, so a link
+              to something huge is not mistaken for the thing itself. */}
+          <span class={`fx-name ${entry.link ? 'link' : ''}`}>{entry.name}</span>
+          {entry.dir && <Chevron size={13} class="fx-arrow" />}
+        </button>
       ))}
-      {listing.entries.length === 0 && <div class="fx-note">Empty</div>}
-      {listing.truncated > 0 && (
-        <div class="fx-note">{listing.truncated} smaller entries not shown</div>
-      )}
-      {!listing.complete && (
-        <div class="fx-note bad">
-          <Alert size={14} /> Sizing timed out — these are floors, not totals
+      {listing.entries.length === 0 && (
+        <div class="fx-note">
+          {node ? 'Empty' : 'Nothing mounted. Run deploy/setup-browse.sh on this board.'}
         </div>
       )}
+      {/* The dead zone: clicking below the rows targets this column's folder,
+          so an action lands on what is being looked at. */}
+      <div class="fx-pad" onClick={onTarget} />
     </div>
   );
 };
 
-export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
-  const reachable = nodes.filter((n) => n.online && !n.error);
-  const [nodeId, setNodeId] = useState<string | null>(null);
-  /** Open directories, left to right. The first is a root. */
-  const [trail, setTrail] = useState<string[]>([]);
-  const [cells, setCells] = useState<Record<string, Cell>>({});
-  const [rootError, setRootError] = useState<string | null>(null);
-  const strip = useRef<HTMLDivElement>(null);
-
-  const active = nodeId ?? reachable[0]?.id ?? null;
-
-  // Pick the first root as soon as a node is chosen, so the view opens with
-  // something on screen rather than an empty frame and a prompt.
-  useEffect(() => {
-    if (!active) return;
-    setTrail([]);
-    setCells({});
-    setRootError(null);
-    let alive = true;
-    getRoots(active)
-      .then((res) => {
-        if (!alive) return;
-        if (res.roots.length === 0) {
-          setRootError('Nothing is browsable on this node yet. Run deploy/setup-browse.sh on it.');
-          return;
-        }
-        setTrail([res.roots[0].path]);
-      })
-      .catch((err: Error) => alive && setRootError(err.message));
-    return () => {
-      alive = false;
-    };
-  }, [active]);
-
-  // Fetch any column that is open and has no answer yet. Keyed by node and
-  // path so switching boards cannot show the other one's tree.
-  useEffect(() => {
-    if (!active) return;
-    for (const path of trail) {
-      const key = `${active}:${path}`;
-      if (cells[key]) continue;
-      setCells((prev) => ({ ...prev, [key]: { listing: null, error: null, loading: true } }));
-      getListing(active, path)
-        .then((listing) =>
-          setCells((prev) => ({ ...prev, [key]: { listing, error: null, loading: false } })),
-        )
-        .catch((err: Error) =>
-          setCells((prev) => ({ ...prev, [key]: { listing: null, error: err.message, loading: false } })),
-        );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, trail]);
-
-  // A new column appears off the right edge; scroll to it the way Finder does.
-  useEffect(() => {
-    const el = strip.current;
-    if (el) el.scrollLeft = el.scrollWidth;
-  }, [trail.length]);
-
-  const [selected, setSelected] = useState<Record<number, string>>({});
-
-  const open = (depth: number, entry: DirEntry) => {
-    const parent = trail[depth];
-    const child = `${parent.replace(/\/$/, '')}/${entry.name}`;
-    // Everything to the right of the clicked column is now wrong. A file
-    // selects without opening anything, which is what closes the tail.
-    setTrail(entry.dir ? [...trail.slice(0, depth + 1), child] : trail.slice(0, depth + 1));
-    setSelected({ ...selected, [depth]: entry.name });
-  };
-
-  const deepest = cells[`${active}:${trail[trail.length - 1]}`]?.listing ?? null;
-
-  if (reachable.length === 0) {
-    return (
-      <div class="app-note">
-        <Disk size={18} />
-        <div>
-          <strong>No node is answering</strong>
-          <span>The disks can only be read through a board that is online.</span>
-        </div>
-      </div>
-    );
-  }
+const Grille = ({
+  cell,
+  node,
+  selectedName,
+  onSelect,
+  onOpen,
+  onPreview,
+}: {
+  cell: Cell;
+  node: string | null;
+  selectedName: string | null;
+  onSelect: (entry: DirEntry) => void;
+  onOpen: (entry: DirEntry) => void;
+  onPreview: (entry: DirEntry) => void;
+}) => {
+  const listing = cell.listing;
+  if (!listing) return <div class="fx-grid" />;
 
   return (
-    <div class="page-stack">
-      <div class="page-heading">
-        <div>
-          <p class="eyebrow">
-            STORAGE <span class="mini-led" />
-          </p>
-          <h1>Everything, biggest first.</h1>
-          <p class="subhead">Hidden files included — they are usually the answer.</p>
-        </div>
-        {reachable.length > 1 && (
-          <div class="seg">
-            {reachable.map((n) => (
-              <button key={n.id} class={n.id === active ? 'on' : ''} onClick={() => setNodeId(n.id)}>
-                {n.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {rootError && (
-        <div class="warning-banner">
-          <Alert size={18} />
-          <div>
-            <strong>Nothing to browse</strong>
-            <span>{rootError}</span>
-          </div>
-        </div>
-      )}
-
-      <div class="fx-strip" ref={strip}>
-        {trail.map((path, depth) => (
-          <Column
-            key={`${active}:${path}`}
-            cell={cells[`${active}:${path}`] ?? { listing: null, error: null, loading: true }}
-            selectedName={selected[depth] ?? null}
-            onOpen={(entry) => open(depth, entry)}
-          />
-        ))}
-      </div>
-
-      {deepest && (
-        <div class="fx-status">
-          <span class="fx-path">{deepest.path}</span>
-          <span>
-            {bytes(deepest.total)} · {deepest.count} {deepest.count === 1 ? 'entry' : 'entries'}
+    <div class="fx-grid">
+      {listing.entries.map((entry) => (
+        <button
+          class={`fx-tile ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
+          key={entry.name}
+          onClick={() => onSelect(entry)}
+          onDblClick={() => (entry.dir ? onOpen(entry) : onPreview(entry))}
+        >
+          <span class="fx-shot">
+            {node && !entry.dir && IMAGE.test(entry.name) ? (
+              // Lazy on purpose: the board only makes a thumbnail for a tile
+              // that is actually scrolled into view.
+              <img
+                src={thumbUrl(node, `${listing.path.replace(/\/$/, '')}/${entry.name}`)}
+                alt=""
+                loading="lazy"
+                onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+              />
+            ) : (
+              <Disk size={30} />
+            )}
           </span>
-        </div>
-      )}
+          <span class="fx-tname">{entry.name}</span>
+          <span class="fx-tsize">{bytes(entry.bytes)}</span>
+        </button>
+      ))}
+      {listing.entries.length === 0 && <div class="fx-note">Empty</div>}
     </div>
   );
 };
