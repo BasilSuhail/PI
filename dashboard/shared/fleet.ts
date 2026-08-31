@@ -151,6 +151,8 @@ export interface DirEntry {
   capacity?: number;
   /** A root that refuses every write. Shown before you try, not after. */
   locked?: boolean;
+  /** A named shortcut sitting above the disk's own contents. */
+  pinned?: boolean;
 }
 
 export interface DirListing {
