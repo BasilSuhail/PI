@@ -31,6 +31,19 @@ fi
 echo "==> Creating $ARCHIVE (${free_gb}GB free)"
 sudo mkdir -p "$ARCHIVE"
 sudo chown -R "$OWNER:$(id -gn "$OWNER")" "$ARCHIVE"
+
+# Boards set up before that decision still carry the seeded folders. Clear
+# them out — but only the ones this script made, and only while they are
+# empty, so anything that has since been filled is never at risk. rmdir
+# refuses a non-empty directory, which is the whole safety mechanism here.
+SEEDED=(backups books documents movies photos repos wikipedia)
+removed=""
+for d in "${SEEDED[@]}"; do
+  if [ -d "$ARCHIVE/$d" ] && sudo rmdir "$ARCHIVE/$d" 2>/dev/null; then
+    removed="$removed $d"
+  fi
+done
+[ -n "$removed" ] && echo "==> Removed empty seeded folders:$removed"
 # Group-writable and setgid, so anything added later inherits the group rather
 # than depending on whichever daemon happened to write the file.
 sudo chmod -R 2775 "$ARCHIVE"

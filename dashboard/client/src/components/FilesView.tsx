@@ -52,6 +52,18 @@ const magnitude = (n: number): string =>
 
 const IMAGE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 
+/**
+ * A disk's name in the column. The device is what distinguishes them on these
+ * boards — sda is the SSD, mmcblk0 the card — and the mount point is what
+ * makes a second partition of the same device tell itself apart.
+ */
+const diskName = (device: string, mount: string): string => {
+  const dev = device.replace(/^\/dev\//, '');
+  if (/^mmcblk/.test(dev)) return mount === '/' ? 'SD card' : `SD card · ${mount}`;
+  if (/^(sd|nvme|vd)/.test(dev)) return mount === '/' ? 'SSD' : `SSD · ${mount}`;
+  return mount === '/' ? dev : mount;
+};
+
 const childKey = (parent: string, entry: DirEntry): string =>
   isNodeCol(parent) || parent === FLEET
     ? entry.path ?? entry.name
@@ -78,17 +90,17 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
       count: reachable.length,
       truncated: 0,
       complete: true,
+      // No size on a board. It holds several disks and adding them together
+      // produces a number that describes none of them; the figures belong on
+      // the disks themselves, one column in.
       entries: reachable.map((n) => ({
         name: n.name,
         dir: true,
         link: false,
-        bytes: n.disks.reduce((sum, d) => sum + d.usedBytes, 0),
+        bytes: 0,
         mtime: 0,
         hidden: false,
         path: NODE_PREFIX + n.id,
-        // Only the boards show a capacity. Deeper down "used of total" would
-        // repeat the same disk figure on every row of every column.
-        capacity: n.disks.reduce((sum, d) => sum + d.totalBytes, 0),
       })),
     },
   };
@@ -119,16 +131,26 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         setCells((prev) => ({ ...prev, [key]: { listing: null, error: err.message, loading: false } }));
 
       if (isNodeCol(key)) {
+        const board = nodes.find((n) => n.id === node);
         getRoots(node)
-          .then((res) =>
-            done({
-              path: key,
-              parent: null,
-              total: 0,
-              count: res.roots.length,
-              truncated: 0,
-              complete: true,
-              entries: res.roots.map((r) => ({
+          .then((res) => {
+            // The disks first, each carrying its own used-of-total, then the
+            // named roots that are not simply a disk's own mount point — the
+            // archive, which is a shortcut into one of them.
+            const mounts = new Set((board?.disks ?? []).map((d) => d.mount));
+            const disks: DirEntry[] = (board?.disks ?? []).map((d) => ({
+              name: diskName(d.device, d.mount),
+              dir: true,
+              link: false,
+              bytes: d.usedBytes,
+              mtime: 0,
+              hidden: false,
+              path: d.mount,
+              capacity: d.totalBytes,
+            }));
+            const shortcuts: DirEntry[] = res.roots
+              .filter((r) => !mounts.has(r.path))
+              .map((r) => ({
                 name: r.name,
                 dir: true,
                 link: false,
@@ -137,9 +159,18 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
                 hidden: false,
                 path: r.path,
                 locked: !r.writable,
-              })),
-            }),
-          )
+              }));
+            const entries = [...disks, ...shortcuts];
+            done({
+              path: key,
+              parent: null,
+              total: 0,
+              count: entries.length,
+              truncated: 0,
+              complete: true,
+              entries,
+            });
+          })
           .catch(failed);
       } else {
         getListing(node, key).then(done).catch(failed);
@@ -159,7 +190,12 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
   const select = (entry: DirEntry, parent: string, depth: number) => {
     setSel({ entry, parent, depth, node: nodeAt(depth), path: childKey(parent, entry) });
-    setPicked((prev) => ({ ...prev, [depth]: entry.name }));
+    // Drop every selection to the right: those rows belonged to what was open
+    // before, and leaving them lit makes a refreshed column look stale.
+    setPicked((prev) => ({
+      ...Object.fromEntries(Object.entries(prev).filter(([d]) => +d < depth)),
+      [depth]: entry.name,
+    }));
   };
 
   const open = (entry: DirEntry, parent: string, depth: number) => {
@@ -224,10 +260,12 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     <div class="page-stack">
       <div class="fx-bar">
         <div class="fx-sel">
-          <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing) : 'Storage'}</strong>
+          <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing, nodes) : 'Storage'}</strong>
           <span class="fx-meta">
             <span>{bytes(sel ? sel.entry.bytes : (hereListing?.total ?? 0))}</span>
-            <span class="fx-where">{sel ? sel.path : (hereListing?.path ?? '')}</span>
+            <span class="fx-where">
+              {sel ? readablePath(nodes, sel.path) : readablePath(nodes, hereListing?.path ?? '')}
+            </span>
           </span>
         </div>
 
@@ -287,7 +325,13 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
       {hereListing && (
         <div class="fx-status">
-          <span class="fx-where">{hereListing.path === FLEET ? 'fleet' : hereListing.path}</span>
+          <span class="fx-where">
+            {hereListing.path === FLEET
+              ? 'fleet'
+              : isNodeCol(hereListing.path)
+                ? nodeName(nodes, nodeOf(hereListing.path))
+                : hereListing.path}
+          </span>
           <span>
             {hereListing.count} {hereListing.count === 1 ? 'entry' : 'entries'}
             {hereListing.truncated > 0 && ` · ${hereListing.truncated} smaller not shown`}
@@ -311,9 +355,20 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   );
 };
 
+/** A board's own key is a tailnet id, which is not a thing to show anyone. */
+const nodeName = (nodes: FleetNode[], id: string): string =>
+  nodes.find((n) => n.id === id)?.name ?? id;
+
+const readablePath = (nodes: FleetNode[], key: string): string =>
+  key === FLEET ? 'fleet' : isNodeCol(key) ? nodeName(nodes, nodeOf(key)) : key;
+
 /** A board column and a roots column have no path worth printing. */
-const label = (key: string, listing: DirListing): string =>
-  key === FLEET ? 'Fleet' : isNodeCol(key) ? nodeOf(key) : listing.path.split('/').pop() || listing.path;
+const label = (key: string, listing: DirListing, nodes: FleetNode[]): string =>
+  key === FLEET
+    ? 'Fleet'
+    : isNodeCol(key)
+      ? nodeName(nodes, nodeOf(key))
+      : listing.path.split('/').pop() || listing.path;
 
 const Column = ({
   cell,
