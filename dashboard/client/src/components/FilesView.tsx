@@ -5,7 +5,12 @@
  * the question asked of a homelab disk is almost always "what is eating it"
  * rather than "where is that one file". The board is the first column rather
  * than a control above them, so moving between machines is the same gesture
- * as opening a folder and the fleet's totals read before anything is clicked.
+ * as opening a folder.
+ *
+ * A board holds nothing itself. Everything is on one of its disks, so the
+ * second column is disks and only disks — being "on jug" is not a place a
+ * file could be saved, and the tree should not pretend otherwise. Named roots
+ * like the archive are pinned inside the disk that actually holds them.
  *
  * Every entry is shown, dotfiles included. On these boards the answer is
  * usually a dotfile — .cache, .ollama, a stray .venv — and hiding them would
@@ -13,7 +18,7 @@
  */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { DirEntry, DirListing, FleetNode } from '../../../shared/fleet';
+import type { DirEntry, DirListing, DirRoots, FleetNode } from '../../../shared/fleet';
 import { getListing, getRoots, thumbUrl } from '../lib/api';
 import { bytes } from '../lib/format';
 import { Alert, Chevron, Disk, Grid, List } from './icons';
@@ -52,6 +57,18 @@ const magnitude = (n: number): string =>
 
 const IMAGE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 
+/**
+ * A disk's name in the column. The device is what distinguishes them on these
+ * boards — sda is the SSD, mmcblk0 the card — and the mount point is what
+ * makes a second partition of the same device tell itself apart.
+ */
+const diskName = (device: string, mount: string): string => {
+  const dev = device.replace(/^\/dev\//, '');
+  if (/^mmcblk/.test(dev)) return mount === '/' ? 'SD card' : `SD card · ${mount}`;
+  if (/^(sd|nvme|vd)/.test(dev)) return mount === '/' ? 'SSD' : `SSD · ${mount}`;
+  return mount === '/' ? dev : mount;
+};
+
 const childKey = (parent: string, entry: DirEntry): string =>
   isNodeCol(parent) || parent === FLEET
     ? entry.path ?? entry.name
@@ -65,6 +82,8 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const [sel, setSel] = useState<Picked | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [preview, setPreview] = useState<Picked | null>(null);
+  /** Named roots per board, so a disk's column can pin the ones that live on it. */
+  const [rootsByNode, setRootsByNode] = useState<Record<string, DirRoots['roots']>>({});
   const strip = useRef<HTMLDivElement>(null);
 
   /** Column zero is built here rather than fetched — the fleet is already known. */
@@ -78,17 +97,17 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
       count: reachable.length,
       truncated: 0,
       complete: true,
+      // No size on a board. It holds several disks and adding them together
+      // produces a number that describes none of them; the figures belong on
+      // the disks themselves, one column in.
       entries: reachable.map((n) => ({
         name: n.name,
         dir: true,
         link: false,
-        bytes: n.disks.reduce((sum, d) => sum + d.usedBytes, 0),
+        bytes: 0,
         mtime: 0,
         hidden: false,
         path: NODE_PREFIX + n.id,
-        // Only the boards show a capacity. Deeper down "used of total" would
-        // repeat the same disk figure on every row of every column.
-        capacity: n.disks.reduce((sum, d) => sum + d.totalBytes, 0),
       })),
     },
   };
@@ -119,30 +138,35 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         setCells((prev) => ({ ...prev, [key]: { listing: null, error: err.message, loading: false } }));
 
       if (isNodeCol(key)) {
+        const board = nodes.find((n) => n.id === node);
         getRoots(node)
-          .then((res) =>
+          .then((res) => {
+            setRootsByNode((prev) => ({ ...prev, [node]: res.roots }));
+            const entries: DirEntry[] = (board?.disks ?? []).map((d) => ({
+              name: diskName(d.device, d.mount),
+              dir: true,
+              link: false,
+              bytes: d.usedBytes,
+              mtime: 0,
+              hidden: false,
+              path: d.mount,
+              capacity: d.totalBytes,
+            }));
             done({
               path: key,
               parent: null,
               total: 0,
-              count: res.roots.length,
+              count: entries.length,
               truncated: 0,
               complete: true,
-              entries: res.roots.map((r) => ({
-                name: r.name,
-                dir: true,
-                link: false,
-                bytes: 0,
-                mtime: 0,
-                hidden: false,
-                path: r.path,
-                locked: !r.writable,
-              })),
-            }),
-          )
+              entries,
+            });
+          })
           .catch(failed);
       } else {
-        getListing(node, key).then(done).catch(failed);
+        getListing(node, key)
+          .then((listing) => done({ ...listing, entries: withPins(listing, node) }))
+          .catch(failed);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,12 +178,41 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trail.length]);
 
+  /**
+   * A named root shown at the top of the disk that holds it. Only on the
+   * disk's own column: deeper down it would appear again at every level.
+   */
+  const withPins = (listing: DirListing, node: string): DirEntry[] => {
+    const board = nodes.find((n) => n.id === node);
+    const isMount = (board?.disks ?? []).some((d) => d.mount === listing.path);
+    if (!isMount) return listing.entries;
+    const pins = (rootsByNode[node] ?? [])
+      .filter((r) => r.path !== listing.path && r.path.startsWith(listing.path.replace(/\/$/, '') + '/'))
+      .map((r) => ({
+        name: r.name,
+        dir: true,
+        link: false,
+        bytes: 0,
+        mtime: 0,
+        hidden: false,
+        path: r.path,
+        locked: !r.writable,
+        pinned: true,
+      }));
+    return [...pins, ...listing.entries];
+  };
+
   const here = trail[trail.length - 1];
   const hereListing = cellFor(here).listing;
 
   const select = (entry: DirEntry, parent: string, depth: number) => {
     setSel({ entry, parent, depth, node: nodeAt(depth), path: childKey(parent, entry) });
-    setPicked((prev) => ({ ...prev, [depth]: entry.name }));
+    // Drop every selection to the right: those rows belonged to what was open
+    // before, and leaving them lit makes a refreshed column look stale.
+    setPicked((prev) => ({
+      ...Object.fromEntries(Object.entries(prev).filter(([d]) => +d < depth)),
+      [depth]: entry.name,
+    }));
   };
 
   const open = (entry: DirEntry, parent: string, depth: number) => {
@@ -224,10 +277,12 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     <div class="page-stack">
       <div class="fx-bar">
         <div class="fx-sel">
-          <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing) : 'Storage'}</strong>
+          <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing, nodes) : 'Storage'}</strong>
           <span class="fx-meta">
             <span>{bytes(sel ? sel.entry.bytes : (hereListing?.total ?? 0))}</span>
-            <span class="fx-where">{sel ? sel.path : (hereListing?.path ?? '')}</span>
+            <span class="fx-where">
+              {sel ? readablePath(nodes, sel.path) : readablePath(nodes, hereListing?.path ?? '')}
+            </span>
           </span>
         </div>
 
@@ -287,7 +342,13 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
       {hereListing && (
         <div class="fx-status">
-          <span class="fx-where">{hereListing.path === FLEET ? 'fleet' : hereListing.path}</span>
+          <span class="fx-where">
+            {hereListing.path === FLEET
+              ? 'fleet'
+              : isNodeCol(hereListing.path)
+                ? nodeName(nodes, nodeOf(hereListing.path))
+                : hereListing.path}
+          </span>
           <span>
             {hereListing.count} {hereListing.count === 1 ? 'entry' : 'entries'}
             {hereListing.truncated > 0 && ` · ${hereListing.truncated} smaller not shown`}
@@ -311,9 +372,20 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   );
 };
 
+/** A board's own key is a tailnet id, which is not a thing to show anyone. */
+const nodeName = (nodes: FleetNode[], id: string): string =>
+  nodes.find((n) => n.id === id)?.name ?? id;
+
+const readablePath = (nodes: FleetNode[], key: string): string =>
+  key === FLEET ? 'fleet' : isNodeCol(key) ? nodeName(nodes, nodeOf(key)) : key;
+
 /** A board column and a roots column have no path worth printing. */
-const label = (key: string, listing: DirListing): string =>
-  key === FLEET ? 'Fleet' : isNodeCol(key) ? nodeOf(key) : listing.path.split('/').pop() || listing.path;
+const label = (key: string, listing: DirListing, nodes: FleetNode[]): string =>
+  key === FLEET
+    ? 'Fleet'
+    : isNodeCol(key)
+      ? nodeName(nodes, nodeOf(key))
+      : listing.path.split('/').pop() || listing.path;
 
 const Column = ({
   cell,
@@ -353,7 +425,7 @@ const Column = ({
     <div class="fx-col">
       {listing.entries.map((entry) => (
         <button
-          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
+          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''} ${entry.pinned ? 'pin' : ''}`}
           onClick={() => onOpen(entry)}
           key={entry.name}
         >
@@ -367,6 +439,7 @@ const Column = ({
           {/* A locked root is readable and copyable like anything else; what
               it refuses is being changed. Marked so that is visible before
               you try. */}
+          {entry.pinned && <span class="fx-pin" title="A named root on this disk">◆</span>}
           {entry.locked && <span class="fx-lock" title="Read-only — copy from it, never change it">read-only</span>}
           {entry.dir && <Chevron size={13} class="fx-arrow" />}
         </button>
