@@ -14,7 +14,7 @@ if [ -z "$NODE" ]; then
 fi
 
 REPO_DIR="${REPO_DIR:-PI}"
-KEY="\$HOME/.ssh/id_${REPO_DIR}_deploy"
+KEY="~/.ssh/id_${REPO_DIR}_deploy"
 
 # The slug comes from the remote rather than being written down here, so a
 # fork or a rename needs no edit.
@@ -23,7 +23,7 @@ SLUG="$(git config --get remote.origin.url | sed -E 's#(git@github.com:|https://
 
 # One authenticated connection, reused by every ssh below, so the password is
 # asked for once instead of three times.
-SOCK="$(mktemp -u /tmp/bootstrap-%s-XXXX)"
+SOCK="$(mktemp -u "/tmp/bootstrap-${NODE}-XXXXXX")"
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$SOCK" -o ControlPersist=120s)
 cleanup() { "${SSH[@]}" -O exit "$NODE" 2>/dev/null || true; }
 trap cleanup EXIT
