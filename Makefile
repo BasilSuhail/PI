@@ -7,6 +7,9 @@
 NODE ?= jug2
 DASH_NODE ?= jug2
 AGENT_NODES ?= jug jug2
+# Boards with disks worth exposing. Same list today; kept separate because a
+# node can run an agent without holding anything you want to browse.
+STORAGE_NODES ?= jug jug2
 REPO_DIR ?= PI
 DASH_URL ?= https://jug2.taild9f605.ts.net
 
@@ -29,8 +32,8 @@ help:
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
 	@echo "make logs        last 40 lines from the dashboard service"
-	@echo "make browse NODE=jug2      rebuild /srv/browse after adding a disk"
-	@echo "make samba NODE=jug2       share the disks over SMB, asks for a password"
+	@echo "make browse                rebuild /srv/browse on both boards"
+	@echo "make samba NODE=jug2       share that board's disks over SMB, asks for a password"
 	@echo "make bootstrap NODE=jug2   once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
@@ -56,9 +59,13 @@ logs:
 	ssh $(DASH_NODE) 'journalctl -u jug-console -n 40 --no-pager'
 
 browse:
-	ssh $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-browse.sh'
+	@for node in $(STORAGE_NODES); do \
+		echo "==> $$node"; \
+		ssh $$node '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-browse.sh' || exit 1; \
+	done
 
-# Interactive: smbpasswd prompts on the board, so this one wants a terminal.
+# Interactive: smbpasswd prompts on the board, so this one wants a terminal
+# and cannot be looped silently. One node at a time, on purpose.
 samba:
 	ssh -t $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-samba.sh'
 

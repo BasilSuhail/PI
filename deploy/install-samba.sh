@@ -13,7 +13,6 @@
 set -euo pipefail
 
 BROWSE="${BROWSE:-/srv/browse}"
-ARCHIVE="${ARCHIVE:-/srv/archive}"
 SHARE_USER="${SHARE_USER:-$(id -un)}"
 CONF=/etc/samba/smb.conf
 # Tailscale hands out addresses from the carrier-grade NAT range. Nothing on a
@@ -33,12 +32,6 @@ if [ -f "$CONF" ] && [ ! -f "$CONF.before-jug" ]; then
   echo "==> Keeping the original config at $CONF.before-jug"
   sudo cp "$CONF" "$CONF.before-jug"
 fi
-
-# Time Machine wants a share of its own with the fruit module on it. Point it
-# inside the archive so backups land in the tree with everything else.
-tm_path="$ARCHIVE/backups"
-sudo mkdir -p "$tm_path"
-sudo chown "$SHARE_USER:$(id -gn "$SHARE_USER")" "$tm_path"
 
 echo "==> Writing $CONF"
 sudo tee "$CONF" >/dev/null <<CONFIG
@@ -84,16 +77,6 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    valid users = ${SHARE_USER}
    create mask = 0664
    directory mask = 2775
-
-[timemachine]
-   comment = Time Machine
-   path = ${tm_path}
-   browseable = yes
-   read only = no
-   valid users = ${SHARE_USER}
-   fruit:time machine = yes
-   # Left unset on purpose: a size cap here is advisory, and macOS will fill
-   # whatever it is told it has. Cap it from the Mac if it needs capping.
 CONFIG
 
 echo "==> Checking the config"
@@ -126,8 +109,7 @@ cat <<NEXT
 
     smb://${host:-$(hostname)}.taild9f605.ts.net/browse
 
-  Log in as ${SHARE_USER} with the password just set. For Time Machine, pick
-  the timemachine share in System Settings > General > Time Machine.
+  Log in as ${SHARE_USER} with the password just set.
 
-  The first laptop backup runs for hours. Do it on ethernet, not wifi.
+  One share, deliberately. No Time Machine target: backups here are manual.
 NEXT
