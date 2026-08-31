@@ -23,9 +23,20 @@ SupplementaryGroups=video
 # not a file manager. install.sh adds a home= shortcut for the login user.
 Environment=BROWSE_ROOTS=system=/,archives=/srv/archive
 
-# The only paths that may ever be modified, once write endpoints exist.
-# Everything else is permanently read-only, whatever the interface offers.
-Environment=BROWSE_WRITABLE=/srv/archive:/srv/browse
+# The only paths that may ever be modified. Everything else is permanently
+# read-only whatever the interface offers. /media is where a plugged-in drive
+# lands, so a new disk arrives writable without being configured.
+Environment=BROWSE_WRITABLE=/srv/archive:/srv/browse:/media:/mnt
+
+# The same list again, enforced a layer lower. ProtectSystem=strict makes the
+# whole filesystem read-only to this process; these punch through it for those
+# paths and nothing else. A bug in the write endpoints cannot reach /etc, /usr
+# or a home directory even if every check in the code were wrong, because the
+# kernel refuses the open before any of that code runs.
+ReadWritePaths=-/srv/archive
+ReadWritePaths=-/srv/browse
+ReadWritePaths=-/media
+ReadWritePaths=-/mnt
 
 # Thumbnails. systemd creates /var/cache/pi-thumbs owned by this service and
 # makes it writable despite ProtectSystem=strict — the one path this process

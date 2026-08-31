@@ -14,7 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
-import { fetchCache, fetchListing, fetchRoots, openStream } from './lib/files';
+import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
@@ -65,6 +65,17 @@ const sendJson = (req: IncomingMessage, res: ServerResponse, status: number, bod
 const addressFor = async (id: string): Promise<string | null> => {
   const device = (await fetchTailnetDevices()).find((d) => d.id === id);
   return device ? ipv4Of(device) : null;
+};
+
+const readBody = async (req: IncomingMessage): Promise<string> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 64 * 1024) throw new Error('request body too large');
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 };
 
 const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): Promise<boolean> => {
@@ -128,6 +139,36 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
         : {}),
     });
     await pipeline(upstream.body as unknown as NodeJS.ReadableStream, res).catch(() => {});
+    return true;
+  }
+
+  const write = url.pathname.match(/^\/api\/nodes\/([^/]+)\/(write|upload)$/);
+  if (write && req.method === 'POST') {
+    const [, rawId, kind] = write;
+    const host = await addressFor(decodeURIComponent(rawId));
+    if (!host) {
+      sendJson(req, res, 404, { error: 'unknown node' });
+      return true;
+    }
+    // The agent decides. Its refusal, and its wording, are what the person
+    // gets back — the dashboard re-stating the rules would only let the two
+    // disagree.
+    const upstream =
+      kind === 'upload'
+        ? await postUpload(
+            host,
+            url.searchParams.get('path') ?? '',
+            url.searchParams.get('name') ?? '',
+            req,
+            req.headers['content-length'] ?? '0',
+          )
+        : await postWrite(host, JSON.parse(await readBody(req)));
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      sendJson(req, res, upstream.status, { error: upstream.statusText || text });
+      return true;
+    }
+    sendJson(req, res, 200, JSON.parse(text || '{}'));
     return true;
   }
 

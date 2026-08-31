@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard agents deploy check logs bootstrap archive browse samba
+.PHONY: help dashboard agents deploy check logs bootstrap archive automount browse samba
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
@@ -45,6 +45,7 @@ help:
 	@echo "make check       services up, dashboard answering"
 	@echo "make logs        last 40 lines from the dashboard service"
 	@echo "make archive               create /srv/archive on both boards, once"
+	@echo "make automount             plugged-in drives mount themselves, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
@@ -73,6 +74,9 @@ logs:
 
 archive:
 	@$(call on_storage_nodes,deploy/setup-archive.sh)
+
+automount:
+	@$(call on_storage_nodes,deploy/setup-automount.sh)
 
 browse:
 	@$(call on_storage_nodes,deploy/setup-browse.sh)

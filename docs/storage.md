@@ -99,6 +99,40 @@ follows a symlink out of a root, and the unit runs it as `nobody` under
 `ProtectSystem=strict`. A directory that `nobody` cannot enter is skipped
 rather than failing the scan — its size then reads low.
 
+## Changing things
+
+Read everywhere, write in a few places. `BROWSE_WRITABLE` in
+`agent/pi-metrics.service` names them: the archive, and `/media` and `/mnt`,
+which is where drives land.
+
+The same list appears again as `ReadWritePaths`, which is the one that
+matters. `ProtectSystem=strict` makes the whole filesystem read-only to the
+agent; those lines punch through for those paths and nothing else. A bug in
+the write endpoints cannot reach `/etc` or a home directory even if every
+check in the code were wrong, because the kernel refuses the open first.
+
+Nothing overwrites. A copy landing on a name that exists becomes `name copy`.
+Credential files are never copied, for the same reason they are never served.
+
+## Plugging a drive in
+
+```bash
+make automount
+```
+
+Once per board. After that a drive is mounted when you attach it — USB, SATA,
+whatever the kernel recognises — under `/media`, and appears in the console as
+its own disk, writable, with nothing to configure.
+
+Label a disk if you want a readable name:
+
+```bash
+sudo e2label /dev/sdX1 photos
+```
+
+Unlabelled drives mount under their device name instead. The board's existing
+disks are untouched: they stay in fstab and stay where they are.
+
 ## Samba
 
 ```bash

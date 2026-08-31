@@ -52,3 +52,34 @@ export const openStream = (host: string, kind: 'download' | 'thumb', path: strin
   fetch(`http://${host}:${SHIM_PORT}/${kind}?path=${encodeURIComponent(path)}`, {
     cache: 'no-store',
   });
+
+/**
+ * Writes are passed through rather than interpreted. The agent owns the rules
+ * — which roots are writable, what counts as a usable name, whether a
+ * destination already exists — and duplicating any of that here is how the two
+ * drift apart and one of them starts allowing what the other refuses.
+ */
+export const postWrite = (host: string, body: unknown) =>
+  fetch(`http://${host}:${SHIM_PORT}/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+export const postUpload = (
+  host: string,
+  path: string,
+  name: string,
+  stream: NodeJS.ReadableStream,
+  length: string,
+) =>
+  fetch(
+    `http://${host}:${SHIM_PORT}/upload?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Length': length },
+      body: stream as unknown as BodyInit,
+      // Node refuses to stream a request body without this.
+      duplex: 'half',
+    } as RequestInit,
+  );
