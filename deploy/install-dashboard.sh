@@ -46,10 +46,12 @@ fi
 
 echo "==> Installing to $APP_DIR"
 sudo mkdir -p "$APP_DIR"
-sudo rsync -a --delete --exclude apps.json "$SRC_DIR/dist/" "$APP_DIR/dist/"
-# The launcher config is seeded once and then left alone, so URLs edited on
-# the node are not overwritten by the next deploy.
-[ -f "$APP_DIR/dist/apps.json" ] || sudo cp "$SRC_DIR/dist/apps.json" "$APP_DIR/dist/apps.json"
+sudo rsync -a --delete "$SRC_DIR/dist/" "$APP_DIR/dist/"
+# apps.json ships with the rest of the build. It used to be seeded once and
+# then left alone, to protect tiles edited on the node — but that also meant a
+# tile added to the repo never arrived, which is how the OSINT News tile went
+# missing after it was merged. The repo is the source of truth: edit
+# dashboard/server/apps.json and deploy.
 # node_modules is not needed: the client is bundled and the server imports
 # nothing outside the standard library.
 
