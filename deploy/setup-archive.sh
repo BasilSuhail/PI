@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Creates the archive tree. Run on pi2. Idempotent — safe to re-run.
+# Creates the archive tree. Run on any board. Idempotent — safe to re-run.
 #
 # The 8TB is still blocked on 12V and does not need to block the archive with
-# it. pi2 has 873GB free, which holds Wikipedia, the book library and a first
-# laptop backup with room to spare. Nothing here assumes the disk underneath:
+# it. Both boards have hundreds of gigabytes free on their own SSD, which
+# holds Wikipedia, the book library and a first laptop backup with room to
+# spare. Nothing here assumes the disk underneath:
 # every service is pointed at the path, never at a device, so when the 8TB is
 # finally mounted at this path the services do not notice.
 #

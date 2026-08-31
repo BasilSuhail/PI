@@ -24,7 +24,19 @@ SYNC = { [ -d ~/$(REPO_DIR)/.git ] || { echo "no checkout on this board — run:
  && git -C ~/$(REPO_DIR) reset --hard --quiet origin/main \
  && git -C ~/$(REPO_DIR) log --oneline -1
 
-.PHONY: help dashboard agents deploy check logs bootstrap browse samba
+# One board failing used to abandon the rest of the loop, so a problem on the
+# first node silently became a problem on every node. Each board gets its turn
+# and the failures are reported together at the end.
+define on_storage_nodes
+	failed=""; \
+	for node in $(STORAGE_NODES); do \
+		echo "==> $$node"; \
+		ssh $$node '$(SYNC) && bash ~/$(REPO_DIR)/$(1)' || failed="$$failed $$node"; \
+	done; \
+	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
+endef
+
+.PHONY: help dashboard agents deploy check logs bootstrap archive browse samba
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
@@ -32,6 +44,7 @@ help:
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
 	@echo "make logs        last 40 lines from the dashboard service"
+	@echo "make archive               create /srv/archive on both boards, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
@@ -58,11 +71,11 @@ check:
 logs:
 	ssh $(DASH_NODE) 'journalctl -u pi-console -n 40 --no-pager'
 
+archive:
+	@$(call on_storage_nodes,deploy/setup-archive.sh)
+
 browse:
-	@for node in $(STORAGE_NODES); do \
-		echo "==> $$node"; \
-		ssh $$node '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-browse.sh' || exit 1; \
-	done
+	@$(call on_storage_nodes,deploy/setup-browse.sh)
 
 # Interactive: smbpasswd prompts on the board, so this one wants a terminal
 # and cannot be looped silently. One node at a time, on purpose.

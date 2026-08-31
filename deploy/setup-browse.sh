@@ -36,8 +36,6 @@ for row in "${rows[@]}"; do
   picked["$target"]="$source ($fstype)"
 done
 
-sudo mkdir -p "$BROWSE"
-
 # The archive is the curated tree and keeps its name whether or not it has a
 # disk of its own yet. It may not exist: setup-archive.sh has its own run.
 if [ -d "$ARCHIVE" ]; then
@@ -45,10 +43,34 @@ if [ -d "$ARCHIVE" ]; then
 fi
 
 if [ ${#picked[@]} -eq 0 ]; then
-  echo "  Nothing to expose. No data filesystem is mounted outside the OS." >&2
-  echo "  Mount a disk first, then re-run this." >&2
+  # The usual case on these boards: the SSD is the root filesystem rather than
+  # a separate mount, so every candidate was skipped as the OS. Nothing is
+  # wrong with the disk — there is simply no mount point to bind.
+  root_dev=$(findmnt -no SOURCE /)
+  root_free=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+  cat >&2 <<NOTE
+  Nothing to expose yet.
+
+  Every filesystem here is the operating system's own. $root_dev is mounted
+  at / with ${root_free}GB free, and / is skipped on purpose: binding it would
+  put the whole OS in Finder and in the console.
+
+  You do not need another disk for this. Make the archive tree first, which
+  lives on whatever filesystem is underneath and is what every service points
+  at anyway:
+
+      make archive        # or: bash deploy/setup-archive.sh
+
+  Then re-run this. When a real disk does arrive, mount it anywhere with
+  nofail and re-run this again — it is picked up with no further config.
+NOTE
   exit 1
 fi
+
+# Only now is there something to hold. Creating it earlier left an empty
+# directory behind on a failed run, which the console then read as an empty
+# disk rather than as a board that needs setting up.
+sudo mkdir -p "$BROWSE"
 
 # A mount point becomes a directory name: /mnt/ssd-1tb -> ssd-1tb, and
 # /srv/archive -> archive. Bare enough to read in Finder.
