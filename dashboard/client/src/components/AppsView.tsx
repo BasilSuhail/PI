@@ -13,7 +13,10 @@ const ACCENTS = ['purple', 'blue', 'orange', 'green', 'pink'] as const;
 const isArt = (icon: string | null): icon is string =>
   !!icon && (icon.startsWith('/') || icon.startsWith('http'));
 
-export const AppsView = ({ apps }: { apps: AppTile[] }) => {
+/** A tile that opens a view here rather than navigating away. */
+const isInternal = (url: string) => url.startsWith('#');
+
+export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (view: string) => void }) => {
   const checked = apps.filter((a) => a.healthy !== null);
   const passing = apps.filter((a) => a.healthy).length;
 
@@ -50,9 +53,16 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
           <a
             class="app-tile"
             href={app.healthy ? app.url : undefined}
-            target="_blank"
+            target={isInternal(app.url) ? undefined : '_blank'}
             rel="noreferrer"
-            onClick={(e) => !app.healthy && e.preventDefault()}
+            onClick={(e) => {
+              if (isInternal(app.url)) {
+                e.preventDefault();
+                onOpenView(app.url.slice(1));
+              } else if (!app.healthy) {
+                e.preventDefault();
+              }
+            }}
             key={app.name}
           >
             <div class={`app-icon ${isArt(app.icon) ? 'art' : ACCENTS[i % ACCENTS.length]}`}>
@@ -65,7 +75,7 @@ export const AppsView = ({ apps }: { apps: AppTile[] }) => {
             <div class="app-info">
               <strong>{app.name}</strong>
               <span>{app.nodeId ?? 'fleet'}</span>
-              <small>{new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
+              <small>{isInternal(app.url) ? 'in this console' : new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
             </div>
             <div class="app-health">
               <StatusDot online={!!app.healthy} size="sm" />
