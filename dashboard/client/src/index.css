@@ -167,6 +167,19 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 .mrow{display:flex;align-items:center;gap:8px;margin:6px 0;
   font-family:var(--mono);font-size:10px}
+/* The same row, carrying two. Each half keeps the label / meter / figure
+   shape of the rows above, in half the width. */
+.mrow.split{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
+.mhalf{display:flex;align-items:center;gap:10px;min-width:0}
+.mhalf>span{flex:0 0 40px;color:var(--faint);font-family:var(--mono);font-size:9px}
+/* Wider than the percentage columns above it: "2.59 GB" does not fit where
+   "5%" did, and a figure that wraps is worse than one that costs a little room.
+   Qualified by .split because ".mrow strong" is declared later in this file
+   and would otherwise win on source order and pull it back to 38px. */
+.mrow.split .mhalf>strong{width:auto;flex:0 0 58px;text-align:right;color:var(--ink-2);
+  font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+.mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
+@media (max-width:520px){.mrow.split{grid-template-columns:1fr}}
 .mrow>span{width:26px;color:var(--muted)}
 .mrow strong{width:38px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .meter{height:8px;flex:1;overflow:hidden;border:1px solid var(--meter-edge);border-radius:2px;

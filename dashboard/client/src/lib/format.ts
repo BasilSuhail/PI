@@ -16,6 +16,13 @@ export const bytes = (n: number | null | undefined, digits = 1): string => {
   return `${value.toFixed(value >= 100 ? 0 : digits)} ${units[unit]}`;
 };
 
+/**
+ * Swap on these boards is zram — compressed RAM, not disk — so a little of it
+ * costs nothing. Sustained use is the earliest sign a board is short of
+ * memory, well before anything gets killed.
+ */
+export const swapTone = (pct: number): string => (pct >= 50 ? 'red' : pct >= 20 ? 'orange' : '');
+
 export const bytesPerSec = (n: number | null | undefined): string =>
   n == null ? '—' : `${bytes(n, 1)}/s`;
 
