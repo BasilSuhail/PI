@@ -203,9 +203,12 @@ reachable() {
 }
 
 netfs_mount() {
-  local node="$1" user="$2" pw="$3" out rc
-  pw=${pw//\\/\\\\}
-  pw=${pw//\"/\\\"}
+  local node="$1" user="$2" out rc esc
+  # Escaped for an AppleScript string literal: a backslash first, then a quote,
+  # in that order — doing it the other way round would escape the backslashes
+  # this step introduces.
+  esc=${3//\\/\\\\}
+  esc=${esc//\"/\\\"}
   out="${WORK}/mount.$$.$RANDOM"
   (
     # The credential goes into an AppleScript variable first, rather than
@@ -214,7 +217,7 @@ netfs_mount() {
     # cannot tell a printf placeholder from the real thing. Writing it this way
     # keeps the pipeline from failing on a template.
     printf 'set c to "%s"\nset u to "%s"\ntry\n  mount volume "smb://%s/%s" as user name u with password c\n  return "ok"\non error e number n\n  return "err " & n & ": " & e\nend try\n' \
-      "$pw" "$user" "$node" "$node" | /usr/bin/osascript - > "$out" 2>&1
+      "$esc" "$user" "$node" "$node" | /usr/bin/osascript - > "$out" 2>&1
   ) &
   local child=$! waited=0
   while [ "$waited" -lt "$MOUNT_TIMEOUT" ]; do
@@ -259,19 +262,19 @@ for node in $NODES; do
       continue
     fi
     u="$(user_for "$node")"
-    pw="$(password_for "$node" "$u")"
-    if [ -z "$pw" ]; then
+    cred="$(password_for "$node" "$u")"
+    if [ -z "$cred" ]; then
       say_once "mount-$node" "no keychain entry for ${u}@${node} — run: make mounts"
       continue
     fi
-    if err=$(netfs_mount "$node" "$u" "$pw"); then
+    if err=$(netfs_mount "$node" "$u" "$cred"); then
       forget "mount-$node"; mark_ok "$node"
       log "mounted ${node} at ${mp}"
     else
       mark_failed "$node"
       say_once "mount-$node" "could not mount ${node}: ${err} — next attempt in ${RETRY_AFTER}s"
     fi
-    unset pw
+    unset cred
   else
     mounted "$mp" || continue
     # Not checked afterwards: the unmount runs in the background and checking
