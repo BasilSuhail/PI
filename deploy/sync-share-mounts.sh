@@ -11,6 +11,12 @@
 # has gone is not inert — Finder blocks on it, and so does anything that walks
 # the filesystem. Dropping the mount the moment the tailnet goes is the point
 # of running this on a timer rather than once at login.
+#
+# Nothing here may block. launchd will not start a second copy of an agent that
+# is still running, so a pass that hangs does not miss one beat — it is the last
+# pass that ever runs, and it hangs holding the very mount it was supposed to
+# clear. Every operation that touches a mount point is therefore either bounded
+# or pushed into the background and abandoned.
 set -uo pipefail
 # Deliberately not -e: one board being unreachable must not skip the other,
 # and unmounting a mount that is already gone is an expected failure.
@@ -22,10 +28,21 @@ SHARE="${SHARE:-browse}"
 # board's own login name, so mounting as the Mac's user is rejected before the
 # password is even looked at.
 SHARE_USERS="${SHARE_USERS:-}"
-# /Volumes is where macOS expects network mounts, and where Finder puts them in
-# the sidebar. The directories are made once, by the installer, with sudo;
-# nothing here needs privilege.
-MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
+# Under the home directory, not /Volumes, because macOS removes a mount point
+# when the mount goes away — including one that was there first, made by hand
+# with sudo. /Volumes is root-owned, so once it had been reaped this pass could
+# never recreate it, and a share dropped for being wedged would never come
+# back. Here the pass owns the directory and can make it whenever it needs one,
+# which is why nothing in this arrangement needs privilege at all.
+MOUNT_ROOT="${MOUNT_ROOT:-${HOME}/Shares}"
+# How long a mount is given to answer before it is treated as dead. Generous:
+# the cost of being wrong is unmounting a share that was merely slow, and it is
+# remounted on the next pass a few seconds later.
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
+# Somewhere to leave a note that a forced unmount is already running, so a
+# stuck one is not started again every pass.
+WORK="${TMPDIR:-/tmp}/jug-share-mounts"
+mkdir -p "$WORK"
 
 # launchd hands an agent a near-empty PATH, so the tools are named in full.
 # Tailscale ships as a CLI under /usr/local/bin from the standalone package and
@@ -87,13 +104,69 @@ password_for() {
   printf '%s\n' "$pw"
 }
 
-# Three attempts, weakest first. A clean unmount is preferred; a server that
-# has vanished will not give one, and leaving the mount is worse than forcing
-# it, since every later pass inherits the same wedged path.
-unmount() {
-  /sbin/umount "$1" 2>/dev/null \
-    || /sbin/umount -f "$1" 2>/dev/null \
-    || /usr/sbin/diskutil unmount force "$1" >/dev/null 2>&1
+# Is this mount still answering?
+#
+# The hard part is that there is no safe way to ask. Every probe tried blocks on
+# a wedged path, including `smbutil statshares`, which reads kernel state rather
+# than the server and still hung until the mount was forced away by hand. So the
+# probe cannot be trusted to return, and this cannot wait for it.
+#
+# A child does the reading and touches a file if it gets an answer. The parent
+# watches the clock and walks away when it runs out, without reaping the child:
+# a process blocked in uninterruptible I/O on a dead mount may not die on
+# SIGKILL either, and waiting for it to would be the same hang by another route.
+# The forced unmount that follows is what actually releases it.
+#
+# `ls` rather than a stat, because a stat of the mount point is answered from
+# the kernel's cache and a directory read is not. Only the round trip proves
+# anything.
+#
+# A child that exits without leaving the file has an answer too — a permission
+# error is a live server refusing, not a dead one — so it counts as alive.
+answering() {
+  local mp="$1" flag child waited=0
+  flag="${WORK}/probe.$$.$RANDOM"
+  rm -f "$flag"
+  ( /bin/ls -f "$mp" >/dev/null 2>&1; : > "$flag" ) &
+  child=$!
+  while [ "$waited" -lt "$PROBE_TIMEOUT" ]; do
+    if [ -e "$flag" ]; then rm -f "$flag"; return 0; fi
+    kill -0 "$child" 2>/dev/null || { rm -f "$flag"; return 0; }
+    sleep 1
+    waited=$((waited + 1))
+  done
+  kill -9 "$child" 2>/dev/null
+  rm -f "$flag"
+  return 1
+}
+
+# Start a forced unmount and do not wait for it. Three attempts, weakest first:
+# a clean unmount is preferred, a server that has vanished will not give one,
+# and leaving the mount is worse than forcing it, since every later pass
+# inherits the same wedged path.
+#
+# One at a time per mount point. A forced unmount of something truly stuck can
+# take a while — the one that cleared jug2 by hand said `pthread_cond_timeout
+# failed; continuing with unmount` before it succeeded — and starting another
+# every 15 seconds would pile up processes fighting over the same path.
+#
+# Returns 1 when one is already in flight, so the caller knows not to say
+# anything: the log should record the decision once, not every pass until it
+# takes effect.
+drop() {
+  local mp="$1" lock
+  lock="${WORK}/$(printf '%s' "$mp" | tr '/' '_').unmount"
+  if [ -f "$lock" ] && kill -0 "$(cat "$lock" 2>/dev/null)" 2>/dev/null; then
+    return 1
+  fi
+  (
+    /sbin/umount "$mp" 2>/dev/null \
+      || /sbin/umount -f "$mp" 2>/dev/null \
+      || /usr/sbin/diskutil unmount force "$mp" >/dev/null 2>&1
+    rm -f "$lock"
+  ) &
+  echo $! > "$lock"
+  return 0
 }
 
 up=false
@@ -106,9 +179,23 @@ for node in $NODES; do
   $up && node_online "$node" && want=true
 
   if $want; then
-    mounted "$mp" && continue
-    if [ ! -d "$mp" ]; then
-      log "${mp} does not exist — run deploy/install-share-mounts.sh"
+    if mounted "$mp"; then
+      # Mounted and the board is reachable is not the same as working. The
+      # session can be dead while the server is perfectly fine — a laptop that
+      # changes network, or a wifi drop long enough for the server to forget
+      # the session. The mount table still lists it, `tailscale status` still
+      # shows the board, and every earlier version of this pass concluded there
+      # was nothing to do and left the wedge in place forever. It is the one
+      # failure this whole agent exists to prevent.
+      answering "$mp" && continue
+      if drop "$mp"; then
+        log "${mp} stopped answering — forcing it off, will remount next pass"
+      fi
+      continue
+    fi
+    # Made here rather than assumed, since the last unmount took it away.
+    if ! mkdir -p "$mp" 2>/dev/null; then
+      log "cannot create ${mp}"
       continue
     fi
     # The password goes in on stdin, which is the only channel that keeps it out
@@ -128,11 +215,11 @@ for node in $NODES; do
     fi
   else
     mounted "$mp" || continue
-    unmount "$mp"
-    if mounted "$mp"; then
-      log "could not unmount ${mp} — something still has it open"
-    else
-      log "unmounted ${mp} ($($up && echo "${node} went offline" || echo "tailnet down"))"
+    # Not checked afterwards, because the unmount runs in the background and
+    # checking would mean waiting for it. The next pass reports the truth: the
+    # mount is either gone from the table or it is not.
+    if drop "$mp"; then
+      log "unmounting ${mp} ($($up && echo "${node} went offline" || echo "tailnet down"))"
     fi
   fi
 done
