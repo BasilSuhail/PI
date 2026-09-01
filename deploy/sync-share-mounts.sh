@@ -83,8 +83,28 @@ user_for() {
   printf '%s' "$(id -un)"
 }
 
+# `security -w` prints the password as a hex dump, with no marker and no
+# warning, whenever it holds a byte outside printable ASCII. Anything that used
+# that output would authenticate with the literal string "6122..." and be
+# refused for ever, which is a failure with nothing in it to suggest a cause.
+#
+# `-g` is unambiguous: it writes `password: 0x...` for the hex case and
+# `password: "..."` otherwise, so the two can be told apart rather than guessed
+# at — a password of nothing but hex digits is a perfectly ordinary password.
 password_for() {
-  security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null || true
+  local shown hex
+  shown=$(security find-internet-password -g -a "$2" -s "$1" -r "smb " 2>&1 >/dev/null \
+    | sed -n 's/^password: //p')
+  case "$shown" in
+    0x*)
+      hex=${shown#0x}
+      hex=${hex%% *}
+      printf '%s' "$hex" | xxd -r -p
+      ;;
+    *)
+      security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null || true
+      ;;
+  esac
 }
 
 # Is this mount still answering?
