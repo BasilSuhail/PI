@@ -473,10 +473,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* ── Storage ────────────────────────────────────────── */
 /* The action bar takes the space the eyebrow-and-headline block used to, and
    unlike it, says what is selected and what can be done to it. */
-.fx-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 11px;margin-bottom:9px;
+.fx-bar{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;padding:8px 11px;margin-bottom:9px;
   border:1px solid var(--panel-edge);border-radius:6px;background:var(--panel);
   box-shadow:inset 0 1px var(--gloss-soft)}
-.fx-sel{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 200px}
+.fx-sel{display:flex;flex-direction:column;gap:2px;min-width:0;flex:0 1 auto}
 .fx-sel strong{color:var(--ink);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fx-meta{display:flex;gap:8px;min-width:0;color:var(--muted);font-family:var(--mono);font-size:9px}
 .fx-meta>span:first-child{flex:none}
@@ -485,7 +485,21 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    end of it. */
 .fx-where{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   direction:rtl;text-align:left}
-.fx-actions{display:flex;gap:5px;flex-wrap:wrap}
+/* Back and forward, at the left edge where Finder keeps them. */
+.fx-nav{display:flex;gap:2px;flex:none}
+.fx-nav button{display:grid;place-items:center;width:26px;height:24px;padding:0;
+  border:1px solid var(--btn-edge);border-radius:5px;
+  background:linear-gradient(var(--btn-1),var(--btn-2));color:var(--ink-2);cursor:pointer}
+.fx-nav button:disabled{opacity:.36;cursor:default}
+.fx-nav button:first-child{border-radius:5px 0 0 5px}
+.fx-nav button:last-child{border-radius:0 5px 5px 0;margin-left:-1px}
+.fx-nav .flip{transform:rotate(180deg)}
+
+/* The actions sit between the title and the search, and give up their space
+   first: they are the part with somewhere else to go. */
+.fx-actions{display:flex;gap:5px;flex-wrap:wrap;justify-content:center;flex:1 1 auto;min-width:0}
+/* Wide enough for the full row, so the overflow button is not offered twice. */
+.fx-more{display:none;font-size:14px;line-height:1;padding:3px 8px}
 .fx-act{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;
   border:1px solid var(--btn-edge);border-radius:5px;
   background:linear-gradient(var(--btn-1),var(--btn-2));
@@ -636,6 +650,20 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .fx-col{flex-basis:82vw}
   .fx-strip,.fx-grid{height:min(66vh,520px)}
   .fx-view{margin-left:0}
+}
+
+/* Below this the row of actions will not fit beside the search field, so it
+   folds into the » menu. What stays is what you steer with: back, forward,
+   the field, and the view toggle. */
+@media (max-width:1180px){
+  .fx-actions{display:none}
+  .fx-more{display:grid;place-items:center}
+  .fx-sel{flex:1 1 auto}
+}
+@media (max-width:640px){
+  .fx-find{min-width:0;flex:1 1 90px}
+  .fx-tools{flex:1 1 auto}
+  .fx-sel .fx-meta{display:none}
 }
 
 /* ── Detail ────────────────────────────────────────────────────────────── */
