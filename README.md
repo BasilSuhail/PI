@@ -104,19 +104,27 @@ make samba NODE=jug2
 make samba NODE=jug
 ```
 
-Then in Finder, Go > Connect to Server, or ⌘K:
+Then, on the Mac, once:
 
-```
-smb://jug2.taild9f605.ts.net/browse
-```
-
-```
-smb://jug.taild9f605.ts.net/browse
+```bash
+make mounts
 ```
 
-Log in with the board's username and the SMB password just set. Eject the
-share when you are done — a mounted share has macOS writing `.DS_Store` files
-and generating previews on the board on its own.
+It asks for the SMB password of each board and stores it in the login
+keychain, and installs an agent that keeps the mounts in step with Tailscale:
+the boards appear in Finder while the tailnet is up and are unmounted when it
+goes down. macOS does not remount SMB across a reboot on its own, and a share
+left mounted after the tailnet drops wedges Finder rather than sitting idle.
+
+To mount one by hand instead, in Finder, Go > Connect to Server, or ⌘K:
+
+```
+smb://jug2/browse
+```
+
+Log in with the board's username and the SMB password just set. Eject it when
+you are done — a mounted share has macOS writing `.DS_Store` files and
+generating previews on the board on its own.
 
 </details>
 
