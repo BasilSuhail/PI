@@ -6,6 +6,34 @@ const S = (d: string, size = 15, cls = "") => (
        dangerouslySetInnerHTML={{ __html: d }} />
 );
 
+/**
+ * Filled rather than stroked. The Finder-style grid wants a solid blue folder,
+ * not a line drawing, and the shading is what makes a folder read as a folder
+ * at a glance in a page full of them.
+ */
+const F = (d: string, size = 15, cls = "") => (
+  <svg class={cls} width={size} height={size} viewBox="0 0 24 24"
+       dangerouslySetInnerHTML={{ __html: d }} />
+);
+
+export const FolderBig = ({ size, class: c }: P) =>
+  F('<defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#8fd0f5"/><stop offset="1" stop-color="#4aa3e0"/>' +
+    '</linearGradient><linearGradient id="fb" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#6fbdee"/><stop offset="1" stop-color="#3f93d2"/>' +
+    '</linearGradient></defs>' +
+    // Back flap first, so the front sits over it the way a real folder does.
+    '<path fill="url(#fb)" d="M2 6.2A1.7 1.7 0 0 1 3.7 4.5h5.1l1.9 2h9.6A1.7 1.7 0 0 1 22 8.2V18a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 18z"/>' +
+    '<path fill="url(#fg)" d="M2 9.1h20V18a1.5 1.5 0 0 1-1.5 1.5h-17A1.5 1.5 0 0 1 2 18z"/>',
+    size, c);
+
+export const DocBig = ({ size, class: c }: P) =>
+  F('<path fill="#e9edf2" stroke="#b9c2cc" stroke-width=".7" d="M5.5 2.6h8.2L19 7.9V21a.9.9 0 0 1-.9.9H5.5a.9.9 0 0 1-.9-.9V3.5a.9.9 0 0 1 .9-.9z"/>' +
+    '<path fill="#cfd6de" d="M13.7 2.6 19 7.9h-4.4a.9.9 0 0 1-.9-.9z"/>', size, c);
+
+export const Search  = ({ size, class: c }: P) => S('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>', size, c);
+export const Tag     = ({ size, class: c }: P) => S('<path d="M3 3h7.6L21 13.4 13.4 21 3 10.6z"/><path d="M7.5 7.5h.01"/>', size, c);
+
 export const Grid    = ({ size, class: c }: P) => S('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', size, c);
 export const Box     = ({ size, class: c }: P) => S('<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 21V13"/>', size, c);
 export const Moon    = ({ size, class: c }: P) => S('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>', size, c);

@@ -155,6 +155,11 @@ export interface DirEntry {
   locked?: boolean;
   /** A named shortcut sitting above the disk's own contents. */
   pinned?: boolean;
+  /**
+   * Finder tag names, read from the same extended attribute Finder writes, so
+   * the two cannot disagree. Colour names only — Red, Blue, and the rest.
+   */
+  tags?: string[];
 }
 
 export interface DirListing {

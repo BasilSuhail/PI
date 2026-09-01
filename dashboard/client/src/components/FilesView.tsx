@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DirEntry, DirListing, DirRoots, FleetNode } from '../../../shared/fleet';
 import { getListing, getRoots, thumbUrl, upload, write } from '../lib/api';
 import { bytes } from '../lib/format';
-import { Alert, Chevron, Disk, Grid, List } from './icons';
+import { Alert, Chevron, Disk, DocBig, FolderBig, Grid, List, Search, Tag } from './icons';
 
 /** A board is column zero; below it, paths are real. `@node:<id>` marks one. */
 const NODE_PREFIX = '@node:';
@@ -81,6 +81,23 @@ const childKey = (parent: string, entry: DirEntry): string =>
 const entryPath = (listing: DirListing, entry: DirEntry): string =>
   childKey(listing.path, entry);
 
+/**
+ * The seven Finder tag colours, in Finder's own order. The names are the wire
+ * format — the agent stores "Red\n6" and reads the name back — so these
+ * strings are not labels that can be reworded, they are the values.
+ */
+const TAGS: { name: string; hex: string }[] = [
+  { name: 'Red', hex: '#ff5f57' },
+  { name: 'Orange', hex: '#ff9f2e' },
+  { name: 'Yellow', hex: '#ffcc31' },
+  { name: 'Green', hex: '#54c04a' },
+  { name: 'Blue', hex: '#4a9df0' },
+  { name: 'Purple', hex: '#c063e8' },
+  { name: 'Grey', hex: '#9aa2ac' },
+];
+
+const tagHex = (name: string) => TAGS.find((t) => t.name === name)?.hex ?? '#9aa2ac';
+
 export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const reachable = nodes.filter((n) => n.online && !n.error);
   const [trail, setTrail] = useState<string[]>([FLEET]);
@@ -95,7 +112,11 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const cacheKey = (node: string | null, key: string) => `${node ?? '?'}\u0000${key}`;
   const [picked, setPicked] = useState<Record<number, string>>({});
   const [sel, setSel] = useState<Picked | null>(null);
-  const [view, setView] = useState<'list' | 'grid'>('list');
+  // Grid first. Browsing is the everyday job; the column view is the one you
+  // reach for when the question is which folder is eating the disk.
+  const [view, setView] = useState<'list' | 'grid'>('grid');
+  /** Filters the folder being looked at. Not a search of the board. */
+  const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<Picked | null>(null);
   /** Named roots per board, so a disk's column can pin the ones that live on it. */
   const [rootsByNode, setRootsByNode] = useState<Record<string, DirRoots['roots']>>({});
@@ -225,6 +246,18 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         pinned: true,
       }));
     return [...pins, ...listing.entries];
+  };
+
+  /**
+   * The filter applies to the column being looked at and nothing else. Columns
+   * further back keep their full contents, so the trail still reads as the path
+   * you took rather than a row of half-empty lists.
+   */
+  const sift = (cell: Cell): Cell => {
+    const q = query.trim().toLowerCase();
+    if (!q || !cell.listing) return cell;
+    const entries = cell.listing.entries.filter((e) => e.name.toLowerCase().includes(q));
+    return { ...cell, listing: { ...cell.listing, entries, count: entries.length } };
   };
 
   const here = trail[trail.length - 1];
@@ -375,6 +408,15 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     void act(() => write(sel.node!, { op: 'copy', path: sel.path, to: sel.parent }), sel.node, sel.parent);
   };
 
+  /**
+   * Tags are metadata, so the folder they sit in is what gets dropped and read
+   * again — the same treatment as a rename. Passing an empty list clears them.
+   */
+  const setTags = (names: string[]) => {
+    if (!sel || !sel.node) return;
+    void act(() => write(sel.node!, { op: 'tags', path: sel.path, tags: names }), sel.node, sel.parent);
+  };
+
   /** A move by drag, and a drop of files from outside. Same destination. */
   const dropInto = (destination: string, ev: DragEvent) => {
     ev.preventDefault();
@@ -448,13 +490,46 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           <button class="fx-act danger" disabled={!canChangeSel || busy} onClick={remove}>Delete</button>
         </div>
 
-        <div class="fx-view">
-          <button class={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
-            <List size={13} /> List
+        <div class="fx-tools">
+          {/* The tag button from Finder's toolbar. It opens the same colour row
+              the right-click menu carries, so there is one list, not two. */}
+          <button
+            class="fx-act fx-tagbtn"
+            disabled={!canChangeSel || busy}
+            title="Tags"
+            aria-label="Tags"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenu({ x: Math.max(8, r.right - 190), y: r.bottom + 6 });
+            }}
+          >
+            <Tag size={13} />
           </button>
-          <button class={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>
-            <Grid size={13} /> Grid
-          </button>
+
+          {/* Open at all times, the way Finder's is once you widen the window.
+              A field that has to be summoned is one you forget is there. */}
+          <label class="fx-find">
+            <Search size={13} />
+            <input
+              type="search"
+              placeholder="Search"
+              value={query}
+              onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+              aria-label="Filter this folder"
+            />
+            {query && (
+              <button class="fx-find-x" onClick={() => setQuery('')} aria-label="Clear">×</button>
+            )}
+          </label>
+
+          <div class="fx-view">
+            <button class={view === 'grid' ? 'on' : ''} onClick={() => setView('grid')}>
+              <Grid size={13} /> Grid
+            </button>
+            <button class={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
+              <List size={13} /> List
+            </button>
+          </div>
         </div>
       </div>
 
@@ -473,7 +548,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           {trail.map((key, depth) => (
             <Column
               key={key}
-              cell={cellFor(key, nodeAt(depth))}
+              cell={depth === trail.length - 1 ? sift(cellFor(key, nodeAt(depth))) : cellFor(key, nodeAt(depth))}
               selectedName={picked[depth] ?? null}
               node={nodeAt(depth)}
               onOpen={(entry) => open(entry, key, depth)}
@@ -488,7 +563,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         </div>
       ) : (
         <Grille
-          cell={cellFor(here, node)}
+          cell={sift(cellFor(here, node))}
           node={nodeAt(trail.length - 1)}
           selectedName={sel?.entry.name ?? null}
           onSelect={(entry) => select(entry, here, trail.length - 1)}
@@ -523,6 +598,35 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
             <button disabled={!canPreview} onClick={() => { setMenu(null); sel && setPreview(sel); }}>
               Quick Look
             </button>
+            {/* Finder puts the colours at the top of its menu, and they are the
+                one action here that needs no confirmation and undoes itself. */}
+            <div class="fx-tagrow">
+              {TAGS.map((t) => (
+                <button
+                  key={t.name}
+                  class={`fx-swatch ${sel?.entry.tags?.includes(t.name) ? 'on' : ''}`}
+                  style={{ '--swatch': t.hex }}
+                  title={t.name}
+                  aria-label={t.name}
+                  disabled={!canChangeSel || busy}
+                  onClick={() => {
+                    setMenu(null);
+                    // Clicking the colour a file already has takes it off,
+                    // which is what the same click does in Finder.
+                    const has = sel?.entry.tags?.includes(t.name);
+                    setTags(has ? (sel?.entry.tags ?? []).filter((n) => n !== t.name) : [t.name]);
+                  }}
+                />
+              ))}
+              <button
+                class="fx-swatch none"
+                title="No tag"
+                aria-label="No tag"
+                disabled={!canChangeSel || busy}
+                onClick={() => { setMenu(null); setTags([]); }}
+              />
+            </div>
+            <hr />
             <button disabled={!sel || sel.entry.dir} onClick={() => { setMenu(null); download(); }}>
               Download
             </button>
@@ -637,7 +741,12 @@ const Column = ({
           </span>
           {/* Italic for a symlink, the way a file manager sets one, so a link
               to something huge is not mistaken for the thing itself. */}
-          <span class={`fx-name ${entry.link ? 'link' : ''}`}>{entry.name}</span>
+          <span class={`fx-name ${entry.link ? 'link' : ''}`}>
+            {entry.tags?.length ? (
+              <i class="fx-dot" style={{ background: tagHex(entry.tags[0]) }} title={entry.tags.join(', ')} />
+            ) : null}
+            {entry.name}
+          </span>
           {/* A locked root is readable and copyable like anything else; what
               it refuses is being changed. Marked so that is visible before
               you try. */}
@@ -702,11 +811,23 @@ const Grille = ({
                 loading="lazy"
                 onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
               />
+            ) : entry.dir ? (
+              // A disk is still a disk; everything else that holds things is a
+              // folder, and drawn as one, because that is what it looks like on
+              // the other side of the same share.
+              entry.capacity ? <Disk size={34} /> : <FolderBig size={54} />
             ) : (
-              <Disk size={30} />
+              <DocBig size={46} />
             )}
           </span>
-          <span class="fx-tname">{entry.name}</span>
+          <span class="fx-tname">
+            {/* The dot sits in front of the name, as Finder draws it, so a
+                tagged item is findable by colour without reading anything. */}
+            {entry.tags?.length ? (
+              <i class="fx-dot" style={{ background: tagHex(entry.tags[0]) }} title={entry.tags.join(', ')} />
+            ) : null}
+            {entry.name}
+          </span>
           <span class="fx-tsize">{bytes(entry.bytes)}</span>
         </button>
       ))}

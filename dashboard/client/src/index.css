@@ -558,22 +558,56 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 /* Grid. Thumbnails are requested by the <img> itself, lazily, so the board
    only makes one for a tile actually scrolled into view. */
-.fx-grid{display:grid;gap:6px;padding:12px;height:min(62vh,560px);overflow-y:auto;
-  grid-template-columns:repeat(auto-fill,minmax(126px,1fr));align-content:start;
+.fx-grid{display:grid;gap:2px 6px;padding:14px;height:min(62vh,560px);overflow-y:auto;
+  grid-template-columns:repeat(auto-fill,minmax(118px,1fr));align-content:start;
   border:1px solid var(--panel-edge);border-radius:6px;background:var(--panel);
   box-shadow:0 2px 4px rgba(44,80,91,.10),inset 0 1px var(--gloss-soft)}
-.fx-tile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px 6px;
+.fx-tile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px 8px;
   border:1px solid transparent;border-radius:6px;background:none;font:inherit;cursor:pointer}
-.fx-tile:hover{background:var(--row-hover)}
-.fx-tile.on{background:var(--link)}
-.fx-tile.on .fx-tname,.fx-tile.on .fx-tsize{color:#fff}
-.fx-shot{display:grid;place-items:center;width:100%;aspect-ratio:4/3;overflow:hidden;
-  border-radius:4px;background:var(--meter-bg-a);color:var(--faint)}
-.fx-shot img{width:100%;height:100%;object-fit:cover;display:block}
-.fx-tname{width:100%;color:var(--ink);font-size:11px;line-height:1.35;text-align:center;
-  overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
-  overflow:hidden}
+.fx-tile:hover .fx-tname{background:var(--row-hover)}
+/* Finder highlights the label, not the whole cell. Tinting the entire tile
+   swallows the icon's own colour and makes a selected folder hard to read. */
+.fx-tile.on .fx-tname{background:var(--link);color:#fff}
+.fx-tile.on .fx-tsize{color:var(--ink-2)}
+.fx-shot{display:grid;place-items:center;width:100%;height:58px;overflow:hidden;
+  color:var(--faint)}
+.fx-shot img{max-width:100%;max-height:58px;object-fit:cover;display:block;border-radius:3px;
+  box-shadow:0 1px 3px var(--shadow)}
+.fx-tname{max-width:100%;padding:2px 7px;border-radius:9px;color:var(--ink);font-size:11.5px;
+  line-height:1.35;text-align:center;overflow-wrap:anywhere;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fx-tsize{color:var(--muted);font-family:var(--mono);font-size:9px}
+
+/* A tag dot, in front of the name in both views, as Finder draws it. The
+   colour is inline because it comes from the file, not from the theme. */
+.fx-dot{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%;
+  vertical-align:baseline;box-shadow:inset 0 0 0 1px rgba(0,0,0,.16)}
+
+/* ── Toolbar: search, tags, view ───────────────────────────────────────── */
+.fx-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+/* The toolbar group owns the push to the right; the toggle inside it must
+   not push again, or the search field and the toggle drift apart. */
+.fx-tools .fx-view{margin-left:0}
+.fx-tagbtn{display:grid;place-items:center;padding:4px 7px}
+.fx-find{display:flex;align-items:center;gap:6px;padding:3px 8px;min-width:170px;
+  border:1px solid var(--btn-edge);border-radius:12px;background:var(--btn-1);color:var(--muted)}
+.fx-find:focus-within{border-color:var(--link);box-shadow:0 0 0 2px var(--row-hover)}
+.fx-find input{flex:1;min-width:0;border:0;background:none;color:var(--ink);font:inherit;
+  font-size:11.5px;outline:none}
+.fx-find input::-webkit-search-cancel-button{display:none}
+.fx-find-x{border:0;background:none;color:var(--muted);font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
+.fx-find-x:hover{color:var(--ink)}
+
+/* ── Tag swatches ──────────────────────────────────────────────────────── */
+.fx-tagrow{display:flex;align-items:center;gap:6px;padding:6px 8px}
+.fx-swatch{width:15px;height:15px;padding:0;border-radius:50%;cursor:pointer;
+  border:1px solid rgba(0,0,0,.22);background:var(--swatch)}
+.fx-swatch:hover:not(:disabled){transform:scale(1.15)}
+.fx-swatch.on{box-shadow:0 0 0 2px var(--bar-1),0 0 0 3.5px var(--link)}
+.fx-swatch.none{background:none;border-style:dashed;border-color:var(--muted);position:relative}
+.fx-swatch.none::after{content:"";position:absolute;inset:5px 1px auto;height:1px;
+  background:var(--muted);transform:rotate(-45deg)}
+.fx-swatch:disabled{opacity:.34;cursor:default}
 
 /* Right-click menu. Same actions as the bar, at the cursor. */
 .fx-scrim{position:fixed;inset:0;z-index:60}
