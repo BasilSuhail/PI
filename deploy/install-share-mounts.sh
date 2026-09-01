@@ -93,7 +93,11 @@ for pair in $USERS; do
   # a prompt string looks exactly like, and a prompt is not worth teaching it
   # an exception for.
   printf '           password: '
-  read -rs smbpass
+  # IFS= matters. Without it read strips leading and trailing whitespace, while
+  # smbpasswd on the board uses getpass and keeps every character — so a
+  # password with a space at either end would be stored here trimmed and be
+  # refused for ever, no matter how carefully it was typed in both places.
+  IFS= read -rs smbpass
   echo
   # -r "smb " is the four-character protocol code, trailing space included.
   # -T names the one binary allowed to read the entry back, which is the same
