@@ -14,6 +14,12 @@
 set -euo pipefail
 
 BROWSE="${BROWSE:-/srv/browse}"
+# The share carries the board's name rather than being called "browse" on both.
+# NetFS — which is what an unattended mount on a Mac has to use — names the
+# mount point after the share and cannot be told otherwise, so two shares both
+# called browse would arrive as "browse" and "browse-1", with which is which
+# depending on the order they happened to mount.
+SHARE_NAME="${SHARE_NAME:-$(hostname -s)}"
 SHARE_USER="${SHARE_USER:-$(id -un)}"
 CONF=/etc/samba/smb.conf
 # Tailscale hands out addresses from the carrier-grade NAT range. Nothing on a
@@ -106,8 +112,8 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    log file = /var/log/samba/log.%m
    max log size = 1000
 
-[browse]
-   comment = Every disk on jug
+[${SHARE_NAME}]
+   comment = Every disk on ${SHARE_NAME}
    path = ${BROWSE}
    browseable = yes
    read only = no
@@ -189,7 +195,7 @@ cat <<NEXT
 
   In Finder:  Go > Connect to Server (Cmd-K)
 
-    smb://${host:-$(hostname)}.taild9f605.ts.net/browse
+    smb://${host:-$(hostname -s)}.taild9f605.ts.net/${SHARE_NAME}
 
   Log in as ${SHARE_USER} with the password just set.
 

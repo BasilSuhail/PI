@@ -143,7 +143,7 @@ Prompts once for an SMB password, which is separate from the board's login
 password and is never stored in this repo. Then, in Finder, ⌘K:
 
 ```
-smb://<node>/browse
+smb://<node>/<node>
 ```
 
 One share, `browse`, holding every disk. No Time Machine target: backups here
@@ -169,29 +169,40 @@ down here.
 make mounts
 ```
 
-Once, on the Mac. It creates a mount point per board under `~/Shares`, stores
-each board's SMB password in the login keychain, and installs a LaunchAgent
-that runs `deploy/sync-share-mounts.sh` every 15 seconds. Nothing in it needs
-`sudo`.
+Once, on the Mac. It stores each board's SMB password in the login keychain and
+installs a LaunchAgent that runs `deploy/sync-share-mounts.sh` every 15 seconds.
+Nothing in it needs `sudo`, and it creates no directories — NetFS makes and
+removes the mount point itself, under `/Volumes`.
 
 Each pass compares two things — what `tailscale status` can reach, and what is
 in the mount table — and makes them match. Nothing is remembered between
 passes, so there is no state to go stale and no order to get wrong.
 
-### Why not /Volumes
+### Why NetFS, and not mount_smbfs
 
-Because macOS removes a mount point when the mount goes away, and it does that
-whether or not something else put the directory there first. `/Volumes/jug2`
-was created ahead of time with `sudo mkdir`, mounted, then force-unmounted, and
-the directory went with the mount.
+`mount_smbfs` takes a password from a terminal and nowhere else. It opens
+`/dev/tty` and ignores stdin, so a password piped into it is discarded and it
+prompts instead. With a person sitting there, that looks like it works. From an
+agent there is no terminal, nothing answers the prompt, and every mount fails
+with an authentication error while the stored password is perfectly correct.
 
-`/Volumes` is `root:wheel`, so a pass running as the user could never make it
-again. A share dropped for being wedged would be dropped permanently, and the
-log would say `does not exist — run the installer` on every pass from then on.
+That cost an afternoon: hours of `Authentication error` in the log, read as
+evidence that the boards disagreed about the password, when the password was
+never reaching them.
 
-Under `~/Shares` the pass owns the directory and remakes it whenever it needs
-one. That is also what removed the last privileged step from the whole
-arrangement: nothing here runs as root now.
+NetFS takes the credential as a parameter, which is what an unattended mount
+needs. It is reached through `osascript`, with the script fed on stdin rather
+than named on the command line, so the password is not in argv where `ps` would
+show it and is never written to disk. The quotes and backslashes in it are
+escaped, since it lands inside an AppleScript string literal.
+
+NetFS names the mount after the share and cannot be told otherwise, which is why
+each board's share carries the board's name — `[jug]` on jug, `[jug2]` on jug2 —
+rather than both being called `browse`. Two shares of the same name arrive as
+`browse` and `browse-1`, and which is which depends on the order they mounted.
+
+It also makes and removes the mount point itself, so there is nothing to create
+and nothing left behind.
 
 ### A mount can be dead while the board is fine
 
@@ -201,7 +212,7 @@ it, and Ignore means keep waiting:
 
 ```
 $ mount | grep smbfs
-//jug@jug2/browse on ... (smbfs, ...)     # listed
+//jug@jug2/jug2 on ... (smbfs, ...)      # listed
 $ ls ~/Shares/jug2                        # hangs until killed
 ```
 
@@ -242,7 +253,7 @@ In the login keychain, one entry per board, handed to `mount_smbfs` on stdin at
 mount time.
 
 There are three ways to give `mount_smbfs` a password and only one of them is
-any good. In the URL, as `//user:password@host`, it lands in argv, which `ps`
+any good. Embedded in the mount URL before the `@`, it lands in argv, which `ps`
 shows to every process on this Mac. In `~/Library/Preferences/nsmb.conf` — which
 is what `man mount_smbfs` still tells you to do — it does not work at all:
 macOS 15 no longer reads a password from that file, and `smbutil crypt`, which
