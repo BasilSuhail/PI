@@ -13,10 +13,10 @@
 #                             made once with sudo. Made ahead of time they
 #                             survive an unmount, which means the pass that
 #                             runs later needs no privilege at all.
-#   a keychain entry per board  so the mount is silent. mount_smbfs reads the
-#                             password from the login keychain; it is typed
-#                             here and never written to the repo or to a
-#                             command line.
+#   a credential per board    in ~/Library/Preferences/nsmb.conf, which is what
+#                             mount_smbfs reads. See the note above it: this is
+#                             a weaker place to keep a password than the
+#                             keychain, and it is a deliberate choice.
 #   a LaunchAgent             which runs deploy/sync-share-mounts.sh on a
 #                             timer. A timer rather than a login item because
 #                             Tailscale is not up all the time: coming back
@@ -27,9 +27,9 @@ set -euo pipefail
 
 NODES="${STORAGE_NODES:-jug jug2}"
 SHARE="${SHARE:-browse}"
-SHARE_USER="${SHARE_USER:-$(id -un)}"
 MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
 LABEL="jug.share-mounts"
+NSMB="${HOME}/Library/Preferences/nsmb.conf"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASS="${HERE}/sync-share-mounts.sh"
@@ -37,6 +37,26 @@ PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 LOG="${HOME}/Library/Logs/${LABEL}.log"
 
 [ -x "$PASS" ] || { echo "Missing ${PASS} — run this from a checkout." >&2; exit 1; }
+
+# The board's login name, not this Mac's. install-samba.sh sets `valid users`
+# from whoever runs it on the board, so a share on jug admits jug and refuses
+# everyone else — including a Mac account with a different name. Read from the
+# ssh config, which already records how to reach each board, so there is one
+# place to change it rather than two. SHARE_USER overrides for all boards.
+user_for() {
+  local u
+  if [ -n "${SHARE_USER:-}" ]; then printf '%s' "$SHARE_USER"; return; fi
+  u=$(ssh -G "$1" 2>/dev/null | awk '/^user /{print $2; exit}')
+  printf '%s' "${u:-$(id -un)}"
+}
+
+echo "==> Boards"
+USERS=""
+for node in $NODES; do
+  u="$(user_for "$node")"
+  USERS="${USERS}${USERS:+ }${node}=${u}"
+  echo "    ${node}: logging in as ${u}"
+done
 
 echo "==> Mount points under ${MOUNT_ROOT}"
 # Asked for in one sudo call rather than one per board, so the password prompt
@@ -53,18 +73,40 @@ else
   echo "    already there"
 fi
 
-echo "==> SMB passwords in the login keychain"
-# One entry per board, since the boards keep their own SMB passwords and there
-# is no reason to assume they match. An entry that is already there is left
-# alone: changing it is `security delete-internet-password -s <node>` and then
-# this script again.
-for node in $NODES; do
-  if security find-internet-password -a "$SHARE_USER" -s "$node" -r "smb " >/dev/null 2>&1; then
-    echo "    ${node}: already stored"
-    continue
-  fi
-  echo "    ${node}: SMB password for ${SHARE_USER}"
-  echo "           the one set by deploy/install-samba.sh, not the board's login password"
+echo "==> Credentials in ${NSMB##*/}"
+# Where the password goes, and why it is not the keychain.
+#
+# mount_smbfs does not read the login keychain. Finder does, through NetFS, but
+# the command-line tool reads ~/Library/Preferences/nsmb.conf and nothing else;
+# with -N it uses what it finds there and never prompts. That is the whole
+# reason this file exists here.
+#
+# So the password sits in a file, in the clear. Older macOS had `smbutil crypt`
+# to scramble it — reversibly, and Apple said as much — and macOS 15 has dropped
+# even that. What protects it is mode 0600: only this account can read it.
+# Anyone who has this account can already read the files on the share, so the
+# password is not the thing standing between them and the data.
+#
+# Written whole with the original kept once, for the same reason install-samba.sh
+# writes smb.conf whole: an edit made here by hand is a thing that silently
+# disappears on the next run.
+if [ -f "$NSMB" ] && [ ! -f "${NSMB}.before-jug" ]; then
+  echo "    keeping the original at ${NSMB}.before-jug"
+  cp "$NSMB" "${NSMB}.before-jug"
+fi
+
+umask 077
+: > "$NSMB"
+{
+  echo "# Managed by deploy/install-share-mounts.sh in the PI repo."
+  echo "# Read by mount_smbfs -N. Mode 0600 — this file holds passwords in the clear."
+  echo
+} >> "$NSMB"
+
+for pair in $USERS; do
+  node="${pair%%=*}"; u="${pair#*=}"
+  echo "    ${node}: SMB password for ${u}"
+  echo "           the one set by deploy/install-samba.sh, not the board's login"
   # Prompt printed separately rather than passed to read -p. The secret scanner
   # matches the word followed by a colon and a quoted run of characters, which
   # a prompt string looks exactly like, and a prompt is not worth teaching it
@@ -72,14 +114,26 @@ for node in $NODES; do
   printf '           password: '
   read -rs smbpass
   echo
-  # -r "smb " is the four-character protocol code mount_smbfs searches on; the
-  # trailing space is part of it. -T names the one binary allowed to read the
-  # entry, so nothing else on the Mac gets the password by asking.
-  security add-internet-password \
-    -a "$SHARE_USER" -s "$node" -r "smb " -l "${node} (SMB)" \
-    -T /sbin/mount_smbfs -U -w "$smbpass"
+  # Both section spellings, with the same value. The nsmb.conf man page documents
+  # [SERVER] and [SERVER:SHARE] and no longer documents a password keyword at all,
+  # while mount_smbfs still says it reads one; which spelling wins is not written
+  # down anywhere that is currently true. Writing both is one line of duplication
+  # in a file that is already 0600, and costs nothing that matters.
+  {
+    printf '[%s:%s]\npassword=%s\n\n' "$(echo "$node" | tr a-z A-Z)" "$(echo "$u" | tr a-z A-Z)" "$smbpass"
+    printf '[%s]\npassword=%s\n\n' "$(echo "$node" | tr a-z A-Z)" "$smbpass"
+  } >> "$NSMB"
   unset smbpass
   echo "           stored"
+done
+chmod 600 "$NSMB"
+umask 022
+
+# The first version of this script put the password in the login keychain,
+# which mount_smbfs then ignored. Clear the entries out rather than leaving
+# something behind that looks like it is doing a job.
+for node in $NODES; do
+  security delete-internet-password -s "$node" -r "smb " >/dev/null 2>&1 || true
 done
 
 echo "==> Writing the agent"
@@ -104,8 +158,8 @@ cat > "$PLIST" <<PLISTBODY
     <string>${NODES}</string>
     <key>SHARE</key>
     <string>${SHARE}</string>
-    <key>SHARE_USER</key>
-    <string>${SHARE_USER}</string>
+    <key>SHARE_USERS</key>
+    <string>${USERS}</string>
     <key>MOUNT_ROOT</key>
     <string>${MOUNT_ROOT}</string>
   </dict>
@@ -134,11 +188,24 @@ launchctl kickstart "gui/$(id -u)/${LABEL}"
 
 echo
 echo "==> First pass"
-# Run it here too, in the foreground, so a keychain or password problem is seen
-# now rather than found later in a log.
-STORAGE_NODES="$NODES" SHARE="$SHARE" SHARE_USER="$SHARE_USER" MOUNT_ROOT="$MOUNT_ROOT" \
+# Run it here too, in the foreground, so a wrong password is seen now rather
+# than found later in a log.
+STORAGE_NODES="$NODES" SHARE="$SHARE" SHARE_USERS="$USERS" MOUNT_ROOT="$MOUNT_ROOT" \
   bash "$PASS" || true
-/sbin/mount | grep smbfs | sed 's/^/  /' || echo "  nothing mounted yet"
+
+if /sbin/mount | grep -q smbfs; then
+  /sbin/mount | grep smbfs | sed 's/^/  /'
+else
+  cat >&2 <<'FAILED'
+  Nothing mounted.
+
+  "Authentication error" means the password above is not the one the board has.
+  Set it again on the board and then re-run this script:
+
+      ssh <node> 'sudo smbpasswd <user>'
+FAILED
+  exit 1
+fi
 
 cat <<NEXT
 
@@ -148,7 +215,4 @@ cat <<NEXT
   Log:     tail -f ${LOG}
   Stop:    launchctl bootout gui/$(id -u)/${LABEL}
   Start:   launchctl bootstrap gui/$(id -u) ${PLIST}
-
-  Nothing mounted while Tailscale is up? The first suspect is the keychain
-  entry, and the log says which board and why.
 NEXT
