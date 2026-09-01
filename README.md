@@ -110,11 +110,13 @@ Then, on the Mac, once:
 make mounts
 ```
 
-It asks for the SMB password of each board and stores it in the login
-keychain, and installs an agent that keeps the mounts in step with Tailscale:
-the boards appear in Finder while the tailnet is up and are unmounted when it
-goes down. macOS does not remount SMB across a reboot on its own, and a share
-left mounted after the tailnet drops wedges Finder rather than sitting idle.
+It asks for the SMB password of each board, writes it to
+`~/Library/Preferences/nsmb.conf` (mode 0600 — see `docs/storage.md`, it is not
+the keychain and that is on purpose), and installs an agent that keeps the
+mounts in step with Tailscale: the boards appear in Finder while the tailnet is
+up and are unmounted when it goes down. macOS does not remount SMB across a
+reboot on its own, and a share left mounted after the tailnet drops wedges
+Finder rather than sitting idle.
 
 To mount one by hand instead, in Finder, Go > Connect to Server, or ⌘K:
 

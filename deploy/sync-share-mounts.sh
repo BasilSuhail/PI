@@ -17,7 +17,11 @@ set -uo pipefail
 
 NODES="${STORAGE_NODES:-pi pi2}"
 SHARE="${SHARE:-browse}"
-SHARE_USER="${SHARE_USER:-$(id -un)}"
+# Who to log in to each board as, written by the installer as "pi=pi pi2=pi".
+# It is not this Mac's username: `install-samba.sh` takes `valid users` from the
+# board's own login name, so mounting as the Mac's user is rejected before the
+# password is even looked at.
+SHARE_USERS="${SHARE_USERS:-}"
 # /Volumes is where macOS expects network mounts, and where Finder puts them in
 # the sidebar. The directories are made once, by the installer, with sudo;
 # nothing here needs privilege.
@@ -60,6 +64,17 @@ node_online() {
 
 mounted() { /sbin/mount | grep -q " on ${1} ("; }
 
+# Falls back to this Mac's username, which is wrong on this setup but is the
+# only guess available if the installer did not write a mapping. The mount then
+# fails with an authentication error, which is what the log will say.
+user_for() {
+  local pair
+  for pair in $SHARE_USERS; do
+    [ "${pair%%=*}" = "$1" ] && { printf '%s' "${pair#*=}"; return; }
+  done
+  printf '%s' "$(id -un)"
+}
+
 # Three attempts, weakest first. A clean unmount is preferred; a server that
 # has vanished will not give one, and leaving the mount is worse than forcing
 # it, since every later pass inherits the same wedged path.
@@ -84,10 +99,11 @@ for node in $NODES; do
       log "${mp} does not exist — run deploy/install-share-mounts.sh"
       continue
     fi
-    # The password is not passed here. mount_smbfs looks it up in the login
-    # keychain, where the installer put it, so it never reaches a command line
-    # and never lands in ps or shell history.
-    if err=$(/sbin/mount_smbfs "//${SHARE_USER}@${node}/${SHARE}" "$mp" 2>&1); then
+    # -N is what makes this safe to run from an agent: mount_smbfs reads the
+    # password from ~/Library/Preferences/nsmb.conf and never prompts. Without
+    # it a missing password waits on a prompt that nothing will ever answer.
+    # The password is not passed here, so it stays out of ps and out of history.
+    if err=$(/sbin/mount_smbfs -N "//$(user_for "$node")@${node}/${SHARE}" "$mp" 2>&1); then
       log "mounted ${node} at ${mp}"
     else
       log "could not mount ${node}: ${err}"

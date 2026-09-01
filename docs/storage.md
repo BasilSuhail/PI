@@ -169,9 +169,9 @@ down here.
 make mounts
 ```
 
-Once, on the Mac. It creates a mount point per board under `/Volumes`, stores
-each board's SMB password in the login keychain, and installs a LaunchAgent
-that runs `deploy/sync-share-mounts.sh` every 15 seconds.
+Once, on the Mac. It creates a mount point per board under `/Volumes`, writes
+each board's SMB credentials to `~/Library/Preferences/nsmb.conf`, and installs
+a LaunchAgent that runs `deploy/sync-share-mounts.sh` every 15 seconds.
 
 Each pass compares two things — what `tailscale status` can reach, and what is
 in the mount table — and makes them match. Nothing is remembered between
@@ -186,19 +186,47 @@ Two reasons it is a timer and not a login item:
   filesystem. Dropping the mount when the tailnet goes is the half that
   matters; putting it back when the tailnet returns is the easy half.
 
-The password never reaches a command line. `mount_smbfs` reads it from the
-keychain entry, which is created with `-T /sbin/mount_smbfs` so that binary and
-nothing else can read it.
+### Where the password lives, and why not the keychain
+
+`mount_smbfs` does not read the login keychain. Finder does, through NetFS, but
+the command-line tool reads `~/Library/Preferences/nsmb.conf` and nothing else.
+With `-N` it uses whatever it finds there and never prompts — which is what
+makes it safe to run from an agent, where a prompt would be a wait nothing ever
+answers.
+
+So the password is in a file, in the clear. macOS 14 and earlier had `smbutil
+crypt` to scramble it, reversibly, and macOS 15 has dropped the subcommand
+entirely. What protects the file is mode `0600`.
+
+That is weaker than the keychain and worth being clear about. What it is not is
+the thing standing between an attacker and the files: anyone who can read that
+file already has this Mac account, and can read the mounted share directly.
+
+The file is written whole, with the original kept once at `nsmb.conf.before-pi`.
+Both `[SERVER:USER]` and `[SERVER]` sections are written with the same value —
+the `nsmb.conf` man page documents neither a password keyword nor the
+`[SERVER:USER]` form any more, while `mount_smbfs` still says it reads a
+password from the file, so which spelling wins is not currently written down
+anywhere true. Writing both settles it.
+
+### Which user
+
+The board's login name, not the Mac's. `install-samba.sh` takes `valid users`
+from whoever runs it on the board, so the share on `pi` admits `pi` and
+refuses everyone else. The installer reads the name out of your ssh config
+(`ssh -G <node>`) and bakes the mapping into the agent, so there is one place
+that records how to reach a board rather than two.
 
 ```bash
 tail -f ~/Library/Logs/pi.share-mounts.log
 ```
 
 The log only records changes, so it is a list of mounts and unmounts rather
-than a heartbeat. To change a stored password, delete the entry and re-run:
+than a heartbeat. `Authentication error` in it means the stored password is not
+the one the board has; set it again on the board and re-run `make mounts`:
 
 ```bash
-security delete-internet-password -s pi -r "smb "
+ssh <node> 'sudo smbpasswd <user>'
 ```
 
 To stop the whole thing:
