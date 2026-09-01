@@ -4,7 +4,7 @@ import { AppsView } from './components/AppsView';
 import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView, type SortKey, SORT_COLUMNS } from './components/FleetView';
-import { Alert, Box, Files, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
+import { Alert, Box, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
 import { getNodes, useHistory, usePoll } from './lib/api';
 import { relative } from './lib/format';
 
@@ -57,9 +57,10 @@ export default function App() {
         <button class={`tbtn ${view === 'apps' ? 'on' : ''}`} onClick={() => setView('apps')}>
           <Box size={15} /> Apps
         </button>
-        <button class={`tbtn ${view === 'files' ? 'on' : ''}`} onClick={() => setView('files')}>
-          <Files size={15} /> Files
-        </button>
+        {/* No Files tab. Files is a tile on the shelf like everything else, and
+            two ways in meant the shelf was a list of everything except the one
+            thing that had its own button. The tile carries url "#files", which
+            AppsView turns into this view. */}
         <span class="spacer" />
         <span class="live"><span class="dot-live" /> LIVE</span>
         <span class="tdiv" />

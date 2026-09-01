@@ -9,6 +9,7 @@ without vcgencmd, so the same file can be dropped on any node.
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import stat
@@ -309,6 +310,74 @@ def subtree_bytes(path, dev, deadline):
     return total, True
 
 
+# ── Finder tags ────────────────────────────────────────────────────────────
+#
+# macOS keeps a file's tags in an extended attribute, and Samba writes it
+# through to ext4, so the tags set in Finder are on the board and can be read
+# back. One place stores a tag and both ends show it; a tag store of our own
+# would be a second answer to the same question, free to disagree.
+#
+# The attribute name has to be spelled exactly, and it is not what it looks
+# like. macOS calls it `com.apple.metadata:_kMDItemUserTags`, but the colon is
+# illegal in a Windows stream name, so the catia module in smb.conf maps it to
+# U+F022 in the private use area. A literal colon here would create an
+# attribute nothing ever reads, and would fail silently, which is the worst way
+# for this to be wrong.
+TAG_XATTR = "user.DosStream.com.apple.metadata\uf022_kMDItemUserTags:$DATA"
+
+# The value is a binary plist holding an array of "Name\nIndex" strings, e.g.
+# "Red\n6". The index is what Finder draws the dot from — on anything since
+# 10.9 the old FinderInfo colour byte is not needed as well.
+TAG_COLOURS = {
+    "Grey": 1, "Green": 2, "Purple": 3, "Blue": 4,
+    "Yellow": 5, "Red": 6, "Orange": 7,
+}
+
+
+def finder_tags(path):
+    """The tag names on one file, or an empty list.
+
+    Never raises. A missing attribute is the normal case, an unreadable one is
+    not worth failing a whole directory listing over, and a value written by
+    something other than Finder is not worth trusting into a crash.
+    """
+    try:
+        raw = os.getxattr(path, TAG_XATTR, follow_symlinks=False)
+    except OSError:
+        return []
+    try:
+        loaded = plistlib.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(loaded, list):
+        return []
+    # Finder stores "Name\nIndex"; the name is the half worth showing.
+    return [str(t).split("\n")[0] for t in loaded if str(t).split("\n")[0]]
+
+
+def set_finder_tags(path, names):
+    """Replace the tags on one file. An empty list removes the attribute."""
+    if not names:
+        try:
+            os.removexattr(path, TAG_XATTR, follow_symlinks=False)
+        except OSError:
+            pass
+        return []
+    encoded = []
+    for name in names:
+        index = TAG_COLOURS.get(name)
+        if index is None:
+            raise Refused(400, f"not a Finder tag colour: {name}")
+        encoded.append(f"{name}\n{index}")
+    os.setxattr(
+        path,
+        TAG_XATTR,
+        plistlib.dumps(encoded, fmt=plistlib.FMT_BINARY),
+        follow_symlinks=False,
+    )
+    return names
+
+
 def scan(path):
     """One directory, every entry, biggest first.
 
@@ -359,6 +428,8 @@ def scan(path):
                 "hidden": entry.name.startswith("."),
                 # Listed, sized, never opened. See SECRET_NAMES.
                 "secret": is_secret(entry.name),
+                # The same tags Finder shows, read from the same attribute.
+                "tags": finder_tags(entry.path),
             }
         )
 
@@ -693,6 +764,15 @@ def do_write(op, body):
         else:
             shutil.copy2(source, target)
         return {"path": target}
+
+    if op == "tags":
+        # Tagging changes metadata, not content, but it is still a write, so it
+        # goes through the same gate as the rest: only under a writable root.
+        real = writable_target(body.get("path", ""))
+        names = body.get("tags", [])
+        if not isinstance(names, list):
+            raise Refused(400, "tags must be a list")
+        return {"path": real, "tags": set_finder_tags(real, [str(n) for n in names])}
 
     raise Refused(400, f"unknown operation: {op}")
 
