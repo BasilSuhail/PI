@@ -75,6 +75,18 @@ user_for() {
   printf '%s' "$(id -un)"
 }
 
+# One entry per board in the login keychain, written by the installer. Printed
+# with a trailing newline because that is what a prompt expects to read.
+#
+# A miss prints nothing, and the empty line that follows is refused by the
+# board — which is the right shape of failure. Guessing at a password, or
+# falling back to prompting, would be worse.
+password_for() {
+  local pw
+  pw=$(security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null) || pw=""
+  printf '%s\n' "$pw"
+}
+
 # Three attempts, weakest first. A clean unmount is preferred; a server that
 # has vanished will not give one, and leaving the mount is worse than forcing
 # it, since every later pass inherits the same wedged path.
@@ -99,11 +111,17 @@ for node in $NODES; do
       log "${mp} does not exist — run deploy/install-share-mounts.sh"
       continue
     fi
-    # -N is what makes this safe to run from an agent: mount_smbfs reads the
-    # password from ~/Library/Preferences/nsmb.conf and never prompts. Without
-    # it a missing password waits on a prompt that nothing will ever answer.
-    # The password is not passed here, so it stays out of ps and out of history.
-    if err=$(/sbin/mount_smbfs -N "//$(user_for "$node")@${node}/${SHARE}" "$mp" 2>&1); then
+    # The password goes in on stdin, which is the only channel that keeps it out
+    # of everything: not in the argv that ps shows, not in a file on disk. The
+    # keychain hands it over here and nowhere else.
+    #
+    # No -N. That flag suppresses the prompt, and the prompt is what reads
+    # stdin — with it, the pipe is ignored and the mount fails with no password
+    # at all. An empty read is safe: mount_smbfs takes the blank line, the
+    # board refuses it, and the pass logs an authentication error instead of
+    # waiting for input that is never coming.
+    u="$(user_for "$node")"
+    if err=$(password_for "$node" "$u" | /sbin/mount_smbfs "//${u}@${node}/${SHARE}" "$mp" 2>&1); then
       log "mounted ${node} at ${mp}"
     else
       log "could not mount ${node}: ${err}"

@@ -13,10 +13,9 @@
 #                             made once with sudo. Made ahead of time they
 #                             survive an unmount, which means the pass that
 #                             runs later needs no privilege at all.
-#   a credential per board    in ~/Library/Preferences/nsmb.conf, which is what
-#                             mount_smbfs reads. See the note above it: this is
-#                             a weaker place to keep a password than the
-#                             keychain, and it is a deliberate choice.
+#   a credential per board    in the login keychain, handed to mount_smbfs on
+#                             stdin at mount time. See the note beside it for
+#                             why stdin and not the two more obvious channels.
 #   a LaunchAgent             which runs deploy/sync-share-mounts.sh on a
 #                             timer. A timer rather than a login item because
 #                             Tailscale is not up all the time: coming back
@@ -29,7 +28,6 @@ NODES="${STORAGE_NODES:-pi pi2}"
 SHARE="${SHARE:-browse}"
 MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
 LABEL="pi.share-mounts"
-NSMB="${HOME}/Library/Preferences/nsmb.conf"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PASS="${HERE}/sync-share-mounts.sh"
@@ -73,38 +71,26 @@ else
   echo "    already there"
 fi
 
-echo "==> Credentials in ${NSMB##*/}"
-# Where the password goes, and why it is not the keychain.
+echo "==> SMB passwords in the login keychain"
+# Three ways to give mount_smbfs a password, and only one of them is any good.
 #
-# mount_smbfs does not read the login keychain. Finder does, through NetFS, but
-# the command-line tool reads ~/Library/Preferences/nsmb.conf and nothing else;
-# with -N it uses what it finds there and never prompts. That is the whole
-# reason this file exists here.
+# In the URL, as //user:password@host — it is then in argv, which ps shows to
+# every process on this Mac. In ~/Library/Preferences/nsmb.conf — which is what
+# `man mount_smbfs` still tells you to do, but macOS 15 no longer reads a
+# password from that file, and `smbutil crypt`, which used to scramble the
+# value, has been removed too. That was tried here and it silently did nothing.
 #
-# So the password sits in a file, in the clear. Older macOS had `smbutil crypt`
-# to scramble it — reversibly, and Apple said as much — and macOS 15 has dropped
-# even that. What protects it is mode 0600: only this account can read it.
-# Anyone who has this account can already read the files on the share, so the
-# password is not the thing standing between them and the data.
-#
-# Written whole with the original kept once, for the same reason install-samba.sh
-# writes smb.conf whole: an edit made here by hand is a thing that silently
-# disappears on the next run.
-if [ -f "$NSMB" ] && [ ! -f "${NSMB}.before-pi" ]; then
-  echo "    keeping the original at ${NSMB}.before-pi"
-  cp "$NSMB" "${NSMB}.before-pi"
-fi
-
-umask 077
-: > "$NSMB"
-{
-  echo "# Managed by deploy/install-share-mounts.sh in the PI repo."
-  echo "# Read by mount_smbfs -N. Mode 0600 — this file holds passwords in the clear."
-  echo
-} >> "$NSMB"
-
+# The third is stdin. mount_smbfs prompts for a password, and a prompt reads
+# whatever is on stdin, so a pipe answers it. The password is then in neither
+# argv nor a file: it goes from the keychain into a pipe and no further. -N
+# must not be used with it, since that suppresses the prompt and the prompt is
+# the thing doing the reading.
 for pair in $USERS; do
   node="${pair%%=*}"; u="${pair#*=}"
+  if security find-internet-password -a "$u" -s "$node" -r "smb " >/dev/null 2>&1; then
+    echo "    ${node}: already stored"
+    continue
+  fi
   echo "    ${node}: SMB password for ${u}"
   echo "           the one set by deploy/install-samba.sh, not the board's login"
   # Prompt printed separately rather than passed to read -p. The secret scanner
@@ -114,27 +100,48 @@ for pair in $USERS; do
   printf '           password: '
   read -rs smbpass
   echo
-  # Both section spellings, with the same value. The nsmb.conf man page documents
-  # [SERVER] and [SERVER:SHARE] and no longer documents a password keyword at all,
-  # while mount_smbfs still says it reads one; which spelling wins is not written
-  # down anywhere that is currently true. Writing both is one line of duplication
-  # in a file that is already 0600, and costs nothing that matters.
-  {
-    printf '[%s:%s]\npassword=%s\n\n' "$(echo "$node" | tr a-z A-Z)" "$(echo "$u" | tr a-z A-Z)" "$smbpass"
-    printf '[%s]\npassword=%s\n\n' "$(echo "$node" | tr a-z A-Z)" "$smbpass"
-  } >> "$NSMB"
+  # -r "smb " is the four-character protocol code, trailing space included.
+  # -T names the one binary allowed to read the entry back, which is the same
+  # `security` the mount pass uses; naming it here is what stops macOS putting
+  # a dialog in front of an agent that runs with nobody watching.
+  security add-internet-password \
+    -a "$u" -s "$node" -r "smb " -l "${node} (SMB)" \
+    -T /usr/bin/security -U -w "$smbpass"
   unset smbpass
   echo "           stored"
 done
-chmod 600 "$NSMB"
-umask 022
 
-# The first version of this script put the password in the login keychain,
-# which mount_smbfs then ignored. Clear the entries out rather than leaving
-# something behind that looks like it is doing a job.
-for node in $NODES; do
-  security delete-internet-password -s "$node" -r "smb " >/dev/null 2>&1 || true
+# Storing a password and reading one back are different permissions, and the
+# second is the one that matters: the pass runs from an agent, with nobody
+# there to click a dialog. Read each entry back now, while there is a person
+# watching, so a keychain that will not answer is found here rather than at the
+# next time the tailnet drops.
+for pair in $USERS; do
+  node="${pair%%=*}"; u="${pair#*=}"
+  if [ -z "$(security find-internet-password -a "$u" -s "$node" -r "smb " -w 2>/dev/null)" ]; then
+    echo "    ${node}: stored, but it cannot be read back without a prompt." >&2
+    echo "           The agent has no way to answer one. Fix the entry's access" >&2
+    echo "           control in Keychain Access, or delete it and re-run:" >&2
+    echo "             security delete-internet-password -a ${u} -s ${node} -r 'smb '" >&2
+    exit 1
+  fi
 done
+echo "    all readable without a prompt"
+
+# The nsmb.conf written by the previous attempt is dead weight: mount_smbfs
+# does not read a password from it, so it is a file holding a password in the
+# clear for no benefit at all. Put back whatever was there before, or take it
+# away — but only if this script is what wrote it.
+NSMB="${HOME}/Library/Preferences/nsmb.conf"
+if [ -f "$NSMB" ] && head -1 "$NSMB" | grep -q "install-share-mounts.sh"; then
+  if [ -f "${NSMB}.before-pi" ]; then
+    mv "${NSMB}.before-pi" "$NSMB"
+    echo "    removed the nsmb.conf this script wrote, put the original back"
+  else
+    rm -f "$NSMB"
+    echo "    removed the nsmb.conf this script wrote — it held a password for nothing"
+  fi
+fi
 
 echo "==> Writing the agent"
 mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
