@@ -112,7 +112,7 @@ make mounts
 
 It asks for the SMB password of each board, stores it in the login keychain,
 and installs an agent that keeps the mounts in step with Tailscale. The shares
-appear under `~/Shares`, and no part of it needs `sudo`: the boards appear in Finder while the tailnet is
+appear under `/Volumes` as `jug` and `jug2`, and no part of it needs `sudo`: the boards appear in Finder while the tailnet is
 up and are unmounted when it goes down. macOS does not remount SMB across a
 reboot on its own, and a share left mounted after the tailnet drops wedges
 Finder rather than sitting idle.
@@ -120,7 +120,7 @@ Finder rather than sitting idle.
 To mount one by hand instead, in Finder, Go > Connect to Server, or ⌘K:
 
 ```
-smb://jug2/browse
+smb://jug2/jug2
 ```
 
 Log in with the board's username and the SMB password just set. Eject it when

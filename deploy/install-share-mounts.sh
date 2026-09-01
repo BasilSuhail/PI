@@ -9,11 +9,9 @@
 #
 # Three pieces, and each is here for a reason:
 #
-#   a mount point per board   under ~/Shares, which this account owns. Not
-#                             /Volumes: macOS removes a mount point when the
-#                             mount goes away, and /Volumes is root-owned, so a
-#                             share dropped for being wedged could never be
-#                             remounted without sudo. Nothing here needs it.
+#   nothing to create        NetFS makes and removes the mount point itself,
+#                             under /Volumes, named after the share. That is
+#                             why each board's share carries the board's name.
 #   a credential per board    in the login keychain, handed to mount_smbfs on
 #                             stdin at mount time. See the note beside it for
 #                             why stdin and not the two more obvious channels.
@@ -27,7 +25,7 @@ set -euo pipefail
 
 NODES="${STORAGE_NODES:-jug jug2}"
 SHARE="${SHARE:-browse}"
-MOUNT_ROOT="${MOUNT_ROOT:-${HOME}/Shares}"
+MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
 LABEL="jug.share-mounts"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,15 +54,6 @@ for node in $NODES; do
   USERS="${USERS}${USERS:+ }${node}=${u}"
   echo "    ${node}: logging in as ${u}"
 done
-
-echo "==> Mount points under ${MOUNT_ROOT}"
-# No sudo. The pass recreates these whenever it needs one — macOS takes the
-# directory away with the mount — so the only job here is to have them exist
-# before the first mount.
-for node in $NODES; do
-  mkdir -p "${MOUNT_ROOT}/${node}"
-done
-echo "    ${NODES}"
 
 echo "==> SMB passwords in the login keychain"
 # Three ways to give mount_smbfs a password, and only one of them is any good.
@@ -127,7 +116,7 @@ for pair in $USERS; do
 done
 echo "    all readable without a prompt"
 
-# Earlier versions mounted under /Volumes. Left alone, those mounts are
+# Earlier versions mounted under ~/Shares. Left alone, those mounts are
 # invisible to this pass — it looks for the share under ~/Shares — so it would
 # mount the same share a second time, and macOS refuses that with a message
 # about the file existing. Take the old one down first.
@@ -136,13 +125,13 @@ echo "    all readable without a prompt"
 # directory left behind in /Volumes is harmless and needs root to remove, so it
 # is mentioned rather than tidied.
 for node in $NODES; do
-  stale="/Volumes/${node}"
+  stale="${HOME}/Shares/${node}"
   if /sbin/mount | grep -q " on ${stale} ("; then
     echo "    unmounting the older ${stale}"
     /sbin/umount "$stale" 2>/dev/null || /sbin/umount -f "$stale" 2>/dev/null || true
   fi
   if [ -d "$stale" ] && [ -z "$(ls -A "$stale" 2>/dev/null)" ]; then
-    echo "    ${stale} is now an empty leftover — remove it with: sudo rmdir ${stale}"
+    rmdir "$stale" 2>/dev/null && echo "    removed the empty ${stale}"
   fi
 done
 
