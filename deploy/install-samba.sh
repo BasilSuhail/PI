@@ -2,10 +2,11 @@
 # Shares /srv/browse over SMB so the disks mount in Finder. Run on the board
 # holding the disks. Idempotent — safe to re-run.
 #
-# Tailnet only. `interfaces` plus `bind interfaces only` means smbd never
-# listens on the LAN, so there is nothing to find on port 445 from the wifi
-# and nothing that would matter if the router were misconfigured. Do not port
-# forward this. SMB is not a protocol to expose to the internet.
+# Tailnet only, enforced by `hosts allow` and `hosts deny` rather than by
+# which address smbd binds — see the note beside them for why. A connection
+# from anywhere but the tailnet or this machine is refused before it can
+# authenticate. Do not port forward this. SMB is not a protocol to expose to
+# the internet.
 #
 # The config is written whole rather than edited, for the same reason apps.json
 # is: the repo is the source of truth and a board-side edit is a thing that
@@ -19,11 +20,8 @@ CONF=/etc/samba/smb.conf
 # home LAN can hold one, so this allows the tailnet and nothing else.
 TAILNET_CIDR="100.64.0.0/10"
 
-# Bind by address, not by interface name. Samba resolves a named interface
-# through its own detection, which skips point-to-point devices that have no
-# broadcast address — precisely what a Tailscale tun device is. Given
-# "tailscale0" it silently binds whatever is left, which is lo, and then the
-# share is unreachable from anywhere while the install reports success.
+# Only used to check the result and to print the address at the end. smbd is
+# no longer asked to bind it — see the note on interfaces below.
 TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
 if [ -z "$TS_IP" ]; then
   echo "This board has no Tailscale IPv4 address. Bring tailscale up first." >&2
@@ -55,16 +53,25 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    security = user
    map to guest = never
 
-   # The whole of the exposure decision is these two lines.
+   # smbd listens on everything, and these two lines decide who gets served.
    #
-   # The netmasks are load-bearing. A bare address here is a lookup, matched
-   # against the interfaces Samba's own enumeration found — and that
-   # enumeration never sees the Tailscale tun device, so the entry is silently
-   # dropped and smbd binds localhost alone. An address with a netmask is a
-   # definition, used as given, which is the documented way to name an
-   # interface Samba cannot discover for itself.
-   interfaces = 127.0.0.1/8 ${TS_IP}/32
-   bind interfaces only = yes
+   # It is not for want of trying the other way. Samba was asked to bind the
+   # Tailscale address by interface name and then by address-with-netmask, and
+   # discarded both: its interface handling wants something it recognises as a
+   # network, and a host route on a tun device is not that. It bound localhost
+   # alone and reported success. Rather than guess at a third spelling, the
+   # restriction moved to where it is unambiguous.
+   #
+   # The cost is that port 445 is visible on the home LAN. Nothing there can
+   # read a file — every connection that is not from the tailnet or this
+   # machine is refused before authentication — and nothing outside the house
+   # can reach the port at all, because it is not forwarded and never should
+   # be. To hide it from the LAN too, drop 445 on the LAN interface:
+   #
+   #     sudo nft add rule inet filter input iifname "wlan0" tcp dport 445 drop
+   #
+   # Left out of this script deliberately: a firewall rule applied over ssh to
+   # a board in another room is how people lose access to boards in other rooms.
    hosts allow = ${TAILNET_CIDR} 127.0.0.1
    hosts deny = 0.0.0.0/0
 
@@ -141,21 +148,21 @@ echo "==> Listening on"
 ss -tln | grep ':445\b' | sed 's/^/  /' || true
 # Being bound somewhere is not the test. Being bound on the tailnet is, and
 # this is the check that would have caught the lo-only bind.
-if ss -tln | grep -q "${TS_IP}:445"; then
+# Listening on 0.0.0.0 covers the tailnet address. What is worth asserting is
+# that something is listening at all, and that Samba was given the allow list.
+if ss -tln | grep -qE '(\*|0\.0\.0\.0):445'; then
   echo "  reachable on the tailnet at ${TS_IP}"
+  echo "  refused from anywhere that is not ${TAILNET_CIDR} or this machine"
 else
   # Say why, rather than leaving a person to go and find out. These three
   # together answer it: what Samba was told, what Samba believes it has, and
   # what the kernel actually has.
   {
     echo
-    echo "  NOT bound on ${TS_IP} — Finder will not connect."
+    echo "  smbd is not listening on 445 at all — Finder will not connect."
     echo
-    echo "  smb.conf says:"
-    testparm -s --parameter-name=interfaces 2>/dev/null | sed 's/^/    /'
-    echo "  samba sees these interfaces:"
-    smbd -b 2>/dev/null | grep -i interface | sed 's/^/    /' || true
-    net usershare info >/dev/null 2>&1 || true
+    echo "  samba's allow list:"
+    testparm -s --parameter-name='hosts allow' 2>/dev/null | sed 's/^/    /'
     echo "  the kernel has these addresses:"
     ip -o -4 addr show | awk '{print "    " $2 "  " $4}'
     echo
