@@ -46,6 +46,29 @@ RETRY_AFTER="${RETRY_AFTER:-300}"
 WORK="${TMPDIR:-/tmp}/jug-share-mounts"
 mkdir -p "$WORK"
 
+# One pass at a time.
+#
+# The installer runs a pass in the foreground and the agent runs one on a timer,
+# and on the first install both went off together. Two passes each saw an
+# unmounted share, both mounted it, and NetFS — finding the obvious name taken
+# by the first — put the second at /Volumes/jug-1. Two mounts of one share, and
+# a mount point neither pass was looking for.
+#
+# mkdir is the lock because it is atomic. A stale one is taken over rather than
+# waited on: the holder is a pass that died, and passes are meant to be
+# disposable.
+LOCK="${WORK}/pass.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  holder=$(cat "${LOCK}/pid" 2>/dev/null || echo)
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    exit 0
+  fi
+  rm -rf "$LOCK"
+  mkdir "$LOCK" 2>/dev/null || exit 0
+fi
+echo $$ > "${LOCK}/pid"
+trap 'rm -rf "$LOCK"' EXIT
+
 TS=""
 for candidate in \
   /usr/local/bin/tailscale \
@@ -82,10 +105,29 @@ node_online() {
   [ -n "$row" ] && [[ "$row" != *offline* ]]
 }
 
-# The share carries the board's name, so the mount point does too.
-point_for() { printf '%s/%s' "$MOUNT_ROOT" "$1"; }
+# Where this board's share is mounted, or nothing.
+#
+# Looked up by the share, never by the path. NetFS picks the path itself, and
+# when the obvious name is taken it quietly uses the next one — /Volumes/jug-1
+# instead of /Volumes/jug. A check that asks "is anything mounted at the path I
+# expect" then answers no about a mount that exists, and the pass mounts the
+# same share again, every fifteen seconds, for ever. The share is the thing
+# being asked about, so the share is the thing to look for.
+mounted_at() {
+  /sbin/mount | awk -v s="/$1" '
+    $1 ~ ("@[^/]+" s "$") {
+      # "//user@host/share on /Volumes/x (smbfs, ...)" — the path is everything
+      # between "on " and the options, and it may contain spaces.
+      p = $0
+      sub(/^[^ ]+ on /, "", p)
+      sub(/ \([^)]*\)$/, "", p)
+      print p
+      exit
+    }'
+}
 
-mounted() { /sbin/mount | grep -q " on $(point_for "$1") ("; }
+# The name NetFS would use if nothing were in the way. Only for reporting.
+point_for() { printf '%s/%s' "$MOUNT_ROOT" "$1"; }
 
 user_for() {
   local pair
@@ -248,7 +290,9 @@ for node in $NODES; do
   $up && node_online "$node" && want=true
 
   if $want; then
-    if mounted "$mp"; then
+    at="$(mounted_at "$node")"
+    if [ -n "$at" ]; then
+      mp="$at"
       # Mounted and reachable is not the same as working. A session can be dead
       # while the server is fine, and the mount table still lists it.
       answering "$mp" && { forget "mount-$node"; mark_ok "$node"; continue; }
@@ -277,7 +321,8 @@ for node in $NODES; do
     fi
     unset cred
   else
-    mounted "$mp" || continue
+    mp="$(mounted_at "$node")"
+    [ -n "$mp" ] || continue
     # Not checked afterwards: the unmount runs in the background and checking
     # would mean waiting for it. The next pass reports what actually happened.
     drop "$mp" && log "unmounting ${mp} ($($up && echo "${node} went offline" || echo "tailnet down"))"
