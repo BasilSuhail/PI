@@ -186,28 +186,29 @@ Two reasons it is a timer and not a login item:
   filesystem. Dropping the mount when the tailnet goes is the half that
   matters; putting it back when the tailnet returns is the easy half.
 
-### Where the password lives, and why not the keychain
+### Where the password lives
 
-`mount_smbfs` does not read the login keychain. Finder does, through NetFS, but
-the command-line tool reads `~/Library/Preferences/nsmb.conf` and nothing else.
-With `-N` it uses whatever it finds there and never prompts — which is what
-makes it safe to run from an agent, where a prompt would be a wait nothing ever
-answers.
+In the login keychain, one entry per board, handed to `mount_smbfs` on stdin at
+mount time.
 
-So the password is in a file, in the clear. macOS 14 and earlier had `smbutil
-crypt` to scramble it, reversibly, and macOS 15 has dropped the subcommand
-entirely. What protects the file is mode `0600`.
+There are three ways to give `mount_smbfs` a password and only one of them is
+any good. In the URL, as `//user:password@host`, it lands in argv, which `ps`
+shows to every process on this Mac. In `~/Library/Preferences/nsmb.conf` — which
+is what `man mount_smbfs` still tells you to do — it does not work at all:
+macOS 15 no longer reads a password from that file, and `smbutil crypt`, which
+used to scramble the value, has been removed. That was tried here first and it
+silently did nothing.
 
-That is weaker than the keychain and worth being clear about. What it is not is
-the thing standing between an attacker and the files: anyone who can read that
-file already has this Mac account, and can read the mounted share directly.
+The third way is stdin. `mount_smbfs` prompts for a password, and a prompt reads
+whatever is on stdin, so a pipe answers it. The password goes from the keychain
+into a pipe and no further: not into argv, not into a file. `-N` must not be
+used alongside it, since that flag suppresses the prompt and the prompt is the
+thing doing the reading.
 
-The file is written whole, with the original kept once at `nsmb.conf.before-jug`.
-Both `[SERVER:USER]` and `[SERVER]` sections are written with the same value —
-the `nsmb.conf` man page documents neither a password keyword nor the
-`[SERVER:USER]` form any more, while `mount_smbfs` still says it reads a
-password from the file, so which spelling wins is not currently written down
-anywhere true. Writing both settles it.
+The installer reads each entry back after storing it. Writing to the keychain
+and reading from it are different permissions, and the read is the one that
+matters — the pass runs from an agent, with nobody there to dismiss a dialog.
+Better to find a keychain that will not answer while a person is watching.
 
 ### Which user
 
