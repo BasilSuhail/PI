@@ -7,6 +7,7 @@ import type { Capability, FleetNode, ProcessRow } from '../../shared/fleet';
 import { fetchClusterRoles } from './kube';
 import { fetchCpu, fetchDisks, fetchMem, fetchNet, fetchProcesses, fetchSystem } from './glances';
 import { fetchCache } from './files';
+import { dialHost } from './dial';
 import { fetchShim } from './shim';
 import { fetchTailnetDevices, ipv4Of, type TailnetDevice } from './tailnet';
 
@@ -40,17 +41,21 @@ const buildNode = async (
   const ip = ipv4Of(device);
   if (!ip || !device.online) return { ...offlineNode(device, ip), role: roleFor(device, roles) };
 
+  // The address to report is the tailnet one; the address to dial may not be.
+  // See dial.ts — a board cannot always reach its own tailnet address.
+  const host = dialHost(ip);
+
   const [cpu, mem, disks, net, system, shim, topProcesses, cache] = await Promise.all([
-    fetchCpu(ip),
-    fetchMem(ip),
-    fetchDisks(ip),
-    fetchNet(ip),
-    fetchSystem(ip),
-    fetchShim(ip),
-    fetchProcesses(ip, 250),
+    fetchCpu(host),
+    fetchMem(host),
+    fetchDisks(host),
+    fetchNet(host),
+    fetchSystem(host),
+    fetchShim(host),
+    fetchProcesses(host, 250),
     // Null on a board running an older agent, which is an ordinary state:
     // the card simply leaves that half of the row out.
-    fetchCache(ip).catch(() => null),
+    fetchCache(host).catch(() => null),
   ]);
 
   // On the tailnet but nothing answered — agents are missing or down. That is
