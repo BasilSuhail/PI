@@ -212,14 +212,6 @@ cat > "$PLIST" <<PLISTBODY
 PLISTBODY
 plutil -lint "$PLIST" >/dev/null
 
-echo "==> Loading it"
-# bootout first, so a re-run picks up an edited plist instead of leaving the
-# old one running. It fails when nothing is loaded, which is fine.
-launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl kickstart "gui/$(id -u)/${LABEL}"
-
-echo
 echo "==> First pass"
 # Run it here too, in the foreground, so a wrong password is seen now rather
 # than found later in a log.
@@ -240,6 +232,19 @@ FAILED
   exit 1
 fi
 
+# Started only after the first pass has finished. Both do the same work, and
+# on the first install they went off together: two passes each saw an unmounted
+# share, both mounted it, and NetFS put the second at /Volumes/pi-1. The pass
+# now takes a lock as well, so this is belt and braces — but the ordering costs
+# nothing and makes the race impossible rather than merely unlikely.
+echo "==> Starting the agent"
+# bootout first, so a re-run picks up an edited plist instead of leaving the
+# old one running. It fails when nothing is loaded, which is fine.
+launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl kickstart "gui/$(id -u)/${LABEL}"
+
+echo
 cat <<NEXT
 
   Done. While Tailscale is up the boards mount themselves; when it goes down
