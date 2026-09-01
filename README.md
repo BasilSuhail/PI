@@ -40,10 +40,15 @@ Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
 <details>
 <summary><strong>Storage — one-time setup</strong></summary>
 
-On the Mac. Every command, in order.
+On the Mac. In order. `make archive` and `make automount` reach both boards;
+`make samba` asks for a password so it takes one board at a time.
 
 ```bash
 cd ~/folders/PI
+```
+
+```bash
+git checkout main && git pull
 ```
 
 ```bash
@@ -55,7 +60,15 @@ make agents
 ```
 
 ```bash
-make browse
+make archive
+```
+
+```bash
+make automount
+```
+
+```bash
+make dashboard
 ```
 
 ```bash
@@ -72,20 +85,62 @@ Check it worked:
 curl -s http://pi.<tailnet>.ts.net:9101/files
 ```
 
-Optional, for Finder:
+</details>
 
-```bash
-make samba NODE=pi
-```
+<details>
+<summary><strong>Storage — mounting the disks in Finder</strong></summary>
+
+Optional. The console works without it; this is for moving large files at full
+speed and opening them in Mac apps directly.
+
+Once per board. Each prompts for an SMB password — that is a new password you
+choose, not the board's login.
 
 ```bash
 make samba NODE=pi2
 ```
 
-After adding a disk, only this:
+```bash
+make samba NODE=pi
+```
+
+Then in Finder, Go > Connect to Server, or ⌘K:
+
+```
+smb://pi2.<tailnet>.ts.net/browse
+```
+
+```
+smb://pi.<tailnet>.ts.net/browse
+```
+
+Log in with the board's username and the SMB password just set. Eject the
+share when you are done — a mounted share has macOS writing `.DS_Store` files
+and generating previews on the board on its own.
+
+</details>
+
+<details>
+<summary><strong>Storage — day to day</strong></summary>
+
+Drag files from Finder onto a column in the console to upload them. Right-click
+anything for the same actions the bar offers.
+
+After plugging a drive in, nothing — `make automount` handles it. Only if a
+drive was mounted by hand:
 
 ```bash
 make browse
+```
+
+After changing the agent or the dashboard:
+
+```bash
+make agents
+```
+
+```bash
+make dashboard
 ```
 
 What each does: [`docs/storage.md`](docs/storage.md).
