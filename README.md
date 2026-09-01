@@ -90,42 +90,50 @@ curl -s http://jug.taild9f605.ts.net:9101/files
 <details>
 <summary><strong>Storage — mounting the disks in Finder</strong></summary>
 
-Optional. The console works without it; this is for moving large files at full
-speed and opening them in Mac apps directly.
+Optional. Boards first, then the Mac.
 
-Once per board. Each prompts for an SMB password — that is a new password you
-choose, not the board's login.
+```bash
+make samba NODE=jug
+```
 
 ```bash
 make samba NODE=jug2
 ```
 
 ```bash
-make samba NODE=jug
-```
-
-Then, on the Mac, once:
-
-```bash
 make mounts
 ```
 
-It asks for the SMB password of each board, stores it in the login keychain,
-and installs an agent that keeps the mounts in step with Tailscale. The shares
-appear under `/Volumes` as `jug` and `jug2`, and no part of it needs `sudo`: the boards appear in Finder while the tailnet is
-up and are unmounted when it goes down. macOS does not remount SMB across a
-reboot on its own, and a share left mounted after the tailnet drops wedges
-Finder rather than sitting idle.
+`make mounts` asks for each board's SMB password once, stores it in the login
+keychain, reads it back and refuses to continue if what comes back is not what
+you typed. Nothing needs `sudo`. You do not run it again on this Mac unless you
+change a board's SMB password.
 
-To mount one by hand instead, in Finder, Go > Connect to Server, or ⌘K:
+After that the shares appear in Finder as `jug` and `jug2` whenever Tailscale is
+up, and unmount when it goes down — across reboots, sleep and dropped wifi, with
+nothing to click.
+
+By hand instead, ⌘K in Finder:
+
+```
+smb://jug/jug
+```
 
 ```
 smb://jug2/jug2
 ```
 
-Log in with the board's username and the SMB password just set. Eject it when
-you are done — a mounted share has macOS writing `.DS_Store` files and
-generating previews on the board on its own.
+Check what is mounted:
+
+```bash
+mount | grep smbfs
+```
+
+Watch what the agent is doing:
+
+```bash
+tail -f ~/Library/Logs/jug.share-mounts.log
+```
 
 </details>
 
