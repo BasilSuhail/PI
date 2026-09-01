@@ -56,7 +56,14 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    map to guest = never
 
    # The whole of the exposure decision is these two lines.
-   interfaces = 127.0.0.1 ${TS_IP}
+   #
+   # The netmasks are load-bearing. A bare address here is a lookup, matched
+   # against the interfaces Samba's own enumeration found — and that
+   # enumeration never sees the Tailscale tun device, so the entry is silently
+   # dropped and smbd binds localhost alone. An address with a netmask is a
+   # definition, used as given, which is the documented way to name an
+   # interface Samba cannot discover for itself.
+   interfaces = 127.0.0.1/8 ${TS_IP}/32
    bind interfaces only = yes
    hosts allow = ${TAILNET_CIDR} 127.0.0.1
    hosts deny = 0.0.0.0/0
@@ -137,9 +144,24 @@ ss -tln | grep ':445\b' | sed 's/^/  /' || true
 if ss -tln | grep -q "${TS_IP}:445"; then
   echo "  reachable on the tailnet at ${TS_IP}"
 else
-  echo >&2
-  echo "  NOT bound on ${TS_IP} — Finder will not connect." >&2
-  echo "  Check: sudo journalctl -u smbd -n 30" >&2
+  # Say why, rather than leaving a person to go and find out. These three
+  # together answer it: what Samba was told, what Samba believes it has, and
+  # what the kernel actually has.
+  {
+    echo
+    echo "  NOT bound on ${TS_IP} — Finder will not connect."
+    echo
+    echo "  smb.conf says:"
+    testparm -s --parameter-name=interfaces 2>/dev/null | sed 's/^/    /'
+    echo "  samba sees these interfaces:"
+    smbd -b 2>/dev/null | grep -i interface | sed 's/^/    /' || true
+    net usershare info >/dev/null 2>&1 || true
+    echo "  the kernel has these addresses:"
+    ip -o -4 addr show | awk '{print "    " $2 "  " $4}'
+    echo
+    echo "  Last words from smbd:"
+    journalctl -u smbd -n 15 --no-pager 2>/dev/null | sed 's/^/    /'
+  } >&2
   exit 1
 fi
 echo
