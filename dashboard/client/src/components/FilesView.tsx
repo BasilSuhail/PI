@@ -117,6 +117,12 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const [view, setView] = useState<'list' | 'grid'>('grid');
   /** Filters the folder being looked at. Not a search of the board. */
   const [query, setQuery] = useState('');
+  /**
+   * What Back has taken off, newest first, so Forward can put it back. Any
+   * fresh navigation drops it — a browser does the same, and keeping it would
+   * offer a Forward that leads somewhere you did not come from.
+   */
+  const [ahead, setAhead] = useState<string[]>([]);
   const [preview, setPreview] = useState<Picked | null>(null);
   /** Named roots per board, so a disk's column can pin the ones that live on it. */
   const [rootsByNode, setRootsByNode] = useState<Record<string, DirRoots['roots']>>({});
@@ -313,7 +319,23 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     // Clicking the open folder again folds it back up. Anything to its right
     // belonged to it and goes with it.
     const alreadyOpen = trail[depth + 1] === key;
+    setAhead([]);
     setTrail(entry.dir && !alreadyOpen ? [...trail.slice(0, depth + 1), key] : trail.slice(0, depth + 1));
+  };
+
+  const goBack = () => {
+    if (trail.length < 2) return;
+    setAhead([trail[trail.length - 1], ...ahead]);
+    setTrail(trail.slice(0, -1));
+    setSel(null);
+    setPicked((prev) => Object.fromEntries(Object.entries(prev).filter(([d]) => +d < trail.length - 1)));
+  };
+
+  const goForward = () => {
+    if (!ahead.length) return;
+    setTrail([...trail, ahead[0]]);
+    setAhead(ahead.slice(1));
+    setSel(null);
   };
 
   /** Clicking under the rows drops the row selection and targets the column. */
@@ -441,6 +463,18 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   return (
     <div class="page-stack">
       <div class="fx-bar">
+        {/* Finder's order, and for Finder's reason: where you are and how you
+            got here belong at the left edge, what you can do to it in the
+            middle, and what you are looking for at the right. */}
+        <div class="fx-nav">
+          <button disabled={trail.length < 2} onClick={goBack} title="Back" aria-label="Back">
+            <Chevron size={14} class="flip" />
+          </button>
+          <button disabled={!ahead.length} onClick={goForward} title="Forward" aria-label="Forward">
+            <Chevron size={14} />
+          </button>
+        </div>
+
         <div class="fx-sel">
           <strong>{sel ? sel.entry.name : hereListing ? label(here, hereListing, nodes) : 'Storage'}</strong>
           <span class="fx-meta">
@@ -491,6 +525,23 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         </div>
 
         <div class="fx-tools">
+          {/* Narrow windows hide the row of actions and offer this instead. It
+              opens the menu the right-click already uses, so the short bar and
+              the long one cannot drift apart or disagree about what is
+              allowed. Back, forward and the search field are never hidden:
+              they are how you move and how you find, and a toolbar that hides
+              those has stopped being a toolbar. */}
+          <button
+            class="fx-act fx-more"
+            title="More actions"
+            aria-label="More actions"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenu({ x: Math.max(8, r.right - 190), y: r.bottom + 6 });
+            }}
+          >
+            »
+          </button>
           {/* The tag button from Finder's toolbar. It opens the same colour row
               the right-click menu carries, so there is one list, not two. */}
           <button
