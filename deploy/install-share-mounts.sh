@@ -9,11 +9,9 @@
 #
 # Three pieces, and each is here for a reason:
 #
-#   a mount point per board   under ~/Shares, which this account owns. Not
-#                             /Volumes: macOS removes a mount point when the
-#                             mount goes away, and /Volumes is root-owned, so a
-#                             share dropped for being wedged could never be
-#                             remounted without sudo. Nothing here needs it.
+#   nothing to create        NetFS makes and removes the mount point itself,
+#                             under /Volumes, named after the share. That is
+#                             why each board's share carries the board's name.
 #   a credential per board    in the login keychain, handed to mount_smbfs on
 #                             stdin at mount time. See the note beside it for
 #                             why stdin and not the two more obvious channels.
@@ -26,8 +24,6 @@ set -euo pipefail
 [ "$(uname -s)" = "Darwin" ] || { echo "This one runs on the Mac, not on a board." >&2; exit 1; }
 
 NODES="${STORAGE_NODES:-jug jug2}"
-SHARE="${SHARE:-browse}"
-MOUNT_ROOT="${MOUNT_ROOT:-${HOME}/Shares}"
 LABEL="jug.share-mounts"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,19 +53,23 @@ for node in $NODES; do
   echo "    ${node}: logging in as ${u}"
 done
 
-echo "==> Mount points under ${MOUNT_ROOT}"
-# No sudo. The pass recreates these whenever it needs one — macOS takes the
-# directory away with the mount — so the only job here is to have them exist
-# before the first mount.
-for node in $NODES; do
-  mkdir -p "${MOUNT_ROOT}/${node}"
-done
-echo "    ${NODES}"
+# The same reader the pass uses. `security -w` returns a hex dump for anything
+# holding a non-ASCII byte, so a check written on -w would see a non-empty
+# string, call it good, and hand the mount the literal text "6122...".
+stored_password() {
+  local shown hex
+  shown=$(security find-internet-password -g -a "$2" -s "$1" -r "smb " 2>&1 >/dev/null \
+    | sed -n 's/^password: //p')
+  case "$shown" in
+    0x*) hex=${shown#0x}; hex=${hex%% *}; printf '%s' "$hex" | xxd -r -p ;;
+    *)   security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null || true ;;
+  esac
+}
 
 echo "==> SMB passwords in the login keychain"
 # Three ways to give mount_smbfs a password, and only one of them is any good.
 #
-# In the URL, as //user:password@host — it is then in argv, which ps shows to
+# Embedded in the mount URL, before the @ — it is then in argv, which ps shows to
 # every process on this Mac. In ~/Library/Preferences/nsmb.conf — which is what
 # `man mount_smbfs` still tells you to do, but macOS 15 no longer reads a
 # password from that file, and `smbutil crypt`, which used to scramble the
@@ -106,8 +106,20 @@ for pair in $USERS; do
   security add-internet-password \
     -a "$u" -s "$node" -r "smb " -l "${node} (SMB)" \
     -T /usr/bin/security -U -w "$smbpass"
+  # Read it straight back and compare. Storing and retrieving are different
+  # operations and either can alter a value; a check that only asks "is there
+  # something there" passes on a value that is subtly not what was typed, which
+  # is a whole evening of blaming the wrong machine.
+  if [ "$(stored_password "$node" "$u")" = "$smbpass" ]; then
+    echo "           stored, and reads back identical"
+  else
+    echo "           stored, but what comes back is not what was typed." >&2
+    echo "           Refusing to leave that in place." >&2
+    security delete-internet-password -a "$u" -s "$node" -r "smb " >/dev/null 2>&1 || true
+    unset smbpass
+    exit 1
+  fi
   unset smbpass
-  echo "           stored"
 done
 
 # Storing a password and reading one back are different permissions, and the
@@ -117,7 +129,7 @@ done
 # next time the tailnet drops.
 for pair in $USERS; do
   node="${pair%%=*}"; u="${pair#*=}"
-  if [ -z "$(security find-internet-password -a "$u" -s "$node" -r "smb " -w 2>/dev/null)" ]; then
+  if [ -z "$(stored_password "$node" "$u")" ]; then
     echo "    ${node}: stored, but it cannot be read back without a prompt." >&2
     echo "           The agent has no way to answer one. Fix the entry's access" >&2
     echo "           control in Keychain Access, or delete it and re-run:" >&2
@@ -127,7 +139,7 @@ for pair in $USERS; do
 done
 echo "    all readable without a prompt"
 
-# Earlier versions mounted under /Volumes. Left alone, those mounts are
+# Earlier versions mounted under ~/Shares. Left alone, those mounts are
 # invisible to this pass — it looks for the share under ~/Shares — so it would
 # mount the same share a second time, and macOS refuses that with a message
 # about the file existing. Take the old one down first.
@@ -136,13 +148,13 @@ echo "    all readable without a prompt"
 # directory left behind in /Volumes is harmless and needs root to remove, so it
 # is mentioned rather than tidied.
 for node in $NODES; do
-  stale="/Volumes/${node}"
+  stale="${HOME}/Shares/${node}"
   if /sbin/mount | grep -q " on ${stale} ("; then
     echo "    unmounting the older ${stale}"
     /sbin/umount "$stale" 2>/dev/null || /sbin/umount -f "$stale" 2>/dev/null || true
   fi
   if [ -d "$stale" ] && [ -z "$(ls -A "$stale" 2>/dev/null)" ]; then
-    echo "    ${stale} is now an empty leftover — remove it with: sudo rmdir ${stale}"
+    rmdir "$stale" 2>/dev/null && echo "    removed the empty ${stale}"
   fi
 done
 
@@ -181,12 +193,8 @@ cat > "$PLIST" <<PLISTBODY
   <dict>
     <key>STORAGE_NODES</key>
     <string>${NODES}</string>
-    <key>SHARE</key>
-    <string>${SHARE}</string>
     <key>SHARE_USERS</key>
     <string>${USERS}</string>
-    <key>MOUNT_ROOT</key>
-    <string>${MOUNT_ROOT}</string>
   </dict>
   <!-- Every 15s. The pass is two reads of local state when nothing has
        changed, which is most of the time; the interval is set by how long a
@@ -215,7 +223,7 @@ echo
 echo "==> First pass"
 # Run it here too, in the foreground, so a wrong password is seen now rather
 # than found later in a log.
-STORAGE_NODES="$NODES" SHARE="$SHARE" SHARE_USERS="$USERS" MOUNT_ROOT="$MOUNT_ROOT" \
+STORAGE_NODES="$NODES" SHARE_USERS="$USERS" \
   bash "$PASS" || true
 
 if /sbin/mount | grep -q smbfs; then
