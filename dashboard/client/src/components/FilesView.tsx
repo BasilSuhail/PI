@@ -85,6 +85,14 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const reachable = nodes.filter((n) => n.online && !n.error);
   const [trail, setTrail] = useState<string[]>([FLEET]);
   const [cells, setCells] = useState<Record<string, Cell>>({});
+
+  /**
+   * A column is identified by its board as well as its path. Both boards have
+   * a `/` and a `/srv/archive`, so keying on the path alone made them the same
+   * cached column: whichever board was opened first answered for the other,
+   * and the second one never refetched because the key was already present.
+   */
+  const cacheKey = (node: string | null, key: string) => `${node ?? '?'}\u0000${key}`;
   const [picked, setPicked] = useState<Record<number, string>>({});
   const [sel, setSel] = useState<Picked | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
@@ -125,8 +133,10 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     },
   };
 
-  const cellFor = (key: string): Cell =>
-    key === FLEET ? fleetCell : (cells[key] ?? { listing: null, error: null, loading: true });
+  const cellFor = (key: string, node: string | null): Cell =>
+    key === FLEET
+      ? fleetCell
+      : (cells[cacheKey(node, key)] ?? { listing: null, error: null, loading: true });
 
   /** The board a column belongs to, walking back up the trail. */
   const nodeAt = (depth: number): string | null => {
@@ -140,15 +150,17 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   // its roots; everything deeper asks for one directory.
   useEffect(() => {
     trail.forEach((key, depth) => {
-      if (key === FLEET || cells[key]) return;
+      if (key === FLEET) return;
       const node = nodeAt(depth);
       if (!node) return;
-      setCells((prev) => ({ ...prev, [key]: { listing: null, error: null, loading: true } }));
+      const slot = cacheKey(node, key);
+      if (cells[slot]) return;
+      setCells((prev) => ({ ...prev, [slot]: { listing: null, error: null, loading: true } }));
 
       const done = (listing: DirListing) =>
-        setCells((prev) => ({ ...prev, [key]: { listing, error: null, loading: false } }));
+        setCells((prev) => ({ ...prev, [slot]: { listing, error: null, loading: false } }));
       const failed = (err: Error) =>
-        setCells((prev) => ({ ...prev, [key]: { listing: null, error: err.message, loading: false } }));
+        setCells((prev) => ({ ...prev, [slot]: { listing: null, error: err.message, loading: false } }));
 
       if (isNodeCol(key)) {
         const board = nodes.find((n) => n.id === node);
@@ -216,7 +228,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   };
 
   const here = trail[trail.length - 1];
-  const hereListing = cellFor(here).listing;
+  const hereListing = cellFor(here, nodeAt(trail.length - 1)).listing;
 
   /**
    * Forget a column so it is read again. The counter is the point: the fetch
@@ -224,10 +236,10 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
    * so without it the column sat on its loading placeholder forever and only
    * a page reload brought it back.
    */
-  const invalidate = (...keys: string[]) => {
+  const invalidate = (node: string | null, ...keys: string[]) => {
     setCells((prev) => {
       const next = { ...prev };
-      for (const key of keys) delete next[key];
+      for (const key of keys) delete next[cacheKey(node, key)];
       return next;
     });
     setReload((n) => n + 1);
@@ -238,12 +250,12 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
    * refused, then drop the columns it touched so they are read again rather
    * than patched locally into something that might not match the disk.
    */
-  const act = async (fn: () => Promise<void>, ...touched: string[]) => {
+  const act = async (fn: () => Promise<void>, on: string | null, ...touched: string[]) => {
     setBusy(true);
     setProblem(null);
     try {
       await fn();
-      invalidate(...touched.filter(Boolean));
+      invalidate(on, ...touched.filter(Boolean));
       setSel(null);
     } catch (err) {
       setProblem(err instanceof Error ? err.message : 'that was refused');
@@ -286,7 +298,9 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   };
 
   const siblings = (): DirEntry[] =>
-    (cellFor(sel?.parent ?? here).listing?.entries ?? []).filter((e) => !e.dir && IMAGE.test(e.name));
+    (cellFor(sel?.parent ?? here, sel?.node ?? nodeAt(trail.length - 1)).listing?.entries ?? []).filter(
+      (e) => !e.dir && IMAGE.test(e.name),
+    );
 
   const step = (dir: number) => {
     if (!preview) return;
@@ -323,32 +337,33 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   /** Writes land in the column being looked at; its own flag decides. */
   const canWriteHere = !!hereListing?.writable && !!node;
   /** Renaming or deleting changes the folder the row sits in, not the row. */
-  const canChangeSel = !!sel && !!cellFor(sel.parent).listing?.writable && !!sel.node;
+  const canChangeSel = !!sel && !!cellFor(sel.parent, sel.node).listing?.writable && !!sel.node;
 
   const newFolder = () => {
     const name = prompt('Name for the new folder');
     if (!name || !node) return;
-    void act(() => write(node, { op: 'mkdir', path: here, name }), here);
+    void act(() => write(node, { op: 'mkdir', path: here, name }), node, here);
   };
 
   const rename = () => {
     if (!sel || !sel.node) return;
     const name = prompt('Rename to', sel.entry.name);
     if (!name || name === sel.entry.name) return;
-    void act(() => write(sel.node!, { op: 'rename', path: sel.path, name }), sel.parent);
+    void act(() => write(sel.node!, { op: 'rename', path: sel.path, name }), sel.node, sel.parent);
   };
 
   const remove = () => {
     if (!sel || !sel.node) return;
     const what = sel.entry.dir ? `${sel.entry.name} and everything in it` : sel.entry.name;
     if (!confirm(`Delete ${what}?\n\nThis cannot be undone.`)) return;
-    void act(() => write(sel.node!, { op: 'delete', path: sel.path }), sel.parent, sel.path);
+    void act(() => write(sel.node!, { op: 'delete', path: sel.path }), sel.node, sel.parent, sel.path);
   };
 
   const paste = () => {
     if (!clip || !node) return;
     void act(
       () => write(node, { op: clip.cut ? 'move' : 'copy', path: clip.path, to: here }),
+      node,
       here,
       clip.path.replace(/\/[^/]+$/, ''),
     );
@@ -357,7 +372,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
   const duplicate = () => {
     if (!sel || !sel.node) return;
-    void act(() => write(sel.node!, { op: 'copy', path: sel.path, to: sel.parent }), sel.parent);
+    void act(() => write(sel.node!, { op: 'copy', path: sel.path, to: sel.parent }), sel.node, sel.parent);
   };
 
   /** A move by drag, and a drop of files from outside. Same destination. */
@@ -368,13 +383,14 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     if (files.length) {
       void act(async () => {
         for (const file of files) await upload(node, destination, file);
-      }, destination);
+      }, node, destination);
       return;
     }
     const moved = ev.dataTransfer?.getData('text/jug-path');
     if (!moved || moved === destination) return;
     void act(
       () => write(node, { op: 'move', path: moved, to: destination }),
+      node,
       destination,
       moved.replace(/\/[^/]+$/, ''),
     );
@@ -457,7 +473,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           {trail.map((key, depth) => (
             <Column
               key={key}
-              cell={cellFor(key)}
+              cell={cellFor(key, nodeAt(depth))}
               selectedName={picked[depth] ?? null}
               node={nodeAt(depth)}
               onOpen={(entry) => open(entry, key, depth)}
@@ -472,7 +488,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         </div>
       ) : (
         <Grille
-          cell={cellFor(here)}
+          cell={cellFor(here, node)}
           node={nodeAt(trail.length - 1)}
           selectedName={sel?.entry.name ?? null}
           onSelect={(entry) => select(entry, here, trail.length - 1)}
