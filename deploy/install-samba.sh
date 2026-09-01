@@ -80,6 +80,18 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    server min protocol = SMB3
    client min protocol = SMB3
 
+   # Do not announce this to the local network. Both boards were turning up in
+   # the Finder sidebar of every Mac on the wifi, and clicking one failed —
+   # hosts allow admits the tailnet and nothing else — so the advert offered a
+   # door that does not open and looked like a broken mount.
+   #
+   # Discovery exists to find a server whose name you do not know. These names
+   # are known, they are in the README, and they resolve through the tailnet's
+   # DNS. nmbd covers the NetBIOS half and is disabled below; this covers mDNS,
+   # which is separate and on by default.
+   multicast dns register = no
+   disable netbios = yes
+
    # macOS interoperability. catia and streams_xattr let resource forks and
    # names with colons survive on ext4; fruit is what stops Finder being slow.
    vfs objects = catia fruit streams_xattr
