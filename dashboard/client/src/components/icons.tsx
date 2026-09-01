@@ -25,4 +25,5 @@ export const Net     = ({ size, class: c }: P) => S('<rect x="9" y="2" width="6"
 export const Alert   = ({ size, class: c }: P) => S('<path d="M12 3 2 20h20L12 3z"/><path d="M12 9v4M12 17h.01"/>', size, c);
 export const Gauge   = ({ size, class: c }: P) => S('<path d="M12 14 15 9"/><path d="M20.6 18a9 9 0 1 0-17.2 0"/>', size, c);
 export const List    = ({ size, class: c }: P) => S('<path d="M3 6h18M7 12h14M11 18h10"/>', size, c);
+export const Files   = ({ size, class: c }: P) => S('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/>', size, c);
 export const Wifi    = ({ size, class: c }: P) => S('<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 20h.01"/>', size, c);

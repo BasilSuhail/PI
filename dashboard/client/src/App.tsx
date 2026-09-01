@@ -4,7 +4,7 @@ import { AppsView } from './components/AppsView';
 import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView, type SortKey, SORT_COLUMNS } from './components/FleetView';
-import { Alert, Box, Disk, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
+import { Alert, Box, Files, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
 import { getNodes, useHistory, usePoll } from './lib/api';
 import { relative } from './lib/format';
 
@@ -58,7 +58,7 @@ export default function App() {
           <Box size={15} /> Apps
         </button>
         <button class={`tbtn ${view === 'files' ? 'on' : ''}`} onClick={() => setView('files')}>
-          <Disk size={15} /> Storage
+          <Files size={15} /> Files
         </button>
         <span class="spacer" />
         <span class="live"><span class="dot-live" /> LIVE</span>
@@ -75,7 +75,7 @@ export default function App() {
       <div class="content">
         <div class="head">
           <div class="head-l">
-            <h1>{view === 'apps' ? 'Apps' : view === 'files' ? 'Storage' : view === 'detail' ? (selected?.name ?? 'Node') : 'Fleet'}</h1>
+            <h1>{view === 'apps' ? 'Apps' : view === 'files' ? 'Files' : view === 'detail' ? (selected?.name ?? 'Node') : 'Fleet'}</h1>
             <p class="head-sub"><span class="mini-led" /> {fleet.error ? 'OFFLINE' : 'SCANNING'}</p>
           </div>
           {view === 'fleet' && (
@@ -107,7 +107,7 @@ export default function App() {
         )}
 
         {view === 'fleet' && fleet.data && <FleetView nodes={nodes} sort={sort} onOpen={openDetail} />}
-        {view === 'apps' && <AppsView apps={apps.data ?? []} />}
+        {view === 'apps' && <AppsView apps={apps.data ?? []} onOpenView={(next) => setView(next as 'files')} />}
         {view === 'files' && <FilesView nodes={nodes} />}
         {view === 'detail' && selected && (
           <DetailView node={selected} history={history.get(selected.id) ?? []} onBack={() => setView('fleet')} />
