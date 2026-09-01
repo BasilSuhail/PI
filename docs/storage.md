@@ -143,7 +143,7 @@ Prompts once for an SMB password, which is separate from the board's login
 password and is never stored in this repo. Then, in Finder, ⌘K:
 
 ```
-smb://<node>/browse
+smb://<node>/<node>
 ```
 
 One share, `browse`, holding every disk. No Time Machine target: backups here
@@ -212,7 +212,7 @@ it, and Ignore means keep waiting:
 
 ```
 $ mount | grep smbfs
-//jug@jug2/browse on ... (smbfs, ...)     # listed
+//jug@jug2/jug2 on ... (smbfs, ...)      # listed
 $ ls ~/Shares/jug2                        # hangs until killed
 ```
 

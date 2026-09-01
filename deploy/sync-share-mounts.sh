@@ -26,11 +26,23 @@ set -uo pipefail
 
 NODES="${STORAGE_NODES:-jug jug2}"
 SHARE_USERS="${SHARE_USERS:-}"
-# NetFS names the mount after the share, and nothing can talk it out of that —
-# so the share on each board is named after the board. See install-samba.sh.
-MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
+# NetFS names the mount after the share, puts it under /Volumes, and cannot be
+# told otherwise — so the share on each board is named after the board. See
+# install-samba.sh.
+#
+# Not configurable, deliberately. NetFS decides where the mount lands; a knob
+# here could only ever disagree with it, and the failure would be this pass
+# looking for its own mounts in a place they are not, mounting again every
+# fifteen seconds and never seeing the result.
+MOUNT_ROOT=/Volumes
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
 MOUNT_TIMEOUT="${MOUNT_TIMEOUT:-25}"
+# How long to leave a board alone after a mount attempt fails. Not politeness:
+# NetFS raises a dialog when it dislikes an answer, so retrying a refused
+# password every fifteen seconds would put a popup on the screen every fifteen
+# seconds. A wrong password is not a transient condition and gains nothing from
+# being asked again promptly.
+RETRY_AFTER="${RETRY_AFTER:-300}"
 WORK="${TMPDIR:-/tmp}/jug-share-mounts"
 mkdir -p "$WORK"
 
@@ -107,6 +119,16 @@ password_for() {
   esac
 }
 
+# Has this board earned another attempt yet?
+cooled() {
+  local mark="${WORK}/failed.$1"
+  [ -f "$mark" ] || return 0
+  local age=$(( $(date +%s) - $(stat -f %m "$mark" 2>/dev/null || echo 0) ))
+  [ "$age" -ge "$RETRY_AFTER" ]
+}
+mark_failed() { : > "${WORK}/failed.$1"; }
+mark_ok() { rm -f "${WORK}/failed.$1"; }
+
 # Is this mount still answering?
 #
 # There is no safe way to ask. Every probe blocks on a wedged path, including
@@ -169,6 +191,17 @@ drop() {
 # Bounded and abandoned, like everything else here: NetFS puts a dialog up when
 # it does not like an answer, and a dialog in an agent nobody is watching is a
 # wait with no end.
+# Does the board answer on the SMB port?
+#
+# Asked before NetFS is invoked at all, because NetFS puts a dialog on the
+# screen when it cannot reach a server — and killing the osascript process does
+# not take the dialog with it. Without this, a board that is off would decorate
+# the desktop with a popup every fifteen seconds. `nc -G` bounds the wait, so
+# this cannot become the hang it is here to prevent.
+reachable() {
+  /usr/bin/nc -z -G 3 "$1" 445 >/dev/null 2>&1
+}
+
 netfs_mount() {
   local node="$1" user="$2" pw="$3" out rc
   pw=${pw//\\/\\\\}
@@ -209,8 +242,15 @@ for node in $NODES; do
     if mounted "$mp"; then
       # Mounted and reachable is not the same as working. A session can be dead
       # while the server is fine, and the mount table still lists it.
-      answering "$mp" && { forget "mount-$node"; continue; }
+      answering "$mp" && { forget "mount-$node"; mark_ok "$node"; continue; }
       drop "$mp" && log "${mp} stopped answering — forcing it off, will remount next pass"
+      continue
+    fi
+    # Reachability first: tailscale saying a peer is online is not the same as
+    # smbd answering, and the gap between those two is a dialog on the screen.
+    cooled "$node" || continue
+    if ! reachable "$node"; then
+      say_once "mount-$node" "${node} is not answering on 445 — not attempting a mount"
       continue
     fi
     u="$(user_for "$node")"
@@ -220,10 +260,11 @@ for node in $NODES; do
       continue
     fi
     if err=$(netfs_mount "$node" "$u" "$pw"); then
-      forget "mount-$node"
+      forget "mount-$node"; mark_ok "$node"
       log "mounted ${node} at ${mp}"
     else
-      say_once "mount-$node" "could not mount ${node}: ${err}"
+      mark_failed "$node"
+      say_once "mount-$node" "could not mount ${node}: ${err} — next attempt in ${RETRY_AFTER}s"
     fi
     unset pw
   else
