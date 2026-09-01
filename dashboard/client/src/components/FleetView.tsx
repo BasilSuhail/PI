@@ -1,5 +1,5 @@
 import type { FleetNode, ProcessRow } from '../../../shared/fleet';
-import { bytes, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts } from '../lib/format';
+import { bytes, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts, swapTone } from '../lib/format';
 import { Chevron, Cpu, Mem, Nodes, Power, Shield, Thermo } from './icons';
 import { Meter, StatusDot } from './primitives';
 
@@ -43,6 +43,16 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
   // Root filesystem: the boot medium is the SD card on jug1, so the disk the
   // system actually lives on is the one worth a bar.
   const disk = node.disks.find((d) => d.mount === '/') ?? node.disks[0];
+  // A board with swap configured but untouched still gets the row: nothing
+  // there is the answer, and an absent row would read as unknown instead.
+  const swap =
+    node.mem && node.mem.swapTotalBytes > 0
+      ? {
+          used: node.mem.swapUsedBytes,
+          total: node.mem.swapTotalBytes,
+          pct: (node.mem.swapUsedBytes / node.mem.swapTotalBytes) * 100,
+        }
+      : null;
   const rows = [...node.topProcesses].sort((a, b) => b[sort] - a[sort]).slice(0, ROWS);
 
   return (
@@ -71,6 +81,32 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
           <span>DISK</span>
           <Meter value={disk.usedPct} tone={diskTone(disk.usedPct)} />
           <strong>{pct(disk.usedPct)}</strong>
+        </div>
+      )}
+
+      {/* A fourth row carrying two of them. The figure here is the amount, not
+          the proportion: 5% of a swap nobody has looked at says nothing, and
+          102 MB is the thing worth knowing. The meter still carries the
+          proportion, and the total is in the tooltip. */}
+      {(swap || node.cache) && (
+        <div class="mrow split">
+          {swap && (
+            <div class="mhalf" title={`${bytes(swap.used)} of ${bytes(swap.total)} swap in use`}>
+              <span>SWAP</span>
+              <Meter value={swap.pct} tone={swapTone(swap.pct)} />
+              <strong>{bytes(swap.used)}</strong>
+            </div>
+          )}
+          {node.cache && (
+            <div
+              class="mhalf"
+              title={`${node.cache.count} thumbnails, ${bytes(node.cache.bytes)} of a ${bytes(node.cache.capBytes)} cap`}
+            >
+              <span>CACHE</span>
+              <Meter value={(node.cache.bytes / node.cache.capBytes) * 100} tone="aqua" />
+              <strong>{bytes(node.cache.bytes)}</strong>
+            </div>
+          )}
         </div>
       )}
 

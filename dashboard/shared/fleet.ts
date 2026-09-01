@@ -85,6 +85,8 @@ export interface FleetNode {
 
   cpu: CpuStats | null;
   mem: MemStats | null;
+  /** The thumbnail cache on this board's disk. Null when the agent is old. */
+  cache: ThumbCache | null;
   temp: TempStats | null;
   power: PowerStats | null;
   disks: DiskStats[];
