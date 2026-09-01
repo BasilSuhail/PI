@@ -95,6 +95,8 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  /** Bumped when a column is dropped, so the fetch effect goes and gets it. */
+  const [reload, setReload] = useState(0);
   const strip = useRef<HTMLDivElement>(null);
 
   /** Column zero is built here rather than fetched — the fleet is already known. */
@@ -181,7 +183,7 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trail]);
+  }, [trail, reload]);
 
   // A new column arrives off the right edge; follow it, the way Finder does.
   useEffect(() => {
@@ -216,13 +218,20 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const here = trail[trail.length - 1];
   const hereListing = cellFor(here).listing;
 
-  /** Forget a column so the fetch effect asks for it again. */
-  const invalidate = (...keys: string[]) =>
+  /**
+   * Forget a column so it is read again. The counter is the point: the fetch
+   * effect watches the trail, and dropping a cell does not change the trail,
+   * so without it the column sat on its loading placeholder forever and only
+   * a page reload brought it back.
+   */
+  const invalidate = (...keys: string[]) => {
     setCells((prev) => {
       const next = { ...prev };
       for (const key of keys) delete next[key];
       return next;
     });
+    setReload((n) => n + 1);
+  };
 
   /**
    * Every change goes through here: run it, show whatever the board said if it

@@ -19,6 +19,17 @@ CONF=/etc/samba/smb.conf
 # home LAN can hold one, so this allows the tailnet and nothing else.
 TAILNET_CIDR="100.64.0.0/10"
 
+# Bind by address, not by interface name. Samba resolves a named interface
+# through its own detection, which skips point-to-point devices that have no
+# broadcast address — precisely what a Tailscale tun device is. Given
+# "tailscale0" it silently binds whatever is left, which is lo, and then the
+# share is unreachable from anywhere while the install reports success.
+TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+if [ -z "$TS_IP" ]; then
+  echo "This board has no Tailscale IPv4 address. Bring tailscale up first." >&2
+  exit 1
+fi
+
 if [ ! -d "$BROWSE" ]; then
   echo "$BROWSE does not exist. Run deploy/setup-browse.sh first." >&2
   exit 1
@@ -45,7 +56,7 @@ sudo tee "$CONF" >/dev/null <<CONFIG
    map to guest = never
 
    # The whole of the exposure decision is these two lines.
-   interfaces = lo tailscale0
+   interfaces = 127.0.0.1 ${TS_IP}
    bind interfaces only = yes
    hosts allow = ${TAILNET_CIDR} 127.0.0.1
    hosts deny = 0.0.0.0/0
@@ -93,6 +104,26 @@ else
   sudo smbpasswd -a "$SHARE_USER"
 fi
 
+# The samba package enables a domain controller, a NetBIOS name service and a
+# domain user lookup daemon. None are wanted: the tailnet resolves names by
+# DNS, there is no domain, and this board shares 8GB with an ingest workload.
+echo "==> Disabling the services samba brings that are not wanted here"
+for unit in samba-ad-dc nmbd winbind; do
+  sudo systemctl disable --now "$unit" 2>/dev/null || true
+done
+
+# smbd binds its addresses at startup, so at boot it has to come up after the
+# address exists. Without this the share is unreachable until something
+# restarts it by hand.
+echo "==> Making smbd wait for tailscaled"
+sudo mkdir -p /etc/systemd/system/smbd.service.d
+sudo tee /etc/systemd/system/smbd.service.d/after-tailscale.conf >/dev/null <<'UNIT'
+[Unit]
+After=tailscaled.service
+Wants=tailscaled.service
+UNIT
+sudo systemctl daemon-reload
+
 echo "==> Starting"
 sudo systemctl enable --now smbd
 sudo systemctl restart smbd
@@ -100,7 +131,17 @@ systemctl is-active smbd
 
 echo
 echo "==> Listening on"
-ss -tln | grep ':445\b' | sed 's/^/  /' || echo "  port 445 not bound — check: sudo journalctl -u smbd -n 30"
+ss -tln | grep ':445\b' | sed 's/^/  /' || true
+# Being bound somewhere is not the test. Being bound on the tailnet is, and
+# this is the check that would have caught the lo-only bind.
+if ss -tln | grep -q "${TS_IP}:445"; then
+  echo "  reachable on the tailnet at ${TS_IP}"
+else
+  echo >&2
+  echo "  NOT bound on ${TS_IP} — Finder will not connect." >&2
+  echo "  Check: sudo journalctl -u smbd -n 30" >&2
+  exit 1
+fi
 echo
 host=$(tailscale status --json 2>/dev/null | sed -n 's/.*"DNSName":"\([^".]*\)\..*/\1/p' | head -1)
 cat <<NEXT
