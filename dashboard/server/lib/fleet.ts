@@ -6,6 +6,7 @@
 import type { Capability, FleetNode, ProcessRow } from '../../shared/fleet';
 import { fetchClusterRoles } from './kube';
 import { fetchCpu, fetchDisks, fetchMem, fetchNet, fetchProcesses, fetchSystem } from './glances';
+import { fetchCache } from './files';
 import { fetchShim } from './shim';
 import { fetchTailnetDevices, ipv4Of, type TailnetDevice } from './tailnet';
 
@@ -23,6 +24,7 @@ const offlineNode = (device: TailnetDevice, ip: string | null): FleetNode => ({
   uptimeSec: null,
   cpu: null,
   mem: null,
+  cache: null,
   temp: null,
   power: null,
   disks: [],
@@ -38,7 +40,7 @@ const buildNode = async (
   const ip = ipv4Of(device);
   if (!ip || !device.online) return { ...offlineNode(device, ip), role: roleFor(device, roles) };
 
-  const [cpu, mem, disks, net, system, shim, topProcesses] = await Promise.all([
+  const [cpu, mem, disks, net, system, shim, topProcesses, cache] = await Promise.all([
     fetchCpu(ip),
     fetchMem(ip),
     fetchDisks(ip),
@@ -46,6 +48,9 @@ const buildNode = async (
     fetchSystem(ip),
     fetchShim(ip),
     fetchProcesses(ip, 250),
+    // Null on a board running an older agent, which is an ordinary state:
+    // the card simply leaves that half of the row out.
+    fetchCache(ip).catch(() => null),
   ]);
 
   // On the tailnet but nothing answered — agents are missing or down. That is
@@ -81,6 +86,7 @@ const buildNode = async (
     temp: { cpuC: shim?.tempC ?? null, throttled: shim?.throttled ?? null },
     power: shim?.power ?? null,
     disks,
+    cache,
     net,
     capabilities,
     topProcesses: topBySortableMetric(topProcesses),
