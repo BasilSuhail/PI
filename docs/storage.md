@@ -169,13 +169,63 @@ down here.
 make mounts
 ```
 
-Once, on the Mac. It creates a mount point per board under `/Volumes`, writes
-each board's SMB credentials to `~/Library/Preferences/nsmb.conf`, and installs
-a LaunchAgent that runs `deploy/sync-share-mounts.sh` every 15 seconds.
+Once, on the Mac. It creates a mount point per board under `~/Shares`, stores
+each board's SMB password in the login keychain, and installs a LaunchAgent
+that runs `deploy/sync-share-mounts.sh` every 15 seconds. Nothing in it needs
+`sudo`.
 
 Each pass compares two things — what `tailscale status` can reach, and what is
 in the mount table — and makes them match. Nothing is remembered between
 passes, so there is no state to go stale and no order to get wrong.
+
+### Why not /Volumes
+
+Because macOS removes a mount point when the mount goes away, and it does that
+whether or not something else put the directory there first. `/Volumes/pi2`
+was created ahead of time with `sudo mkdir`, mounted, then force-unmounted, and
+the directory went with the mount.
+
+`/Volumes` is `root:wheel`, so a pass running as the user could never make it
+again. A share dropped for being wedged would be dropped permanently, and the
+log would say `does not exist — run the installer` on every pass from then on.
+
+Under `~/Shares` the pass owns the directory and remakes it whenever it needs
+one. That is also what removed the last privileged step from the whole
+arrangement: nothing here runs as root now.
+
+### A mount can be dead while the board is fine
+
+A wifi drop long enough for the server to forget the session leaves the mount
+in the mount table and the board perfectly reachable. macOS offers to Ignore
+it, and Ignore means keep waiting:
+
+```
+$ mount | grep smbfs
+//pi@pi2/browse on ... (smbfs, ...)     # listed
+$ ls ~/Shares/pi2                        # hangs until killed
+```
+
+Tailnet up, board online, mount present — every reason the pass has to act says
+there is nothing wrong. So each pass probes a mounted share and forces it off
+if it does not answer, and the next pass remounts it.
+
+The probe cannot be a simple command with a time limit. Everything that touches
+a wedged path blocks, including `smbutil statshares`, which reads kernel state
+rather than the server and still hung until the mount was forced away by hand.
+macOS ships no `timeout`, and a process stuck in uninterruptible I/O on a dead
+mount may not die on `SIGKILL` either.
+
+So a child does the reading and touches a file if it gets an answer, and the
+parent watches the clock and walks away when it runs out — without waiting for
+the child, because waiting for it is the same hang by another route. The forced
+unmount that follows is what actually releases it. The unmount runs in the
+background too, one at a time per mount point, and the next pass reports what
+really happened rather than this one waiting to find out.
+
+None of this may block, and that is the reason for all of it: launchd will not
+start a second copy of an agent that is still running, so a pass that hangs is
+not a pass that was missed. It is the last one that ever runs, and it hangs
+holding the mount it was supposed to clear.
 
 Two reasons it is a timer and not a login item:
 

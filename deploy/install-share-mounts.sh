@@ -9,10 +9,11 @@
 #
 # Three pieces, and each is here for a reason:
 #
-#   a mount point per board   /Volumes is root-owned, so the directories are
-#                             made once with sudo. Made ahead of time they
-#                             survive an unmount, which means the pass that
-#                             runs later needs no privilege at all.
+#   a mount point per board   under ~/Shares, which this account owns. Not
+#                             /Volumes: macOS removes a mount point when the
+#                             mount goes away, and /Volumes is root-owned, so a
+#                             share dropped for being wedged could never be
+#                             remounted without sudo. Nothing here needs it.
 #   a credential per board    in the login keychain, handed to mount_smbfs on
 #                             stdin at mount time. See the note beside it for
 #                             why stdin and not the two more obvious channels.
@@ -26,7 +27,7 @@ set -euo pipefail
 
 NODES="${STORAGE_NODES:-pi pi2}"
 SHARE="${SHARE:-browse}"
-MOUNT_ROOT="${MOUNT_ROOT:-/Volumes}"
+MOUNT_ROOT="${MOUNT_ROOT:-${HOME}/Shares}"
 LABEL="pi.share-mounts"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,19 +58,13 @@ for node in $NODES; do
 done
 
 echo "==> Mount points under ${MOUNT_ROOT}"
-# Asked for in one sudo call rather than one per board, so the password prompt
-# appears once.
-missing=()
+# No sudo. The pass recreates these whenever it needs one — macOS takes the
+# directory away with the mount — so the only job here is to have them exist
+# before the first mount.
 for node in $NODES; do
-  [ -d "${MOUNT_ROOT}/${node}" ] || missing+=("${MOUNT_ROOT}/${node}")
+  mkdir -p "${MOUNT_ROOT}/${node}"
 done
-if [ ${#missing[@]} -gt 0 ]; then
-  echo "    creating: ${missing[*]}"
-  sudo mkdir -p "${missing[@]}"
-  sudo chown "$(id -u):$(id -g)" "${missing[@]}"
-else
-  echo "    already there"
-fi
+echo "    ${NODES}"
 
 echo "==> SMB passwords in the login keychain"
 # Three ways to give mount_smbfs a password, and only one of them is any good.
@@ -127,6 +122,25 @@ for pair in $USERS; do
   fi
 done
 echo "    all readable without a prompt"
+
+# Earlier versions mounted under /Volumes. Left alone, those mounts are
+# invisible to this pass — it looks for the share under ~/Shares — so it would
+# mount the same share a second time, and macOS refuses that with a message
+# about the file existing. Take the old one down first.
+#
+# No sudo: this account mounted it, so this account can unmount it. An empty
+# directory left behind in /Volumes is harmless and needs root to remove, so it
+# is mentioned rather than tidied.
+for node in $NODES; do
+  stale="/Volumes/${node}"
+  if /sbin/mount | grep -q " on ${stale} ("; then
+    echo "    unmounting the older ${stale}"
+    /sbin/umount "$stale" 2>/dev/null || /sbin/umount -f "$stale" 2>/dev/null || true
+  fi
+  if [ -d "$stale" ] && [ -z "$(ls -A "$stale" 2>/dev/null)" ]; then
+    echo "    ${stale} is now an empty leftover — remove it with: sudo rmdir ${stale}"
+  fi
+done
 
 # The nsmb.conf written by the previous attempt is dead weight: mount_smbfs
 # does not read a password from it, so it is a file holding a password in the

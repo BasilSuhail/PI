@@ -111,7 +111,8 @@ make mounts
 ```
 
 It asks for the SMB password of each board, stores it in the login keychain,
-and installs an agent that keeps the mounts in step with Tailscale: the boards appear in Finder while the tailnet is
+and installs an agent that keeps the mounts in step with Tailscale. The shares
+appear under `~/Shares`, and no part of it needs `sudo`: the boards appear in Finder while the tailnet is
 up and are unmounted when it goes down. macOS does not remount SMB across a
 reboot on its own, and a share left mounted after the tailnet drops wedges
 Finder rather than sitting idle.
