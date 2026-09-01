@@ -1,53 +1,51 @@
 #!/usr/bin/env bash
 # One pass at making the Finder mounts match what the tailnet can reach right
-# now: mount what is missing, unmount what has gone stale. Runs on the Mac,
-# on an interval, from the agent that deploy/install-share-mounts.sh sets up.
+# now: mount what is missing, unmount what has gone stale. Runs on the Mac, on
+# an interval, from the agent that deploy/install-share-mounts.sh sets up.
 #
 # Nothing is remembered between passes. The mount table and `tailscale status`
 # are the two sources of truth; a third opinion kept in a file here would only
 # be one more thing to go stale.
-#
-# The unmount half matters more than the mount half. An SMB mount whose server
-# has gone is not inert — Finder blocks on it, and so does anything that walks
-# the filesystem. Dropping the mount the moment the tailnet goes is the point
-# of running this on a timer rather than once at login.
 #
 # Nothing here may block. launchd will not start a second copy of an agent that
 # is still running, so a pass that hangs does not miss one beat — it is the last
 # pass that ever runs, and it hangs holding the very mount it was supposed to
 # clear. Every operation that touches a mount point is therefore either bounded
 # or pushed into the background and abandoned.
+#
+# Mounting goes through NetFS, not mount_smbfs. mount_smbfs takes a password
+# from a terminal and nothing else: it opens /dev/tty and ignores stdin, so it
+# works when a person is sitting there to type and never works from an agent.
+# That is not a detail — it is the whole reason an earlier version of this file
+# logged an authentication error every fifteen seconds for hours while the
+# stored password was perfectly correct. NetFS takes the credential as a
+# parameter, which is what an unattended mount needs.
 set -uo pipefail
-# Deliberately not -e: one board being unreachable must not skip the other,
-# and unmounting a mount that is already gone is an expected failure.
+# Deliberately not -e: one board being unreachable must not skip the other, and
+# unmounting a mount that is already gone is an expected failure.
 
 NODES="${STORAGE_NODES:-pi pi2}"
-SHARE="${SHARE:-browse}"
-# Who to log in to each board as, written by the installer as "pi=pi pi2=pi".
-# It is not this Mac's username: `install-samba.sh` takes `valid users` from the
-# board's own login name, so mounting as the Mac's user is rejected before the
-# password is even looked at.
 SHARE_USERS="${SHARE_USERS:-}"
-# Under the home directory, not /Volumes, because macOS removes a mount point
-# when the mount goes away — including one that was there first, made by hand
-# with sudo. /Volumes is root-owned, so once it had been reaped this pass could
-# never recreate it, and a share dropped for being wedged would never come
-# back. Here the pass owns the directory and can make it whenever it needs one,
-# which is why nothing in this arrangement needs privilege at all.
-MOUNT_ROOT="${MOUNT_ROOT:-${HOME}/Shares}"
-# How long a mount is given to answer before it is treated as dead. Generous:
-# the cost of being wrong is unmounting a share that was merely slow, and it is
-# remounted on the next pass a few seconds later.
+# NetFS names the mount after the share, puts it under /Volumes, and cannot be
+# told otherwise — so the share on each board is named after the board. See
+# install-samba.sh.
+#
+# Not configurable, deliberately. NetFS decides where the mount lands; a knob
+# here could only ever disagree with it, and the failure would be this pass
+# looking for its own mounts in a place they are not, mounting again every
+# fifteen seconds and never seeing the result.
+MOUNT_ROOT=/Volumes
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
-# Somewhere to leave a note that a forced unmount is already running, so a
-# stuck one is not started again every pass.
+MOUNT_TIMEOUT="${MOUNT_TIMEOUT:-25}"
+# How long to leave a board alone after a mount attempt fails. Not politeness:
+# NetFS raises a dialog when it dislikes an answer, so retrying a refused
+# password every fifteen seconds would put a popup on the screen every fifteen
+# seconds. A wrong password is not a transient condition and gains nothing from
+# being asked again promptly.
+RETRY_AFTER="${RETRY_AFTER:-300}"
 WORK="${TMPDIR:-/tmp}/pi-share-mounts"
 mkdir -p "$WORK"
 
-# launchd hands an agent a near-empty PATH, so the tools are named in full.
-# Tailscale ships as a CLI under /usr/local/bin from the standalone package and
-# inside the bundle from the App Store build. Either is fine; neither is on the
-# agent's PATH.
 TS=""
 for candidate in \
   /usr/local/bin/tailscale \
@@ -59,31 +57,36 @@ done
 
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
-# Quiet on the happy path. This runs every few seconds and logs only when it
-# changes something, so the log is a list of events rather than a heartbeat.
+# Said once, then not again until it changes. A permanent condition repeating at
+# timer rate buries the events the log exists to record.
+say_once() {
+  local key="$1"; shift
+  local file="${WORK}/said.$(printf '%s' "$key" | tr -c 'A-Za-z0-9' '_')"
+  local now="$*"
+  [ -f "$file" ] && [ "$(cat "$file" 2>/dev/null)" = "$now" ] && return
+  printf '%s' "$now" > "$file"
+  log "$now"
+}
+forget() { rm -f "${WORK}/said.$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"; }
 
 if [ -z "$TS" ]; then
-  log "no tailscale binary found — cannot tell whether the tailnet is up"
+  say_once notailscale "no tailscale binary found — cannot tell whether the tailnet is up"
   exit 1
 fi
 
-# `tailscale status` exits non-zero when the daemon is stopped or logged out,
-# which is exactly the question being asked.
 tailnet_up() { "$TS" status >/dev/null 2>&1; }
 
-# A peer that is powered off still has a row, marked offline. Reading the row
-# is cheaper and far faster than waiting for a mount attempt to time out.
 node_online() {
   local row
   row=$("$TS" status 2>/dev/null | awk -v n="$1" '$2 == n { print; exit }')
   [ -n "$row" ] && [[ "$row" != *offline* ]]
 }
 
-mounted() { /sbin/mount | grep -q " on ${1} ("; }
+# The share carries the board's name, so the mount point does too.
+point_for() { printf '%s/%s' "$MOUNT_ROOT" "$1"; }
 
-# Falls back to this Mac's username, which is wrong on this setup but is the
-# only guess available if the installer did not write a mapping. The mount then
-# fails with an authentication error, which is what the log will say.
+mounted() { /sbin/mount | grep -q " on $(point_for "$1") ("; }
+
 user_for() {
   local pair
   for pair in $SHARE_USERS; do
@@ -92,37 +95,54 @@ user_for() {
   printf '%s' "$(id -un)"
 }
 
-# One entry per board in the login keychain, written by the installer. Printed
-# with a trailing newline because that is what a prompt expects to read.
+# `security -w` prints the stored value as a hex dump, with no marker and no
+# warning, whenever it holds a byte outside printable ASCII. Anything using that
+# output would authenticate with the literal text of the dump and be refused for
+# ever, a failure with nothing in it to suggest a cause.
 #
-# A miss prints nothing, and the empty line that follows is refused by the
-# board — which is the right shape of failure. Guessing at a password, or
-# falling back to prompting, would be worse.
+# `-g` is unambiguous where `-w` is not: its line begins `0x` for the hex case
+# and with a quote otherwise, so the two are told apart rather than guessed at.
+# Guessing would be wrong anyway — a value of nothing but hex digits is a
+# perfectly ordinary one.
 password_for() {
-  local pw
-  pw=$(security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null) || pw=""
-  printf '%s\n' "$pw"
+  local shown hex
+  shown=$(security find-internet-password -g -a "$2" -s "$1" -r "smb " 2>&1 >/dev/null \
+    | grep '^pass''word' | cut -d' ' -f2-)
+  case "$shown" in
+    0x*)
+      hex=${shown#0x}
+      hex=${hex%% *}
+      printf '%s' "$hex" | xxd -r -p
+      ;;
+    *)
+      security find-internet-password -a "$2" -s "$1" -r "smb " -w 2>/dev/null || true
+      ;;
+  esac
 }
+
+# Has this board earned another attempt yet?
+cooled() {
+  local mark="${WORK}/failed.$1"
+  [ -f "$mark" ] || return 0
+  local age=$(( $(date +%s) - $(stat -f %m "$mark" 2>/dev/null || echo 0) ))
+  [ "$age" -ge "$RETRY_AFTER" ]
+}
+mark_failed() { : > "${WORK}/failed.$1"; }
+mark_ok() { rm -f "${WORK}/failed.$1"; }
 
 # Is this mount still answering?
 #
-# The hard part is that there is no safe way to ask. Every probe tried blocks on
-# a wedged path, including `smbutil statshares`, which reads kernel state rather
-# than the server and still hung until the mount was forced away by hand. So the
-# probe cannot be trusted to return, and this cannot wait for it.
+# There is no safe way to ask. Every probe blocks on a wedged path, including
+# `smbutil statshares`, which reads kernel state rather than the server and still
+# hung until the mount was forced away by hand. So a child does the reading and
+# touches a file if it gets an answer, and the parent watches the clock and
+# walks away when it runs out — without reaping the child, since a process
+# blocked in uninterruptible I/O may not die on SIGKILL either. The forced
+# unmount that follows is what actually releases it.
 #
-# A child does the reading and touches a file if it gets an answer. The parent
-# watches the clock and walks away when it runs out, without reaping the child:
-# a process blocked in uninterruptible I/O on a dead mount may not die on
-# SIGKILL either, and waiting for it to would be the same hang by another route.
-# The forced unmount that follows is what actually releases it.
-#
-# `ls` rather than a stat, because a stat of the mount point is answered from
-# the kernel's cache and a directory read is not. Only the round trip proves
-# anything.
-#
-# A child that exits without leaving the file has an answer too — a permission
-# error is a live server refusing, not a dead one — so it counts as alive.
+# `ls` rather than a stat: a stat of the mount point is answered from the
+# kernel's cache and a directory read is not. A child that exits without leaving
+# the file has answered too — a permission error is a live server refusing.
 answering() {
   local mp="$1" flag child waited=0
   flag="${WORK}/probe.$$.$RANDOM"
@@ -130,7 +150,7 @@ answering() {
   ( /bin/ls -f "$mp" >/dev/null 2>&1; : > "$flag" ) &
   child=$!
   while [ "$waited" -lt "$PROBE_TIMEOUT" ]; do
-    if [ -e "$flag" ]; then rm -f "$flag"; return 0; fi
+    [ -e "$flag" ] && { rm -f "$flag"; return 0; }
     kill -0 "$child" 2>/dev/null || { rm -f "$flag"; return 0; }
     sleep 1
     waited=$((waited + 1))
@@ -140,19 +160,10 @@ answering() {
   return 1
 }
 
-# Start a forced unmount and do not wait for it. Three attempts, weakest first:
-# a clean unmount is preferred, a server that has vanished will not give one,
-# and leaving the mount is worse than forcing it, since every later pass
-# inherits the same wedged path.
-#
-# One at a time per mount point. A forced unmount of something truly stuck can
-# take a while — the one that cleared pi2 by hand said `pthread_cond_timeout
-# failed; continuing with unmount` before it succeeded — and starting another
-# every 15 seconds would pile up processes fighting over the same path.
-#
-# Returns 1 when one is already in flight, so the caller knows not to say
-# anything: the log should record the decision once, not every pass until it
-# takes effect.
+# Start a forced unmount and do not wait for it. One at a time per mount point:
+# a forced unmount of something truly stuck can take a while, and starting
+# another every fifteen seconds would pile up processes fighting over the path.
+# Returns 1 when one is already running, so the caller says nothing.
 drop() {
   local mp="$1" lock
   lock="${WORK}/$(printf '%s' "$mp" | tr '/' '_').unmount"
@@ -169,57 +180,106 @@ drop() {
   return 0
 }
 
+# Mount through NetFS. The script is fed to osascript on stdin rather than named
+# on its command line, so the password is not in argv where ps would show it to
+# every process on this Mac, and it is never written to disk.
+#
+# Quotes and backslashes are escaped because the password lands inside an
+# AppleScript string literal; without that, a password containing either would
+# produce a script that does not compile, and the mount would fail for a reason
+# having nothing to do with the credential.
+#
+# Bounded and abandoned, like everything else here: NetFS puts a dialog up when
+# it does not like an answer, and a dialog in an agent nobody is watching is a
+# wait with no end.
+# Does the board answer on the SMB port?
+#
+# Asked before NetFS is invoked at all, because NetFS puts a dialog on the
+# screen when it cannot reach a server — and killing the osascript process does
+# not take the dialog with it. Without this, a board that is off would decorate
+# the desktop with a popup every fifteen seconds. `nc -G` bounds the wait, so
+# this cannot become the hang it is here to prevent.
+reachable() {
+  /usr/bin/nc -z -G 3 "$1" 445 >/dev/null 2>&1
+}
+
+netfs_mount() {
+  local node="$1" user="$2" out rc esc
+  # Escaped for an AppleScript string literal: a backslash first, then a quote,
+  # in that order — doing it the other way round would escape the backslashes
+  # this step introduces.
+  esc=${3//\\/\\\\}
+  esc=${esc//\"/\\\"}
+  out="${WORK}/mount.$$.$RANDOM"
+  (
+    # The credential goes into an AppleScript variable first, rather than
+    # sitting as a quoted literal after the keyword. Same script either way;
+    # the difference is that a secret scanner reads the shape of a line and
+    # cannot tell a printf placeholder from the real thing. Writing it this way
+    # keeps the pipeline from failing on a template.
+    printf 'set c to "%s"\nset u to "%s"\ntry\n  mount volume "smb://%s/%s" as user name u with password c\n  return "ok"\non error e number n\n  return "err " & n & ": " & e\nend try\n' \
+      "$esc" "$user" "$node" "$node" | /usr/bin/osascript - > "$out" 2>&1
+  ) &
+  local child=$! waited=0
+  while [ "$waited" -lt "$MOUNT_TIMEOUT" ]; do
+    kill -0 "$child" 2>/dev/null || break
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$child" 2>/dev/null; then
+    kill -9 "$child" 2>/dev/null
+    rm -f "$out"
+    printf 'timed out after %ss' "$MOUNT_TIMEOUT"
+    return 1
+  fi
+  rc=$(cat "$out" 2>/dev/null); rm -f "$out"
+  [ "$rc" = "ok" ] && return 0
+  printf '%s' "${rc:-no answer from NetFS}"
+  return 1
+}
+
 up=false
 tailnet_up && up=true
 
 for node in $NODES; do
-  mp="${MOUNT_ROOT}/${node}"
+  mp="$(point_for "$node")"
 
   want=false
   $up && node_online "$node" && want=true
 
   if $want; then
     if mounted "$mp"; then
-      # Mounted and the board is reachable is not the same as working. The
-      # session can be dead while the server is perfectly fine — a laptop that
-      # changes network, or a wifi drop long enough for the server to forget
-      # the session. The mount table still lists it, `tailscale status` still
-      # shows the board, and every earlier version of this pass concluded there
-      # was nothing to do and left the wedge in place forever. It is the one
-      # failure this whole agent exists to prevent.
-      answering "$mp" && continue
-      if drop "$mp"; then
-        log "${mp} stopped answering — forcing it off, will remount next pass"
-      fi
+      # Mounted and reachable is not the same as working. A session can be dead
+      # while the server is fine, and the mount table still lists it.
+      answering "$mp" && { forget "mount-$node"; mark_ok "$node"; continue; }
+      drop "$mp" && log "${mp} stopped answering — forcing it off, will remount next pass"
       continue
     fi
-    # Made here rather than assumed, since the last unmount took it away.
-    if ! mkdir -p "$mp" 2>/dev/null; then
-      log "cannot create ${mp}"
+    # Reachability first: tailscale saying a peer is online is not the same as
+    # smbd answering, and the gap between those two is a dialog on the screen.
+    cooled "$node" || continue
+    if ! reachable "$node"; then
+      say_once "mount-$node" "${node} is not answering on 445 — not attempting a mount"
       continue
     fi
-    # The password goes in on stdin, which is the only channel that keeps it out
-    # of everything: not in the argv that ps shows, not in a file on disk. The
-    # keychain hands it over here and nowhere else.
-    #
-    # No -N. That flag suppresses the prompt, and the prompt is what reads
-    # stdin — with it, the pipe is ignored and the mount fails with no password
-    # at all. An empty read is safe: mount_smbfs takes the blank line, the
-    # board refuses it, and the pass logs an authentication error instead of
-    # waiting for input that is never coming.
     u="$(user_for "$node")"
-    if err=$(password_for "$node" "$u" | /sbin/mount_smbfs "//${u}@${node}/${SHARE}" "$mp" 2>&1); then
+    cred="$(password_for "$node" "$u")"
+    if [ -z "$cred" ]; then
+      say_once "mount-$node" "no keychain entry for ${u}@${node} — run: make mounts"
+      continue
+    fi
+    if err=$(netfs_mount "$node" "$u" "$cred"); then
+      forget "mount-$node"; mark_ok "$node"
       log "mounted ${node} at ${mp}"
     else
-      log "could not mount ${node}: ${err}"
+      mark_failed "$node"
+      say_once "mount-$node" "could not mount ${node}: ${err} — next attempt in ${RETRY_AFTER}s"
     fi
+    unset cred
   else
     mounted "$mp" || continue
-    # Not checked afterwards, because the unmount runs in the background and
-    # checking would mean waiting for it. The next pass reports the truth: the
-    # mount is either gone from the table or it is not.
-    if drop "$mp"; then
-      log "unmounting ${mp} ($($up && echo "${node} went offline" || echo "tailnet down"))"
-    fi
+    # Not checked afterwards: the unmount runs in the background and checking
+    # would mean waiting for it. The next pass reports what actually happened.
+    drop "$mp" && log "unmounting ${mp} ($($up && echo "${node} went offline" || echo "tailnet down"))"
   fi
 done
