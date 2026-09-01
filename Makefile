@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard agents deploy check logs bootstrap archive automount browse samba
+.PHONY: help dashboard agents deploy check logs bootstrap archive automount browse samba mounts
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
@@ -48,6 +48,7 @@ help:
 	@echo "make automount             plugged-in drives mount themselves, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
+	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
@@ -85,6 +86,11 @@ browse:
 # and cannot be looped silently. One node at a time, on purpose.
 samba:
 	ssh -t $(NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-samba.sh'
+
+# Runs on the Mac and touches only the Mac: mount points, a keychain entry per
+# board, and an agent that keeps the mounts in step with the tailnet.
+mounts:
+	STORAGE_NODES="$(STORAGE_NODES)" bash deploy/install-share-mounts.sh
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
