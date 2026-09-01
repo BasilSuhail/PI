@@ -143,17 +143,69 @@ Prompts once for an SMB password, which is separate from the board's login
 password and is never stored in this repo. Then, in Finder, ⌘K:
 
 ```
-smb://<node>.taild9f605.ts.net/browse
+smb://<node>/browse
 ```
 
-Two shares: `browse` for the disks, `timemachine` for laptop backups.
+One share, `browse`, holding every disk. No Time Machine target: backups here
+are made by hand.
 
-Bound to `lo` and `tailscale0` only, with `hosts allow` limited to the
-Tailscale range. Nothing listens on the LAN. **Do not port forward 445.** SMB
-is the protocol ransomware worms travel on, and there is no version of exposing
-it to the internet that ends well.
+`smbd` listens on every address, and `hosts allow` decides who is served —
+the Tailscale range and this machine, nothing else. Asking Samba to bind the
+Tailscale address alone was tried twice and does not work: its interface
+handling wants something it recognises as a network, and a host route on a tun
+device is not that. The cost is that port 445 is visible on the home LAN, where
+nothing can read a file. **Do not port forward 445.** SMB is the protocol
+ransomware worms travel on, and there is no version of exposing it to the
+internet that ends well.
 
-The first Time Machine backup runs for hours. Do it on ethernet.
+The boards do not advertise themselves over mDNS or NetBIOS, so they will not
+appear under Network in the Finder sidebar. That is deliberate — the advert
+offered a door that `hosts allow` refuses — and it is why the names are written
+down here.
+
+## Mounting them on the Mac
+
+```bash
+make mounts
+```
+
+Once, on the Mac. It creates a mount point per board under `/Volumes`, stores
+each board's SMB password in the login keychain, and installs a LaunchAgent
+that runs `deploy/sync-share-mounts.sh` every 15 seconds.
+
+Each pass compares two things — what `tailscale status` can reach, and what is
+in the mount table — and makes them match. Nothing is remembered between
+passes, so there is no state to go stale and no order to get wrong.
+
+Two reasons it is a timer and not a login item:
+
+- macOS does not remount SMB across a reboot. The mount lives in memory, and
+  nothing in the system puts it back.
+- Tailscale is not up all the time, and an SMB mount whose server has gone is
+  not inert. Finder blocks on it, and so does anything that walks the
+  filesystem. Dropping the mount when the tailnet goes is the half that
+  matters; putting it back when the tailnet returns is the easy half.
+
+The password never reaches a command line. `mount_smbfs` reads it from the
+keychain entry, which is created with `-T /sbin/mount_smbfs` so that binary and
+nothing else can read it.
+
+```bash
+tail -f ~/Library/Logs/jug.share-mounts.log
+```
+
+The log only records changes, so it is a list of mounts and unmounts rather
+than a heartbeat. To change a stored password, delete the entry and re-run:
+
+```bash
+security delete-internet-password -s jug -r "smb "
+```
+
+To stop the whole thing:
+
+```bash
+launchctl bootout gui/$(id -u)/jug.share-mounts
+```
 
 ## Why no Filebrowser
 
