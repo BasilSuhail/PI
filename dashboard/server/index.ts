@@ -14,6 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
+import { dialHost } from './lib/dial';
 import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
 import { fetchContainers, fetchProcesses } from './lib/glances';
@@ -64,7 +65,9 @@ const sendJson = (req: IncomingMessage, res: ServerResponse, status: number, bod
 /** Resolves a tailnet device id to the address its agents listen on. */
 const addressFor = async (id: string): Promise<string | null> => {
   const device = (await fetchTailnetDevices()).find((d) => d.id === id);
-  return device ? ipv4Of(device) : null;
+  const ip = device ? ipv4Of(device) : null;
+  // Loopback for this machine's own address. See lib/dial.ts.
+  return ip ? dialHost(ip) : null;
 };
 
 const readBody = async (req: IncomingMessage): Promise<string> => {
