@@ -2,7 +2,7 @@
 
 Raspberry Pi homelab — build notes, configs, and experiments.
 
-Two boards. `jug1` runs the OSINT ingest under Docker Compose; `jug2` is the
+Two boards. `jug` runs the OSINT ingest under Docker Compose; `jug2` is the
 k3s control plane and hosts the fleet dashboard. Names follow the storage,
 not the silicon.
 
@@ -31,10 +31,15 @@ On the Mac. Not on the Pi.
 cd ~/folders/PI
 git checkout main && git pull
 make bootstrap NODE=jug2    # first time on a board only
-make dashboard
+make dashboard-k8s          # the dashboard as a k3s Deployment, which is what runs
 ```
 
-`make agents` if `agent/` changed. `make check` to confirm. `make` lists the rest.
+`make dashboard` still installs the old systemd unit and is kept as the way
+back. Do not run both: two servers answer on different ports and the tailnet
+URL follows whichever `tailscale serve` points at. `make check` says which one
+the board is holding.
+
+`make agents` if `agent/` changed. `make` lists the rest.
 
 Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
 
@@ -165,6 +170,65 @@ What each does: [`docs/storage.md`](docs/storage.md).
 
 </details>
 
+<details>
+<summary><strong>Dashboard — the Tailscale key, and when it dies</strong></summary>
+
+Running in k3s costs one thing that running under systemd did not.
+
+Under systemd the dashboard asked the board's own `tailscale` command which
+machines exist. A pod has no tailscaled socket, so it asks Tailscale's web API
+instead, and that needs a key. **Tailscale caps those at ninety days.**
+
+When it lapses the fleet empties and `/api/nodes` answers 502. Nothing else
+notices: both health checks hit a static page that keeps returning 200, so
+Kubernetes reports the pod perfectly healthy the whole time.
+
+So the console shows the date. The Fleet strip carries a tile reading
+`Tailscale key`, with the expiry date and the days left. It is grey normally,
+orange inside the last two weeks, and red once it has gone.
+
+**Making one.** At [the keys page](https://login.tailscale.com/admin/settings/keys),
+under **API access tokens** — not the auth keys above them. Auth keys start
+`tskey-auth-` and join devices to a tailnet; this needs `tskey-api-`.
+
+**Replacing it**, when it is close or already gone:
+
+```bash
+ssh jug2 'sudo k3s kubectl -n jug delete secret jug-console-tailscale'
+```
+
+```bash
+make dashboard-k8s
+```
+
+It asks for the key and nothing else. The expiry is recorded as ninety days
+from today, which is both the longest Tailscale allows and what its form
+offers by default, so for a key made a minute earlier it is right.
+
+Chose a shorter one deliberately? Correct it below, or set `TS_EXPIRES` when
+running the installer on the board itself.
+
+**Correcting just the date**, without touching the key:
+
+```bash
+ssh jug2 'sudo k3s kubectl -n jug patch secret jug-console-tailscale --type merge \
+  -p "{\"stringData\":{\"expires\":\"2027-01-31\"}}"'
+```
+
+```bash
+ssh jug2 'sudo k3s kubectl -n jug rollout restart deployment/jug-console'
+```
+
+The restart is needed either way: the date arrives as an environment variable,
+and a running pod does not see a Secret change.
+
+**What is stored.** The key and the date live in one Secret, `jug-console-tailscale`
+in the `jug` namespace. The key is never echoed, never written to the board's
+disk, and never passed on a command line the console builds. The date is not a
+secret and is only there because Tailscale will not tell a token its own expiry.
+
+</details>
+
 ## Scope
 
 - **Kubernetes** — k3s on ARM, and where an orchestrator is not worth it
@@ -174,11 +238,12 @@ What each does: [`docs/storage.md`](docs/storage.md).
 
 ## Status
 
-k3s running on jug2. Agents on both boards. Dashboard live over Tailscale.
+k3s running on jug2, with the dashboard on it as a Deployment behind Traefik.
+Agents on both boards. Live over Tailscale.
 
 The disks already attached are browsable from the console and mountable in
 Finder — neither waits on the 8TB, which is still blocked on a 12V supply and
 still holds up the archive tier proper.
 
-jug1 has not had the cgroup flag applied, so its `mem_limit`s are unenforced
+jug has not had the cgroup flag applied, so its `mem_limit`s are unenforced
 and container memory reads blank on the dashboard.
