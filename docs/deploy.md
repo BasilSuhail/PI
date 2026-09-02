@@ -67,6 +67,10 @@ scp deploy/install-dashboard.sh jug2:~/
 ssh jug2 'bash ~/install-dashboard.sh'
 ```
 
+Copied on its own like that, the installer cannot see `k8s/`, so it leaves the
+cluster role labels as they are and says so. To set them up this way, send the
+directory too and run the script from inside a copy of the tree.
+
 Copy the installer every time rather than running the copy already on the
 board — it carries the migrations, and a stale copy is how the service ended up
 broken twice. `--exclude dist` matters: the node builds its own, and a
