@@ -116,10 +116,31 @@ echo "==> Manifests"
 # until it does.
 kube create namespace jug --dry-run=client -o yaml | kube apply -f - >/dev/null
 
+# Tailscale caps API keys at 90 days and will not tell a token when its own
+# expiry is, so the date is recorded beside the key and the console reads it
+# back. Without it the fleet simply empties one morning with nothing said.
+TS_EXPIRES=""
+read_expiry() {
+  local given
+  printf '  Expiry date Tailscale showed [YYYY-MM-DD, enter for 90 days from today]: ' >&2
+  read -r given
+  if [ -z "$given" ]; then
+    TS_EXPIRES="$(date -u -d "+90 days" +%Y-%m-%d)"
+  elif TS_EXPIRES="$(date -u -d "$given" +%Y-%m-%d 2>/dev/null)"; then
+    :
+  else
+    # A date the console cannot parse reaches the tile as "not recorded", which
+    # is a worse answer than a rounded one.
+    echo "  not a date I recognise — recording 90 days from today instead" >&2
+    TS_EXPIRES="$(date -u -d "+90 days" +%Y-%m-%d)"
+  fi
+}
+
 if ! kube -n jug get secret jug-console-tailscale >/dev/null 2>&1; then
   echo
   echo "  A pod has no tailscaled socket, so node discovery uses the Tailscale API."
   echo "  Make a key at https://login.tailscale.com/admin/settings/keys"
+  echo "  Under API access tokens, not the auth keys above them."
   echo "  It is not echoed, and it goes into a Secret rather than onto this board."
   # Prompt printed separately rather than passed to read -p: the secret scanner
   # reads a prompt string next to a variable as a credential in the source.
@@ -127,9 +148,19 @@ if ! kube -n jug get secret jug-console-tailscale >/dev/null 2>&1; then
   IFS= read -rs TS_KEY
   echo
   [ -n "$TS_KEY" ] || { echo "  No key given — stopping." >&2; exit 1; }
-  kube -n jug create secret generic jug-console-tailscale --from-literal=api-key="$TS_KEY" >/dev/null
+  read_expiry
+  kube -n jug create secret generic jug-console-tailscale \
+    --from-literal=api-key="$TS_KEY" --from-literal=expires="$TS_EXPIRES" >/dev/null
   unset TS_KEY
-  echo "  secret created"
+  echo "  secret created, expiring ${TS_EXPIRES}"
+elif ! kube -n jug get secret jug-console-tailscale -o jsonpath="{.data.expires}" | grep -q .; then
+  # A Secret written before the console could show an expiry. Ask for the date
+  # alone rather than making someone mint a fresh key to record one.
+  echo "  secret present but carries no expiry — the console cannot warn you yet"
+  read_expiry
+  kube -n jug patch secret jug-console-tailscale --type merge \
+    -p "{\"stringData\":{\"expires\":\"${TS_EXPIRES}\"}}" >/dev/null
+  echo "  expiry recorded: ${TS_EXPIRES}"
 else
   echo "  tailscale secret already present — leaving it alone"
   echo "  (replace it with: sudo k3s kubectl -n jug delete secret jug-console-tailscale, then re-run)"

@@ -194,3 +194,18 @@ export interface ThumbCache {
   /** False when vipsthumbnail is not installed — only Exif thumbs are possible. */
   tool: boolean;
 }
+
+/**
+ * A credential the dashboard holds and cannot renew for itself.
+ *
+ * Empty under systemd, where node discovery uses the local tailscaled socket
+ * and there is nothing to expire. See server/lib/expiry.ts.
+ */
+export interface CredentialStatus {
+  name: string;
+  /** ISO date the credential dies. Null when nobody recorded one. */
+  expiresAt: string | null;
+  /** Whole days from today, negative once it has lapsed. Null if unrecorded. */
+  daysLeft: number | null;
+  state: 'ok' | 'soon' | 'expired' | 'unknown';
+}

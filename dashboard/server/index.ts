@@ -14,6 +14,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchApps } from './apps';
+import { credentialStatus } from './lib/expiry';
 import { dialHost } from './lib/dial';
 import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
@@ -89,6 +90,13 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
 
   if (url.pathname === '/api/apps') {
     sendJson(req, res, 200, await fetchApps());
+    return true;
+  }
+
+  // Read from the environment, so no agent is involved and this cannot fail
+  // the way a fleet poll can. Empty under systemd, where nothing expires.
+  if (url.pathname === '/api/credentials') {
+    sendJson(req, res, 200, credentialStatus());
     return true;
   }
 

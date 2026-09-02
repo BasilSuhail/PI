@@ -5,7 +5,7 @@ import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView, type SortKey, SORT_COLUMNS } from './components/FleetView';
 import { Alert, Box, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
-import { getNodes, useHistory, usePoll } from './lib/api';
+import { getCredentials, getNodes, useHistory, usePoll } from './lib/api';
 import { relative } from './lib/format';
 
 const POLL_MS = 3000;
@@ -28,6 +28,9 @@ export default function App() {
 
   const fleet = usePoll(getNodes, POLL_MS);
   const apps = usePoll(fetchApps, 15_000);
+  // Read from the environment and measured in days, so polling it at the fleet
+  // rate would be a request a minute for a number that moves once a day.
+  const creds = usePoll(getCredentials, 300_000);
   const history = useHistory(fleet.data);
 
   const nodes = useMemo(() => fleet.data ?? [], [fleet.data]);
@@ -107,7 +110,9 @@ export default function App() {
           </div>
         )}
 
-        {view === 'fleet' && fleet.data && <FleetView nodes={nodes} sort={sort} onOpen={openDetail} />}
+        {view === 'fleet' && fleet.data && (
+          <FleetView nodes={nodes} sort={sort} credentials={creds.data ?? []} onOpen={openDetail} />
+        )}
         {view === 'apps' && <AppsView apps={apps.data ?? []} onOpenView={(next) => setView(next as 'files')} />}
         {view === 'files' && <FilesView nodes={nodes} />}
         {view === 'detail' && selected && (

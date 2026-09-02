@@ -1,6 +1,6 @@
-import type { FleetNode, ProcessRow } from '../../../shared/fleet';
-import { bytes, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts, swapTone } from '../lib/format';
-import { Chevron, Cpu, Mem, Nodes, Power, Shield, Thermo } from './icons';
+import type { CredentialStatus, FleetNode, ProcessRow } from '../../../shared/fleet';
+import { bytes, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, shortDate, uptime, watts, swapTone } from '../lib/format';
+import { Chevron, Cpu, Key, Mem, Nodes, Power, Shield, Thermo } from './icons';
 import { Meter, StatusDot } from './primitives';
 
 export type SortKey = 'cpuPct' | 'memBytes' | 'diskReadBytes' | 'threads';
@@ -164,8 +164,32 @@ const Cell = ({ icon, tone, label, value, sub, vclass = '' }: {
   </div>
 );
 
-export const FleetView = ({ nodes, sort, onOpen }: {
-  nodes: FleetNode[]; sort: SortKey; onOpen: (id: string) => void;
+/**
+ * The one thing on this page that is about the dashboard rather than the
+ * boards. A key that lapses empties the fleet with no warning anywhere else,
+ * so it earns a tile beside the fleet totals rather than a line in the docs.
+ */
+const CredentialCell = ({ cred }: { cred: CredentialStatus }) => {
+  const tone = cred.state === 'expired' ? 'red' : cred.state === 'soon' ? 'orange' : 'grey';
+  const vclass = cred.state === 'expired' ? 'critv' : cred.state === 'soon' ? 'warnv' : '';
+
+  // The date is the answer to "when", which is what gets acted on. Days are
+  // the answer to "how urgent", and belong underneath it.
+  const sub =
+    cred.state === 'unknown' ? 'expiry not recorded'
+    : cred.state === 'expired' ? 'expired · nodes will not load'
+    : cred.daysLeft === 0 ? 'expires today'
+    : `${cred.daysLeft} day${cred.daysLeft === 1 ? '' : 's'} left`;
+
+  return (
+    <Cell icon={<Key />} tone={tone} label={cred.name}
+          value={cred.state === 'unknown' ? '—' : shortDate(cred.expiresAt)}
+          sub={sub} vclass={vclass} />
+  );
+};
+
+export const FleetView = ({ nodes, sort, credentials, onOpen }: {
+  nodes: FleetNode[]; sort: SortKey; credentials: CredentialStatus[]; onOpen: (id: string) => void;
 }) => {
   const live = nodes.filter((n) => n.online && !n.error);
   const thr = live.filter((n) => n.temp?.throttled?.now).length;
@@ -193,6 +217,13 @@ export const FleetView = ({ nodes, sort, onOpen }: {
                   value={String(thr)} sub={thr ? 'needs attention' : 'none'} />
           </div>
         </div>
+        {credentials.length > 0 && (
+          <div class="sgroup">
+            <div class="pair">
+              {credentials.map((c) => <CredentialCell key={c.name} cred={c} />)}
+            </div>
+          </div>
+        )}
         <div class="sgroup">
           <div class="pair">
             <Cell icon={<Cpu />} tone="green" label="CPU" value={pct(avgCpu)}
