@@ -108,7 +108,7 @@ const CARD_ROWS = 6;
 const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
   const keep = new Map<number, ProcessRow>();
   const metrics: Array<(p: ProcessRow) => number> = [
-    (p) => p.cpuPct,
+    (p) => p.cpuPct ?? -1,
     (p) => p.memBytes,
     (p) => p.diskReadBytes,
     (p) => p.threads,

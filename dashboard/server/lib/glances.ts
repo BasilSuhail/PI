@@ -29,6 +29,9 @@ const get = async <T>(host: string, plugin: string): Promise<T | null> => {
   }
 };
 
+/** Cores per host, filled in by fetchCpu, used only to bound a bad window. */
+const coreCount = new Map<string, number>();
+
 /** Glances reports percentages; per-core values live under cpucore/percpu. */
 export const fetchCpu = async (host: string): Promise<CpuStats | null> => {
   const [cpu, percpu, load] = await Promise.all([
@@ -46,6 +49,10 @@ export const fetchCpu = async (host: string): Promise<CpuStats | null> => {
     perCore,
     loadAvg: [round(load?.min1 ?? 0), round(load?.min5 ?? 0), round(load?.min15 ?? 0)],
   };
+
+  // Per-process CPU is bounded by the core count; this is where that number
+  // is known. Recorded on every poll, and read by cpuPctOf on the next one.
+  if (stats.cores) coreCount.set(host, stats.cores);
 
   // Glances computes CPU as a delta since the previous request rather than
   // from its own refresh timer, so two requests close together produce a
@@ -223,42 +230,83 @@ interface RawProcess {
  *
  * `cpu_times` is cumulative and does not have this problem. The difference
  * between two readings, over the real elapsed time, is the honest average.
+ *
+ * Two rules follow from having no reading rather than a bad one:
+ *
+ * - A process seen once reports null, not a number. The column shows "—" for
+ *   one poll, which is true, where the spot sample would have shown 0.0.
+ * - A result above the board's core count is a broken window, not a busy
+ *   process, and is discarded in favour of the previous answer.
  */
-const cpuHistory = new Map<string, Map<number, { cpuSec: number; at: number; pct: number }>>();
+const cpuHistory = new Map<string, Map<number, { cpuSec: number; at: number; pct: number | null }>>();
 
 /** Below this the divisor is small enough to inflate the result — the exact
  *  failure being fixed. Two clients polling at once produce such a gap. */
 const MIN_WINDOW_MS = 1000;
 
-const cpuPctOf = (host: string, p: RawProcess, now: number): number => {
+/**
+ * Cumulative CPU seconds, or null when the reading does not carry them.
+ *
+ * `cpu_times` can arrive as an object holding only `children_*` and `iowait`,
+ * which passes a plain truthiness check. Counting that as zero seconds puts a
+ * zero into the history, and the next poll then divides the process's entire
+ * lifetime by one window: k3s-server read 37989% on a four-core board that
+ * way, its 2456s of accumulated time over 6.5s.
+ */
+const cpuSecondsOf = (times: RawProcess['cpu_times']): number | null => {
+  if (!times) return null;
+  if (times.user == null && times.system == null) return null;
+  return (times.user ?? 0) + (times.system ?? 0);
+};
+
+const cpuPctOf = (host: string, p: RawProcess, now: number): number | null => {
   const pid = p.pid ?? 0;
-  const times = p.cpu_times;
-  // Without cumulative time there is nothing better than the spot sample.
-  if (!times) return round(p.cpu_percent ?? 0);
+  const cpuSec = cpuSecondsOf(p.cpu_times);
+  // The spot sample is the thing this function exists to replace, so a reading
+  // without cumulative time reports nothing rather than repeating it.
+  if (cpuSec === null) return null;
 
   let seen = cpuHistory.get(host);
   if (!seen) cpuHistory.set(host, (seen = new Map()));
 
-  const cpuSec = (times.user ?? 0) + (times.system ?? 0);
   const prev = seen.get(pid);
 
-  // First sighting, or a pid reused by a younger process: the spot sample is
-  // all there is. One poll later there is a real window to divide by.
+  // First sighting, or a pid reused by a younger process. There is no window
+  // to average over, and Glances' spot sample is not a stand-in: on a fresh
+  // request it covers under a millisecond, so every process reads 0.0 except
+  // Glances itself. The column shows "—" for one poll instead.
   if (!prev || cpuSec < prev.cpuSec) {
-    const pct = round(p.cpu_percent ?? 0);
-    seen.set(pid, { cpuSec, at: now, pct });
-    return pct;
+    seen.set(pid, { cpuSec, at: now, pct: null });
+    return null;
   }
 
   const elapsed = now - prev.at;
   if (elapsed < MIN_WINDOW_MS) return prev.pct;
 
   const pct = round(Math.max(0, (100 * (cpuSec - prev.cpuSec)) / (elapsed / 1000)));
+
+  // A process cannot burn more CPU time than the window times the core count.
+  // Above that the window is wrong, not the process, so the previous answer
+  // stands and the baseline is refreshed for the next poll to divide cleanly.
+  const ceiling = 100 * (coreCount.get(host) ?? 0);
+  if (ceiling > 0 && pct > ceiling) {
+    seen.set(pid, { cpuSec, at: now, pct: prev.pct });
+    return prev.pct;
+  }
+
   seen.set(pid, { cpuSec, at: now, pct });
   return pct;
 };
 
 export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessRow[]> => {
+  // The fleet poll fetches CPU alongside this and fills coreCount in, but the
+  // node detail route asks for processes alone. Without the core count there
+  // is no ceiling, so fetch it once for hosts that arrive that way.
+  const cores = coreCount.has(host)
+    ? null
+    : await get<{ cpucore?: number }>(host, 'cpu');
+  if (cores?.cpucore) coreCount.set(host, cores.cpucore);
+
   const procs = await get<RawProcess[]>(host, 'processlist');
   if (!Array.isArray(procs)) return [];
 
@@ -282,8 +330,10 @@ export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessR
   const seen = cpuHistory.get(host);
   if (seen) for (const pid of seen.keys()) if (!live.has(pid)) seen.delete(pid);
 
+  // A process with no CPU reading yet sorts below one measured at zero, so a
+  // cold poll does not put unmeasured rows at the top of the card.
   return rows
-    .sort((a, b) => b.cpuPct - a.cpuPct || b.memBytes - a.memBytes)
+    .sort((a, b) => (b.cpuPct ?? -1) - (a.cpuPct ?? -1) || b.memBytes - a.memBytes)
     .slice(0, limit);
 };
 
