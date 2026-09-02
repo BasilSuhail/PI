@@ -127,6 +127,16 @@ Revisit if a node ever turns up where 70MB genuinely matters.
 
 Dashboard runs **in k3s on jug2** rather than as a plain container. jug2 has ~14GB free, and it makes the dashboard a real workload to practise Deployment, Service and Ingress on instead of `nginx`.
 
+`make dashboard-k8s`, from the Mac. Six objects in `k8s/dashboard.yaml`: Namespace, ServiceAccount, ClusterRoleBinding, Deployment, Service, Ingress. `MemoryMax=256M` from the systemd unit becomes `resources.limits.memory`, which jug2 actually enforces because its cgroups are on.
+
+Three things about it are not obvious:
+
+- **No registry, and nothing to push to.** jug2 builds its own image with buildkit, run with `--oci-worker=false --containerd-worker=true` so its worker is k3s' own containerd. The image is written directly into the `k8s.io` namespace the kubelet reads — no tar, no copy, no second container runtime on the board, and no other machine involved in a deploy. `buildkitd` and `buildctl` are 102MB installed and the daemon is **not** enabled at boot: it runs for the length of a build and is stopped afterwards, because RAM is the scarce thing here and disk is not. The tag is the commit: reusing a tag under `imagePullPolicy: IfNotPresent` leaves the old image in place and reports success.
+- **Node discovery changes hands.** Under systemd the server shells out to the local `tailscale` CLI. A pod has no tailscaled socket, so it uses the Tailscale API and needs `TAILSCALE_API_KEY` in a Secret. **API keys expire — 90 days at most.** When one does, `/api/nodes` returns 502 and the page says so rather than quietly emptying.
+- **Cluster credentials get simpler, not harder.** The systemd install writes a token into `/etc/jug-console.env`. A pod needs neither: kubelet sets `KUBERNETES_SERVICE_HOST` and projects a token for the ServiceAccount, and `kube.ts` reads that when the environment carries nothing.
+
+`dial.ts` needed no change. It rewrites a machine's own tailnet address to loopback, which was the fix for #84, and a pod's interfaces never match a tailnet address so the rewrite simply stops applying. Measured from a pod on jug2: jug1 over the tailnet, jug2 over its LAN address, and jug2's own tailnet address all answered, the last in 0.06s.
+
 Reachable at `https://jug2.<tailnet>.ts.net` via `tailscale serve` — real certificate, tailnet-only, no open ports, works on a phone with no VPN client beyond Tailscale itself.
 
 ---
@@ -141,7 +151,7 @@ Reachable at `https://jug2.<tailnet>.ts.net` via `tailscale serve` — real cert
 - [x] Deploy, `tailscale serve`, verify on phone
 - [x] Health checks behind the apps launcher
 - [ ] Point `server/apps.json` at the real services — two placeholders today
-- [ ] Move it into k3s. Runs under systemd now, which works; doing it in the cluster is the exercise, not a fix.
+- [x] Move it into k3s — the exercise, not a fix. `make dashboard-k8s`; `make dashboard` still installs the systemd unit.
 
 ## As built
 

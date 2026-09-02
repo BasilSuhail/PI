@@ -16,7 +16,7 @@ not the silicon.
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
 | `deploy/` | installs the dashboard as a service on a node |
-| `k8s/` | manifests applied to the cluster — read-only node access for the dashboard |
+| `k8s/` | manifests applied to the cluster — the dashboard workload, and its read-only node access |
 | `Makefile` | the deploy commands — `make` on its own lists them |
 
 Issues carry the planning: [#1](../../issues/1) what fits on one board,

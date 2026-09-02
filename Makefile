@@ -36,10 +36,11 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard agents deploy check logs bootstrap archive automount browse samba mounts
+.PHONY: help dashboard dashboard-k8s agents deploy check logs bootstrap archive automount browse samba mounts
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
+	@echo "make dashboard-k8s         run the dashboard in the cluster, asks for a Tailscale key once"
 	@echo "make agents      agent/ changed — both boards"
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
@@ -55,6 +56,11 @@ help:
 
 dashboard:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-dashboard.sh ~/$(REPO_DIR)/dashboard'
+
+# -t because the first run asks for a Tailscale API key: a pod has no
+# tailscaled socket, so node discovery has to use the API.
+dashboard-k8s:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-dashboard-k8s.sh ~/$(REPO_DIR)/dashboard'
 
 agents:
 	@for node in $(AGENT_NODES); do \
