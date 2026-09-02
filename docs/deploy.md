@@ -88,34 +88,51 @@ Archive tree on jug2:
 scp deploy/setup-archive.sh jug2:~/ && ssh jug2 'bash ~/setup-archive.sh'
 ```
 
-Exposing the dashboard on the tailnet (already done):
+Exposing the dashboard on the tailnet (already done). Which port depends on
+which of the two installs holds it:
 
 ```bash
-ssh jug2 'sudo tailscale serve --bg 8080'
+ssh jug2 'sudo tailscale serve --bg 8080'   # systemd unit, listening itself
+ssh jug2 'sudo tailscale serve --bg 80'     # Deployment, behind Traefik
 ```
 
-That puts it at `https://jug2.taild9f605.ts.net` — tailnet-only, real
+`make dashboard-k8s` repoints this to 80 on its way out. `make dashboard` does
+**not** repoint it back, so returning to systemd means setting 8080 by hand or
+the tailnet URL answers nothing.
+
+Either way it lands at `https://jug2.taild9f605.ts.net` — tailnet-only, real
 certificate, no open ports.
 
 ## When something is wrong
 
 ```bash
-make logs                                   # dashboard service, last 40 lines
+make check                                  # which install holds the dashboard
+make logs                                   # its last 40 lines, systemd or k3s
 ssh jug 'journalctl -u glances -n 40 --no-pager'
 ```
 
 `active` with nothing listening means the process started and exited without a
-traceback. Check the port before believing the unit:
+traceback. Check the port before believing the unit — 8080 is the systemd
+install serving directly, 80 is Traefik fronting the Deployment:
 
 ```bash
-ssh jug2 'ss -lntp | grep -E "8080|61208|9101"'
+ssh jug2 'ss -lntp | grep -E ":(80|8080|61208|9101)\b"'
 ```
 
 A deploy that runs clean but changes nothing on screen — check what actually
 landed, and which commit the board is on:
 
 ```bash
-ssh jug2 'git -C ~/PI log --oneline -1; cat /opt/jug-console/dist/apps.json'
+ssh jug2 'git -C ~/PI log --oneline -1'
+ssh jug2 'cat /opt/jug-console/dist/apps.json'    # systemd install
+```
+
+Under k3s the image tag *is* the commit, so it answers the same question
+directly:
+
+```bash
+ssh jug2 'sudo k3s kubectl -n jug get deploy jug-console \
+  -o jsonpath="{.spec.template.spec.containers[0].image}"; echo'
 ```
 
 If a bootstrap fails at the GitHub step, the node's key exists but is not
