@@ -88,7 +88,44 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
   }
 };
 
+/**
+ * Tailnet short name -> IPv4, refreshed on every discovery pass.
+ *
+ * MagicDNS names resolve on a board, where tailscaled is the resolver. They do
+ * not resolve inside a pod: DNS there goes to CoreDNS, which has never heard of
+ * the tailnet. Public names are unaffected, which is why node discovery kept
+ * working after the move to k3s while the launcher's health checks did not.
+ *
+ * Reconfiguring the pod's DNS would trade a red tile for the risk of no DNS at
+ * all. The addresses are already in hand here, so anything that needs to reach
+ * a tailnet name by name can ask for one instead.
+ */
+const tailnetIps = new Map<string, string>();
+
+/**
+ * The address behind a MagicDNS name, or null to let ordinary DNS handle it.
+ *
+ * Null until the first discovery pass has run. The fleet polls far more often
+ * than the launcher does, so in practice the map is filled before anything
+ * asks.
+ */
+export const tailnetIpFor = (hostname: string): string | null => {
+  // Only MagicDNS names are answered here. Everything else is someone else's
+  // to resolve, and hijacking it would be a surprise.
+  if (!hostname.toLowerCase().endsWith('.ts.net')) return null;
+  return tailnetIps.get(hostname.toLowerCase().split('.')[0]) ?? null;
+};
+
 export const fetchTailnetDevices = async (): Promise<TailnetDevice[]> => {
+  const devices = await discoverDevices();
+  for (const device of devices) {
+    const ip = ipv4Of(device);
+    if (ip) tailnetIps.set(device.name.toLowerCase(), ip);
+  }
+  return devices;
+};
+
+const discoverDevices = async (): Promise<TailnetDevice[]> => {
   const key = process.env.TAILSCALE_API_KEY;
   const tailnet = process.env.TAILSCALE_TAILNET ?? '-';
 
