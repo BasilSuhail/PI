@@ -6,7 +6,7 @@ import { Meter, StatusDot } from './primitives';
 export type SortKey = 'cpuPct' | 'memBytes' | 'diskReadBytes' | 'threads';
 
 export const SORT_COLUMNS: Array<{ key: SortKey; tab: string; head: string; fmt: (p: ProcessRow) => string }> = [
-  { key: 'cpuPct',        tab: 'CPU',     head: 'CPU %',  fmt: (p) => p.cpuPct.toFixed(1) },
+  { key: 'cpuPct',        tab: 'CPU',     head: 'CPU %',  fmt: (p) => (p.cpuPct == null ? '—' : p.cpuPct.toFixed(1)) },
   { key: 'memBytes',      tab: 'Memory',  head: 'MEMORY', fmt: (p) => bytes(p.memBytes) },
   { key: 'diskReadBytes', tab: 'Disk',    head: 'READ',   fmt: (p) => (p.diskReadBytes ? bytes(p.diskReadBytes) : '—') },
   { key: 'threads',       tab: 'Threads', head: 'THR',    fmt: (p) => String(p.threads) },
@@ -53,7 +53,10 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
           pct: (node.mem.swapUsedBytes / node.mem.swapTotalBytes) * 100,
         }
       : null;
-  const rows = [...node.topProcesses].sort((a, b) => b[sort] - a[sort]).slice(0, ROWS);
+  // cpuPct is null until a second reading exists to average over; unmeasured
+  // rows sort below a measured zero rather than to the top.
+  const metric = (p: ProcessRow) => p[sort] ?? -1;
+  const rows = [...node.topProcesses].sort((a, b) => metric(b) - metric(a)).slice(0, ROWS);
 
   return (
     <article class="card">
@@ -136,7 +139,7 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
             <span class="pname">{p.name}</span>
             {SORT_COLUMNS.map((c) => (
               <span key={c.key} data-col={c.key}
-                    class={`pval ${c.key === 'cpuPct' && p.cpuPct > 100 ? 'hot' : c.key === sort ? 'lead' : ''}`}>
+                    class={`pval ${c.key === 'cpuPct' && (p.cpuPct ?? 0) > 100 ? 'hot' : c.key === sort ? 'lead' : ''}`}>
                 {c.fmt(p)}
               </span>
             ))}
