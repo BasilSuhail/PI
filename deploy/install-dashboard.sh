@@ -8,6 +8,11 @@ SRC_DIR="${1:-$HOME/dashboard}"
 PORT="${PORT:-8080}"
 NODE_MAJOR=22
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NODE_READER="${REPO_ROOT}/k8s/dashboard-node-reader.yaml"
+ENV_FILE="/etc/jug-console.env"
+KUBE_CA="/etc/jug-console-k3s-ca.crt"
+
 if [ ! -f "$SRC_DIR/package.json" ]; then
   echo "No package.json under $SRC_DIR — pass the source directory as the first argument." >&2
   exit 1
@@ -64,6 +69,60 @@ if ! sudo -u "$SERVICE_USER" tailscale status >/dev/null 2>&1; then
   echo "  Node discovery will fail until then." >&2
 fi
 
+# The dashboard labels each card control-plane, worker or standalone. Without
+# credentials for the cluster every node falls back to standalone, which is how
+# jug2 — the board running the k3s server, and this script — described itself
+# as standalone for as long as the dashboard has existed.
+#
+# Only the board running the server can do this, and only while k3s is up. Any
+# other board keeps the fallback, which is the correct answer there.
+echo "==> Cluster role labels"
+if [ ! -f "$NODE_READER" ]; then
+  # The push-based fallback in docs/deploy.md copies this script on its own.
+  # Skip rather than fail: role labels are a nicety, deploying is not.
+  echo "  no ${NODE_READER##*/} beside this script — leaving role labels alone" >&2
+elif command -v k3s >/dev/null && sudo systemctl is-active --quiet k3s; then
+  sudo k3s kubectl apply -f "$NODE_READER"
+
+  # The token controller fills the Secret in a moment after it is created.
+  KUBE_TOKEN=""
+  for _ in $(seq 1 15); do
+    KUBE_TOKEN="$(sudo k3s kubectl -n kube-system get secret jug-console-node-reader \
+      -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
+    [ -n "$KUBE_TOKEN" ] && break
+    sleep 1
+  done
+
+  if [ -z "$KUBE_TOKEN" ]; then
+    echo "  ServiceAccount token never appeared — cards will read standalone." >&2
+    sudo rm -f "$ENV_FILE"
+  else
+    # k3s keeps its CA under a root-only directory and the service does not run
+    # as root. A CA certificate is public by nature, so a copy it can read is
+    # the whole fix; 127.0.0.1 is in the API server's SANs, so no name is
+    # needed and the request never leaves the board.
+    sudo install -m 644 /var/lib/rancher/k3s/server/tls/server-ca.crt "$KUBE_CA"
+
+    # Mode 600 and owned by root: systemd reads this before dropping to the
+    # service user, so the token is never readable by the account running the
+    # server, and never lands in the unit file.
+    sudo install -m 600 -o root -g root /dev/null "$ENV_FILE"
+    sudo tee "$ENV_FILE" >/dev/null <<ENVFILE
+KUBE_API_SERVER=https://127.0.0.1:6443
+KUBE_TOKEN=${KUBE_TOKEN}
+NODE_EXTRA_CA_CERTS=${KUBE_CA}
+ENVFILE
+    echo "  node-reader token installed (nodes get/list only)"
+  fi
+  unset KUBE_TOKEN
+else
+  # Not a cluster server, or k3s is gone. Drop a stale token rather than leave
+  # the service pointing at a cluster that is no longer there.
+  echo "  no k3s server on this board — cards stay standalone"
+  sudo rm -f "$ENV_FILE" "$KUBE_CA"
+fi
+
+echo
 echo "==> Service on :${PORT} as ${SERVICE_USER}"
 sudo tee /etc/systemd/system/jug-console.service >/dev/null <<UNIT
 [Unit]
@@ -75,6 +134,9 @@ Wants=network-online.target
 Type=simple
 Environment=PORT=${PORT}
 Environment=NODE_ENV=production
+# Cluster credentials, written above. Optional: absent on any board that is not
+# running the k3s server, and the dashboard falls back to standalone labels.
+EnvironmentFile=-${ENV_FILE}
 WorkingDirectory=${APP_DIR}
 ExecStart=$(command -v node) ${APP_DIR}/dist/server.js
 Restart=always
@@ -111,9 +173,15 @@ systemctl is-active jug-console.service || true
 ss -tln | grep ":${PORT}\b" || echo "port ${PORT} not bound"
 echo
 echo "==> Probing"
-curl -sf --max-time 20 "http://localhost:${PORT}/api/nodes" >/dev/null \
-  && echo "/api/nodes OK" \
-  || echo "/api/nodes failed — check: sudo journalctl -u jug-console -n 30"
+if NODES="$(curl -sf --max-time 20 "http://localhost:${PORT}/api/nodes")"; then
+  echo "/api/nodes OK"
+  case "$NODES" in
+    *'"role":"control-plane"'*) echo "  cluster roles OK — a node reads control-plane" ;;
+    *) echo "  every node reads standalone — right on a board with no k3s server" ;;
+  esac
+else
+  echo "/api/nodes failed — check: sudo journalctl -u jug-console -n 30"
+fi
 echo
 echo "Next: expose it on the tailnet with"
 echo "  sudo tailscale serve --bg ${PORT}"
