@@ -36,10 +36,11 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard agents deploy check logs bootstrap archive automount browse samba mounts
+.PHONY: help dashboard dashboard-k8s agents deploy check logs bootstrap archive automount browse samba mounts
 
 help:
 	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
+	@echo "make dashboard-k8s         run the dashboard in the cluster instead of systemd"
 	@echo "make agents      agent/ changed — both boards"
 	@echo "make deploy      both of the above"
 	@echo "make check       services up, dashboard answering"
@@ -55,6 +56,12 @@ help:
 
 dashboard:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-dashboard.sh ~/$(REPO_DIR)/dashboard'
+
+# Runs on the Mac, not on the board: the image is built where Docker is, and
+# jug2 has containerd without it. Needs TAILSCALE_API_KEY — a pod has no
+# tailscaled socket to ask instead.
+dashboard-k8s:
+	NODE=$(DASH_NODE) bash deploy/install-dashboard-k8s.sh
 
 agents:
 	@for node in $(AGENT_NODES); do \

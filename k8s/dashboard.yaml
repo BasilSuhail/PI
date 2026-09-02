@@ -1,0 +1,135 @@
+# The fleet dashboard, as a workload in the cluster rather than a systemd unit
+# beside it. Issue #89. Deployed by deploy/install-dashboard-k8s.sh, which
+# substitutes __TAG__ — applying this file directly will not resolve an image.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jug
+---
+# Same read-only identity the systemd install uses, reached by the other route:
+# kubelet projects a token for this ServiceAccount into the pod, so the
+# dashboard needs no configured credentials at all when it runs here.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jug-console
+  namespace: jug
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jug-console-in-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jug-console-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: jug-console
+    namespace: jug
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jug-console
+  namespace: jug
+spec:
+  # One. The server keeps per-process CPU history in memory to average over,
+  # so a second replica would build its own and poll every agent twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jug-console
+  template:
+    metadata:
+      labels:
+        app: jug-console
+    spec:
+      serviceAccountName: jug-console
+      # jug2 is where the image was imported; there is no registry to pull it
+      # from anywhere else. Explicit rather than incidental, for when jug1
+      # joins as an agent.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: console
+          image: jug-console:__TAG__
+          # Nothing to pull from: the image is imported into containerd
+          # directly. Without this the kubelet would try Docker Hub and fail.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            # No tailscaled socket in a pod, so node discovery uses the API.
+            # tailnet.ts falls back to the local CLI when this is absent, which
+            # is what the systemd install relies on and what a pod cannot do.
+            - name: TAILSCALE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jug-console-tailscale
+                  key: api-key
+            # Node's fetch does not read the projected CA on its own.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 20m
+            # What MemoryMax=256M meant under systemd. jug2's cgroups are on,
+            # so unlike jug1 this is enforced rather than decorative.
+            limits:
+              memory: 256Mi
+          # The bundle is served from disk and needs no agent to answer, so a
+          # static request tests the server itself and not the fleet.
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jug-console
+  namespace: jug
+spec:
+  selector:
+    app: jug-console
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# No host rule. This cluster runs one application, `tailscale serve` on jug2
+# forwards to Traefik, and pinning the tailnet name here would put it in the
+# repo for no gain.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jug-console
+  namespace: jug
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jug-console
+                port:
+                  name: http
