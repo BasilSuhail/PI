@@ -40,7 +40,7 @@ export const DetailView = ({
   }, [node.id]);
 
   const sorted = [...processes].sort((a, b) =>
-    sort === 'cpu' ? b.cpuPct - a.cpuPct : b.memBytes - a.memBytes,
+    sort === 'cpu' ? (b.cpuPct ?? -1) - (a.cpuPct ?? -1) : b.memBytes - a.memBytes,
   );
 
   const mem = node.mem;
@@ -259,7 +259,7 @@ export const DetailView = ({
             <div class="process-row" key={p.pid}>
               <span>{p.pid}</span>
               <span>{p.name}</span>
-              <span>{p.cpuPct.toFixed(1)}</span>
+              <span>{p.cpuPct == null ? '—' : p.cpuPct.toFixed(1)}</span>
               <span>{bytes(p.memBytes)}</span>
             </div>
           ))}

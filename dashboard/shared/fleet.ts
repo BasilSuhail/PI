@@ -104,7 +104,8 @@ export interface ProcessRow {
   name: string;
   cmdline: string | null;
   user: string | null;
-  cpuPct: number;
+  /** Null until a second reading exists to average over. See glances.ts. */
+  cpuPct: number | null;
   memBytes: number;
   memPct: number;
   threads: number;
