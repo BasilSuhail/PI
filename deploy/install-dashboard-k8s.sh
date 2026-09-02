@@ -43,10 +43,15 @@ if [ "$(buildctl --version 2>/dev/null | awk '{print $3}')" != "$BUILDKIT_VERSIO
   TARBALL="buildkit-${BUILDKIT_VERSION}.linux-${ARCH}.tar.gz"
   # The tarball is 97MB and carries CNI plugins, qemu shims and a runc it does
   # not need here; only the daemon and the client are kept, 102MB installed.
+  #
+  # No --strip-components: the archive's only top-level entry is bin/, so the
+  # two land at /usr/local/bin, which is where the unit below looks for them
+  # and the only place on PATH. Stripping the component drops them in
+  # /usr/local, where nothing finds them.
   TMP="$(mktemp -d)"
   curl -fsSL -o "${TMP}/bk.tgz" \
     "https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/${TARBALL}"
-  sudo tar -xzf "${TMP}/bk.tgz" -C /usr/local --strip-components=1 bin/buildkitd bin/buildctl
+  sudo tar -xzf "${TMP}/bk.tgz" -C /usr/local bin/buildkitd bin/buildctl
   rm -rf "$TMP"
 fi
 buildctl --version

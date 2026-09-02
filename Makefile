@@ -39,12 +39,12 @@ endef
 .PHONY: help dashboard dashboard-k8s agents deploy check logs bootstrap archive automount browse samba mounts
 
 help:
-	@echo "make dashboard   dashboard/ or deploy/ changed, launcher tiles included"
-	@echo "make dashboard-k8s         run the dashboard in the cluster, asks for a Tailscale key once"
-	@echo "make agents      agent/ changed — both boards"
-	@echo "make deploy      both of the above"
-	@echo "make check       services up, dashboard answering"
-	@echo "make logs        last 40 lines from the dashboard service"
+	@echo "make dashboard       dashboard/ or deploy/ changed, launcher tiles included"
+	@echo "make dashboard-k8s   the same dashboard in the cluster, asks for a Tailscale key once"
+	@echo "make agents          agent/ changed — both boards"
+	@echo "make deploy          both of the above"
+	@echo "make check           services up, dashboard answering"
+	@echo "make logs            last 40 lines from the dashboard, systemd or k3s"
 	@echo "make archive               create /srv/archive on both boards, once"
 	@echo "make automount             plugged-in drives mount themselves, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
@@ -70,14 +70,19 @@ agents:
 
 deploy: dashboard agents
 
+# The dashboard is asked about separately from the agents. It runs either as a
+# systemd unit or as a Deployment depending on which target was last used, and
+# neither target records which — so the board is asked rather than assumed.
 check:
-	@ssh pi2 'systemctl is-active pi-console glances pi-metrics' || true
+	@ssh pi2 'systemctl is-active glances pi-metrics' || true
 	@ssh pi  'systemctl is-active glances pi-metrics' || true
-	@curl -s -o /dev/null -w 'dashboard: %{http_code}\n' $(DASH_URL)/api/nodes
-	@echo "Want: three active on pi2, two on pi, 200 from the dashboard."
+	@ssh $(DASH_NODE) 'bash ~/$(REPO_DIR)/deploy/dashboard-status.sh status' \
+	  || echo "dashboard: could not ask $(DASH_NODE) — is its checkout current?"
+	@curl -s -o /dev/null -w 'dashboard url: %{http_code}\n' $(DASH_URL)/api/nodes
+	@echo "Want: two active on each board, the dashboard installed one way not two, 200 from the URL."
 
 logs:
-	ssh $(DASH_NODE) 'journalctl -u pi-console -n 40 --no-pager'
+	@ssh $(DASH_NODE) 'bash ~/$(REPO_DIR)/deploy/dashboard-status.sh logs'
 
 archive:
 	@$(call on_storage_nodes,deploy/setup-archive.sh)
