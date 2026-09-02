@@ -201,8 +201,12 @@ ssh jug2 'sudo k3s kubectl -n jug delete secret jug-console-tailscale'
 make dashboard-k8s
 ```
 
-It asks for the key, then for the expiry date Tailscale showed you. Press enter
-at the date to record ninety days from today.
+It asks for the key and nothing else. The expiry is recorded as ninety days
+from today, which is both the longest Tailscale allows and what its form
+offers by default, so for a key made a minute earlier it is right.
+
+Chose a shorter one deliberately? Correct it below, or set `TS_EXPIRES` when
+running the installer on the board itself.
 
 **Correcting just the date**, without touching the key:
 
