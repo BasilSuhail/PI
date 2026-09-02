@@ -1,7 +1,7 @@
 # The dashboard as a container image, for running it in k3s rather than under
-# systemd. Built on the Mac and imported into containerd on the board — there
-# is no registry, and jug2 runs containerd without Docker, so it cannot build
-# this itself. See deploy/install-dashboard-k8s.sh.
+# systemd. Built on the board by buildkit, straight into k3s' own containerd —
+# there is no registry and nothing to push to. See
+# deploy/install-dashboard-k8s.sh.
 
 FROM node:22-alpine AS build
 WORKDIR /src
