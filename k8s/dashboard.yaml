@@ -73,6 +73,17 @@ spec:
                 secretKeyRef:
                   name: pi-console-tailscale
                   key: api-key
+            # The date that key dies, so the console can say so before it does.
+            # Tailscale will not tell a token its own expiry, so the installer
+            # records what you were shown. Optional: a Secret written before
+            # this existed carries no such key, and a pod that demanded one
+            # would sit in CreateContainerConfigError rather than start.
+            - name: TAILSCALE_KEY_EXPIRES
+              valueFrom:
+                secretKeyRef:
+                  name: pi-console-tailscale
+                  key: expires
+                  optional: true
             # Node's fetch does not read the projected CA on its own.
             - name: NODE_EXTRA_CA_CERTS
               value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt

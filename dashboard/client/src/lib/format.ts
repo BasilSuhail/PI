@@ -68,3 +68,14 @@ export const celsius = (n: number | null | undefined): string =>
 export const cpuTone = (v: number) => (v > 85 ? 'red' : v > 60 ? 'orange' : 'aqua');
 export const memTone = (v: number) => (v > 90 ? 'red' : v > 75 ? 'orange' : 'green');
 export const diskTone = (v: number) => (v > 90 ? 'red' : v > 75 ? 'orange' : 'aqua');
+
+/**
+ * "1 Dec". No year: nothing shown this way is more than a few months out, and
+ * the year is four characters of noise in a tile that has room for none.
+ */
+export const shortDate = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  const at = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(at.getTime())) return '—';
+  return at.toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+};

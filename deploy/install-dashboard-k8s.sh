@@ -116,10 +116,32 @@ echo "==> Manifests"
 # until it does.
 kube create namespace pi --dry-run=client -o yaml | kube apply -f - >/dev/null
 
+# Tailscale caps API keys at 90 days and will not tell a token its own expiry,
+# so the date is recorded beside the key and the console reads it back.
+# Without it the fleet simply empties one morning with nothing said.
+#
+# Not asked for. 90 days is both the maximum Tailscale allows and the default
+# its form offers, so for a key made minutes ago it is right, and a prompt
+# whose answer is almost always "yes, the default" is a keystroke for nothing.
+# Set TS_EXPIRES to record a deliberately shorter key instead; the console also
+# takes a correction afterwards, which the README spells out.
+if [ -n "${TS_EXPIRES:-}" ]; then
+  # Kept aside: the assignment below clears it on failure, and the complaint
+  # should name what was actually passed.
+  GIVEN_EXPIRY="$TS_EXPIRES"
+  TS_EXPIRES="$(date -u -d "$GIVEN_EXPIRY" +%Y-%m-%d 2>/dev/null)" || {
+    echo "TS_EXPIRES=${GIVEN_EXPIRY} is not a date this board recognises." >&2
+    exit 1
+  }
+else
+  TS_EXPIRES="$(date -u -d "+90 days" +%Y-%m-%d)"
+fi
+
 if ! kube -n pi get secret pi-console-tailscale >/dev/null 2>&1; then
   echo
   echo "  A pod has no tailscaled socket, so node discovery uses the Tailscale API."
   echo "  Make a key at https://login.tailscale.com/admin/settings/keys"
+  echo "  Under API access tokens, not the auth keys above them."
   echo "  It is not echoed, and it goes into a Secret rather than onto this board."
   # Prompt printed separately rather than passed to read -p: the secret scanner
   # reads a prompt string next to a variable as a credential in the source.
@@ -127,9 +149,17 @@ if ! kube -n pi get secret pi-console-tailscale >/dev/null 2>&1; then
   IFS= read -rs TS_KEY
   echo
   [ -n "$TS_KEY" ] || { echo "  No key given — stopping." >&2; exit 1; }
-  kube -n pi create secret generic pi-console-tailscale --from-literal=api-key="$TS_KEY" >/dev/null
+  kube -n pi create secret generic pi-console-tailscale \
+    --from-literal=api-key="$TS_KEY" --from-literal=expires="$TS_EXPIRES" >/dev/null
   unset TS_KEY
-  echo "  secret created"
+  echo "  secret created, expiry recorded as ${TS_EXPIRES}"
+elif ! kube -n pi get secret pi-console-tailscale -o jsonpath="{.data.expires}" | grep -q .; then
+  # A Secret written before the console could show an expiry. Ask for the date
+  # alone rather than making someone mint a fresh key to record one.
+  echo "  secret present but carries no expiry — the console cannot warn you yet"
+  kube -n pi patch secret pi-console-tailscale --type merge \
+    -p "{\"stringData\":{\"expires\":\"${TS_EXPIRES}\"}}" >/dev/null
+  echo "  expiry recorded: ${TS_EXPIRES}"
 else
   echo "  tailscale secret already present — leaving it alone"
   echo "  (replace it with: sudo k3s kubectl -n pi delete secret pi-console-tailscale, then re-run)"
