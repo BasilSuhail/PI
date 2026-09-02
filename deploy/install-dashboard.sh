@@ -76,45 +76,54 @@ fi
 #
 # Only the board running the server can do this, and only while k3s is up. Any
 # other board keeps the fallback, which is the correct answer there.
-echo "==> Cluster role labels"
-if [ ! -f "$NODE_READER" ]; then
-  # The push-based fallback in docs/deploy.md copies this script on its own.
-  # Skip rather than fail: role labels are a nicety, deploying is not.
-  echo "  no ${NODE_READER##*/} beside this script — leaving role labels alone" >&2
-elif command -v k3s >/dev/null && sudo systemctl is-active --quiet k3s; then
-  sudo k3s kubectl apply -f "$NODE_READER"
+# Every step is best effort and says so by returning non-zero: role labels are
+# a nicety, deploying is not. `set -e` does not reach inside a function called
+# on the left of `||`, so each step carries its own `|| return 1` rather than
+# relying on it.
+install_role_labels() {
+  sudo k3s kubectl apply -f "$NODE_READER" || return 1
 
   # The token controller fills the Secret in a moment after it is created.
-  KUBE_TOKEN=""
+  local KUBE_TOKEN=""
   for _ in $(seq 1 15); do
     KUBE_TOKEN="$(sudo k3s kubectl -n kube-system get secret jug-console-node-reader \
       -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
     [ -n "$KUBE_TOKEN" ] && break
     sleep 1
   done
+  [ -n "$KUBE_TOKEN" ] || return 1
 
-  if [ -z "$KUBE_TOKEN" ]; then
-    echo "  ServiceAccount token never appeared — cards will read standalone." >&2
-    sudo rm -f "$ENV_FILE"
-  else
-    # k3s keeps its CA under a root-only directory and the service does not run
-    # as root. A CA certificate is public by nature, so a copy it can read is
-    # the whole fix; 127.0.0.1 is in the API server's SANs, so no name is
-    # needed and the request never leaves the board.
-    sudo install -m 644 /var/lib/rancher/k3s/server/tls/server-ca.crt "$KUBE_CA"
+  # k3s keeps its CA under a root-only directory and the service does not run
+  # as root. A CA certificate is public by nature, so a copy it can read is
+  # the whole fix; 127.0.0.1 is in the API server's SANs, so no name is
+  # needed and the request never leaves the board.
+  sudo install -m 644 /var/lib/rancher/k3s/server/tls/server-ca.crt "$KUBE_CA" || return 1
 
-    # Mode 600 and owned by root: systemd reads this before dropping to the
-    # service user, so the token is never readable by the account running the
-    # server, and never lands in the unit file.
-    sudo install -m 600 -o root -g root /dev/null "$ENV_FILE"
-    sudo tee "$ENV_FILE" >/dev/null <<ENVFILE
+  # Mode 600 and owned by root: systemd reads this before dropping to the
+  # service user, so the token is never readable by the account running the
+  # server, and never lands in the unit file.
+  sudo install -m 600 -o root -g root /dev/null "$ENV_FILE" || return 1
+  sudo tee "$ENV_FILE" >/dev/null <<ENVFILE || return 1
 KUBE_API_SERVER=https://127.0.0.1:6443
 KUBE_TOKEN=${KUBE_TOKEN}
 NODE_EXTRA_CA_CERTS=${KUBE_CA}
 ENVFILE
+}
+
+echo "==> Cluster role labels"
+if [ ! -f "$NODE_READER" ]; then
+  # The push-based fallback in docs/deploy.md copies this script on its own.
+  # Skip rather than fail: role labels are a nicety, deploying is not.
+  echo "  no ${NODE_READER##*/} beside this script — leaving role labels alone" >&2
+elif command -v k3s >/dev/null && sudo systemctl is-active --quiet k3s; then
+  if install_role_labels; then
     echo "  node-reader token installed (nodes get/list only)"
+  else
+    # A cluster that is up but unhappy must not take the dashboard down with
+    # it. Drop any half-written credentials and fall back to standalone.
+    echo "  cluster step failed — cards will read standalone." >&2
+    sudo rm -f "$ENV_FILE"
   fi
-  unset KUBE_TOKEN
 else
   # Not a cluster server, or k3s is gone. Drop a stale token rather than leave
   # the service pointing at a cluster that is no longer there.

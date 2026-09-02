@@ -288,4 +288,4 @@ Deferred by decision, not oversight:
 
 - **jug1 joining the cluster.** Waits until `llama-server` moves to the Mac Mini and jug1's real free RAM can be measured, since `--kubelet-arg=system-reserved` must be a measured number. A scheduler that cannot see Docker will place pods into RAM that OSINT already holds.
 - **Migrating OSINT into k8s.** Not planned. Issue #2 settled it: containers pinned to their own disk gain nothing from an orchestrator.
-- **Moving the dashboard into k3s.** Runs under systemd today, which works. Doing it in the cluster is a good exercise on a workload that is already trusted — not a fix for anything.
+- **Moving the dashboard into k3s.** Merged in [#92](../../pull/92), not yet run on the board. `make dashboard-k8s`. Section 10 gets written once it has actually been deployed and measured; until then section 8 above is still what is live on jug2.
