@@ -1,0 +1,122 @@
+# Vaultwarden: a Bitwarden-compatible server, on its own tailnet name.
+#
+# Deployed by deploy/install-vaultwarden.sh. Lives in the `jug` namespace
+# alongside the dashboard and Uptime Kuma.
+#
+# This holds a copy of a vault that lives elsewhere. Bitwarden's own service
+# stays the source of truth and is not touched; this is imported once and left
+# alone. Nothing here syncs, and nothing here should be relied on to be
+# current.
+#
+# There is no backup of this volume yet, which is worth remembering before it
+# becomes the only place something is written down.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vaultwarden
+  namespace: jug
+spec:
+  accessModes: [ReadWriteOnce]
+  # SQLite plus attachments. Attachments do not come across in a Bitwarden
+  # JSON export, so this only grows for anything added here directly.
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vaultwarden
+  namespace: jug
+spec:
+  replicas: 1
+  # ReadWriteOnce volume and SQLite: the old pod has to be gone before the new
+  # one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vaultwarden
+  template:
+    metadata:
+      labels:
+        app: vaultwarden
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: vaultwarden
+          image: vaultwarden/server:1.32.7-alpine
+          ports:
+            # The image sets ROCKET_PORT=80 and listens there, rather than on
+            # the 8080 a container usually picks.
+            - name: http
+              containerPort: 80
+          envFrom:
+            # DOMAIN and SIGNUPS_ALLOWED. Written once by the installer rather
+            # than pinned here, so redeploying cannot silently reopen
+            # registration after it has been closed.
+            - configMapRef:
+                name: vaultwarden-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 10m
+            # Rust, and it idles near 40 MB. The ceiling is for a runaway.
+            limits:
+              memory: 256Mi
+          # Vaultwarden's own liveness endpoint, which answers without a login.
+          readinessProbe:
+            httpGet: { path: /alive, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /alive, port: http }
+            initialDelaySeconds: 45
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Capabilities are deliberately not stripped. The image runs as
+            # root through a /start.sh wrapper, and Uptime Kuma taught us that
+            # guessing at what an entrypoint needs produces a crash loop that
+            # never reaches the application. Revisit with the script in hand.
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vaultwarden
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vaultwarden
+  namespace: jug
+spec:
+  selector:
+    app: vaultwarden
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Its own tailnet machine, so it sits at a root path with a real certificate.
+# Bitwarden's clients refuse to talk to a server over plain HTTP, and the
+# browser extension will not accept a self-signed one, so this is not optional
+# decoration.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault
+  namespace: jug
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: vaultwarden
+      port:
+        name: http
+  tls:
+    - hosts: ["vault"]
