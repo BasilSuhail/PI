@@ -268,92 +268,42 @@ and the HAT's activity LED showed green. Every visible symptom pointed at the
 disk or the 12V supply, and both were fine. A reboot restored it;
 `deploy/check-sata-hat.sh` reads that register now.
 
-### One folder for data, disks for everything else
+### One folder per drive
 
-`deploy/setup-browse.sh`. The share and the console both open on the same two
-kinds of thing, and the split is the whole rule:
-
-```
-/srv/browse/
-├── 1) Archive      → bind of /srv/archive. Apps, databases, storage,
-│                     backups, keys. The one folder worth copying somewhere
-│                     else, because copying it takes everything that matters.
-├── SSD-1TB         → bind of /. The OS and the random directories a Linux
-│                     install accumulates. Nothing hidden, just not mixed in.
-└── HDD-6TB         → the 6TB. Every disk added later joins on the same
-                      terms: its own folder at the top.
-```
-
-The leading `1)` is the entire sorting mechanism — digits sort before letters,
-so Finder puts the archive first with no pin, no shortcut and no second copy.
-The console reads the same name from `BROWSE_ROOTS` in the unit file, quoted
-there because systemd splits an unquoted `Environment=` on whitespace and the
-label contains a space. `fstab` carries the space as `\040` for the same
-reason.
-
-**The bug this replaced.** The previous pass bind-mounted `/srv/archive` a
-second time *inside* the disk folder that already contained it, as a pin. That
-made the same bytes reachable by two paths in one listing, and the sizer
-counted both. `/srv` read **60.6GB on a disk holding 27.3GB**:
+`deploy/setup-browse.sh`. The share opens on drives and only drives, the way
+"This PC" does on Windows and Locations does in Finder. A machine has drives,
+the drives are what you open, and anything that is not a drive has no business
+sitting beside them. Two disks in jug2 is two folders; plug in a third and
+there are three.
 
 ```
-srv 60.6GB  =  archive 18.3  +  browse 42.3
-browse 42.3 =  archives-pin 18.3  +  real srv/archive 18.3  +  ~5.7 OS
+jug2/
+├── SSD-1TB/          <- /            1) Archive, bin, boot, etc, ...
+├── HDD-6TB/          <- /srv/storage
+└── MY STICK/         <- /media/MY STICK   (only while it is plugged in)
 ```
 
-The root cause was in `subtree_bytes` in the agent, and it outlived the pin.
-It stopped at a device boundary the way `du -x` does — but **a bind mount of a
-filesystem onto itself keeps the same `st_dev`**. `/srv/browse/SSD-1TB` is `/`
-bound at a path inside `/`, so walking the root walked the whole disk a second
-time and the device check never fired. It now reads `/proc/self/mountinfo` and
-refuses to descend into any mount point below the one it started at, which is
-what `du -x` was always meant to mean. The device check stays as a second net
-for anything mounted since the set was last read.
+The archive is **inside** the disk that holds it, first in that disk's own
+listing. `1)` is the entire sorting mechanism — digits sort before letters, so
+it lands above `bin` with no pin, no shortcut, and no special handling in the
+console. Two earlier passes put it at the top level instead, next to the
+drives, along with a "2) Plugged in" folder mirroring `/media`. Both were
+wrong: the top level is drives.
 
-Consequences worth knowing: a disk is counted once, under its own folder, so
-`SSD-1TB` no longer inherits the 6TB's bytes through `/srv/storage`, and the
-archive's size in the console is fetched off the critical path — the board's
-column paints immediately with the disks sized, and the archive's number
-arrives when the walk finishes.
+A drive found only under `/media` is one somebody plugged in, and it gets a
+folder like any other drive, named by its label — `PHOTOS` says more than
+`SSD-32GB`. A disk already seen elsewhere is skipped there, because that mount
+is the OS turning up twice rather than a new drive.
 
-
-### `findmnt` answers with rows, not a row
-
-`make automount` failed on jug2 with `umount: /media/bootfs: not mounted`, and
-succeeded on jug while quietly doing none of what it claimed. One cause behind
-both: every call here treated `findmnt` as though it returns a single line
-naming a device. It returns a row per mount, a path can carry more than one,
-and a `systemd` automount unit reports its source as `systemd-1` rather than a
-device.
-
-**The udev rule was invalid.** `findmnt -no SOURCE /boot/firmware` came back
-three rows deep on jug, so the exclusion list was built as a multi-line string
-and the rule went out as:
-
-```
-ENV{DEVNAME}!="/dev/sda2" ENV{DEVNAME}!="/dev/sda1
-/dev/sda1
-/dev/sda1"
-```
-
-udev cannot parse that, so the whole rule was dropped — which means the
-automount rule has not been in force on either board, and the boot-partition
-exclusion it exists to enforce was not enforcing anything.
-
-**The cleanup unmounted nothing, then aborted.** It asked `findmnt -T`, which
-answers for the filesystem *containing* a path rather than the one mounted at
-it. An empty leftover directory under `/media` therefore reported the root
-filesystem, matched the exclusion list, and the script tried to unmount
-something that had never been mounted — fatal under `set -e`, which is jug2's
-error. On jug the directories really were mounted, but the multi-row source
-came back as `systemd-1` first and matched nothing, so the OS partitions stayed
-mounted under `/media`, writable, which is the hazard the cleanup exists to
-remove.
-
-`device_at` now takes the first row naming a device, the cleanup asks whether
-the path *is* a mount point rather than what contains it, and a drive that will
-not unmount is reported rather than fatal — this is opportunistic tidying of an
-old mistake, and it should not be able to end the run.
+**The sizing bug this shape used to hide.** `subtree_bytes` stopped at a device
+boundary the way `du -x` does, and a bind mount of a filesystem onto itself
+keeps the same `st_dev`, so the guard never fired: `/srv/browse/SSD-1TB` is `/`
+bound at a path inside `/`, and walking the root walked the whole disk twice.
+`/srv` read 60.6GB on a disk holding 27.3GB. It reads `/proc/self/mountinfo`
+now and refuses to descend into a mount point below the one it started at,
+which is what `du -x` was always meant to mean. That is what makes the archive
+bind inside the disk free: the disk counts `/srv/archive` once, at its real
+path, and not again at `1) Archive`.
 
 ### Why `make browse` kept failing on jug2
 

@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# Builds /srv/browse — "1) Archive" first, then one directory per disk.
+# Builds /srv/browse — one folder per drive. Nothing else at the top.
 #
-# Two kinds of thing sit at the top, and the split is the point:
+# This is "This PC" on Windows and the Locations list in Finder: a machine has
+# drives, the drives are what you open, and anything that is not a drive has no
+# business sitting beside them. Two disks in jug2 means two folders. Plug in a
+# third and there are three. That is the whole model.
 #
-#   1) Archive   the data. Apps, databases, storage, backups, keys — the one
-#                folder worth copying somewhere else, because copying it takes
-#                everything that matters and nothing that does not.
-#   SSD-1TB      a disk, whole. The OS, /etc, and every random directory a
-#                Linux install accumulates. A disk that hides its own /etc is
-#                a brochure, not a view, so none of it is hidden — it is just
-#                not mixed in with the data.
-#   HDD-6TB      another disk, and every disk added later joins on the same
-#                terms: its own folder at the top, nothing implied about what
-#                goes in it.
+#   SSD-1TB      the disk, whole: "1) Archive" first, then the OS — bin, boot,
+#                etc, and the rest of what a Linux install has. A disk that
+#                hides its own /etc is a brochure, not a view.
+#   HDD-6TB      the other disk.
 #
-# The console's Files view carries the same names from the same sysfs facts
-# (read_disks in the agent, withRotation in the dashboard server), so both
-# doors into the files agree.
+# The archive is inside the disk that holds it, named so it sorts to the top of
+# that disk's own listing — digits before letters. It is not a folder at the
+# top level: the top level is drives.
 #
 # Bind mounts, not symlinks: Samba refuses to follow a symlink out of a share
 # unless `wide links = yes`, and that option turns off a protection worth
@@ -42,11 +39,15 @@ FSTAB=/etc/fstab
 MARK="# jug-browse"
 
 # Mount points that are plumbing rather than a disk's contents: the OS's own
-# pseudo-filesystems, container state, and /media, where the automount rule
-# puts a second copy of any disk that fires a udev event. / is deliberately
-# absent from this list — the whole point of a per-disk tree is that the
-# system's files sit under the disk they live on.
-skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/media.*|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
+# pseudo-filesystems and container state. / is deliberately absent — the whole
+# point of a per-disk tree is that the system's files sit under the disk they
+# live on.
+#
+# /media is skipped here and picked up in a second pass below. A board's own
+# partitions can turn up there as a duplicate mount, and those must not become
+# a second folder for a disk that already has one; a plugged-in drive has no
+# other mount, so the second pass finds it and nothing else.
+skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
 
 # The physical disk a mounted source belongs to: sda2 -> sda. A source with no
 # parent device names itself.
@@ -115,10 +116,13 @@ mapfile -t rows < <(findmnt -nlo SOURCE,TARGET | sort -u)
 
 declare -A disk_root=()   # disk -> its shallowest mount, the folder's contents
 declare -A disk_depth=()  # depth of that mount, "/" being the shallowest
+declare -A disk_label=()  # drives found only under /media, named by their label
 mounts=()
+media_rows=()
 for row in "${rows[@]}"; do
   read -r source target <<<"$row"
   [[ "$source" == /dev/* ]] || continue
+  [[ "$target" == "$MEDIA"/* ]] && { media_rows+=("$row"); continue; }
   [[ "$target" =~ $skip_re ]] && continue
   [[ "$target" == "$BROWSE"/* ]] && continue
   disk=$(disk_of "$source")
@@ -129,6 +133,22 @@ for row in "${rows[@]}"; do
     disk_root[$disk]=$target
     disk_depth[$disk]=${#depth}
   fi
+done
+
+# Second pass: a drive whose only mount is under /media is one somebody plugged
+# in, and it gets a folder like any other drive. A disk already seen above is
+# skipped — that mount is the OS turning up twice, not a new drive. The folder
+# takes the drive's label, which is what the automount helper named the mount
+# after and what is written on the disk itself.
+for row in "${media_rows[@]}"; do
+  read -r source target <<<"$row"
+  disk=$(disk_of "$source")
+  [ -n "${disk_root[$disk]:-}" ] && continue   # the OS, mounted a second time
+  [ -z "$(disk_facts "$disk")" ] && continue
+  mounts+=("$target|$disk")
+  disk_root[$disk]=$target
+  disk_depth[$disk]=1
+  disk_label[$disk]=$(basename "$target")
 done
 
 if [ ${#disk_root[@]} -eq 0 ]; then
@@ -233,29 +253,17 @@ bind() { # source, destination
     "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
 }
 
-# A live mirror rather than a snapshot. --bind copies the directory as it is
-# now, and a filesystem mounted under the source afterwards stays invisible
-# through it — which for /media means a stick plugged in after this ran would
-# not appear until it ran again. --rbind carries the mounts that exist, and
-# because systemd leaves / shared the copy joins the same propagation group,
-# so mounts that appear later propagate into the mirror on their own.
-#
-# --make-rslave then makes the propagation one-way. Left shared, unmounting
-# the mirror would travel back along the same path and unmount the drive
-# itself: re-running this script would quietly eject every plugged-in stick.
-# Slave receives, never sends.
-rbind() { # source, destination
-  sudo mount --rbind "$1" "$2"
-  sudo mount --make-rslave "$2"
-  printf '%s  %s  none  rbind,nofail  0  0  %s\n' \
-    "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
-}
 
+declare -A disk_folder=()
 for disk in "${!disk_root[@]}"; do
   read -r size rotational < <(disk_facts "$disk")
-  name=$(name_for "/$(kind_of "$rotational" "$disk") $(capacity_of "$size")")
+  # A drive somebody plugged in is known by what is written on it. "PHOTOS"
+  # says more than "SSD-32GB", and it is the name they gave it.
+  name=${disk_label[$disk]:-}
+  [ -n "$name" ] || name=$(name_for "/$(kind_of "$rotational" "$disk") $(capacity_of "$size")")
   while [ -n "${used_names[$name]:-}" ]; do name="${name}-${disk}"; done
   used_names[$name]=1
+  disk_folder[$disk]=$name
 
   point="$BROWSE/$name"
   sudo mkdir -p "$point"
@@ -276,42 +284,43 @@ for disk in "${!disk_root[@]}"; do
   done
 done
 
-# The archive is a folder of its own at the top, beside the disks — not a pin
-# inside one. It is the one place data lives: apps, databases, storage,
-# backups, keys. Everything a disk holds that is not that — the OS, /etc, the
-# random directories a Linux install accumulates — stays outside it, reachable
-# under the disk's own folder. The rule is simple enough to hold in your head:
-# copy this one folder and you have everything that matters.
+# The archive, at the top of the disk that actually holds it — not a folder at
+# the top level. The top level is drives.
 #
-# The leading "1)" is the whole sorting mechanism. Digits sort before letters,
-# so Finder puts it first with no pinning, no shortcut and no second copy of
-# the same bytes appearing further down the same disk — which is what the pin
-# this replaces actually did, and what made /srv read 60.6GB on a disk holding
-# 27.3GB.
+# "1)" is the whole sorting mechanism: digits sort before letters, so it lands
+# above bin/boot/etc in the disk's own listing without a pin, a shortcut, or
+# any special handling in the console. The bind's mount point is created inside
+# the disk folder, which for the boot disk means a directory at the root of the
+# filesystem — that is what makes it show up beside bin and boot rather than
+# three levels down under srv.
+#
+# It costs nothing in the sizes: the agent stops at mount points, so the disk
+# counts /srv/archive once, at its real path, and not again here.
 ARCHIVE="${ARCHIVE:-/srv/archive}"
 ARCHIVE_FOLDER="${ARCHIVE_FOLDER:-1) Archive}"
 if [ -d "$ARCHIVE" ]; then
-  archive_point="$BROWSE/$ARCHIVE_FOLDER"
-  sudo mkdir -p "$archive_point"
-  bind "$ARCHIVE" "$archive_point"
-  echo "  $ARCHIVE_FOLDER  <-  $ARCHIVE"
-else
-  echo "  no $ARCHIVE yet — run deploy/setup-archive.sh to create it" >&2
+  archive_source=$(findmnt -no SOURCE -T "$ARCHIVE" 2>/dev/null | grep -m1 '^/dev/' || true)
+  archive_disk=$(disk_of "$archive_source")
+  archive_folder=${disk_folder[$archive_disk]:-}
+  if [ -n "$archive_folder" ]; then
+    archive_point="$BROWSE/$archive_folder/$ARCHIVE_FOLDER"
+    sudo mkdir -p "$archive_point"
+    bind "$ARCHIVE" "$archive_point"
+    echo "  $archive_folder/$ARCHIVE_FOLDER  <-  $ARCHIVE"
+  else
+    echo "  $ARCHIVE is on $archive_disk, which has no folder — skipping" >&2
+  fi
 fi
 
-# Anything plugged in, mirrored live from /media, where the udev rule in
-# deploy/setup-automount.sh mounts it. A folder rather than a per-disk entry
-# because the whole point is that nothing has to be configured first: plug a
-# stick in and it is in Finder, unplug it and it is gone, with this script
-# never run again.
-#
-# /media stays in skip_re above, so a stick does not also become a disk folder
-# of its own at the top. One place to look, and it is this one.
-REMOVABLE_FOLDER="${REMOVABLE_FOLDER:-2) Plugged in}"
-removable_point="$BROWSE/$REMOVABLE_FOLDER"
-sudo mkdir -p "$MEDIA" "$removable_point"
-rbind "$MEDIA" "$removable_point"
-echo "  $REMOVABLE_FOLDER  <-  $MEDIA  (live: mounts appear and vanish on their own)"
+# An earlier version pinned the archive as "archives" by the same trick, and
+# the directory it created at the root of the disk outlived the mount. Remove
+# it, but only while it is empty and not mounted: rmdir refusing a directory
+# with anything in it is the whole safety mechanism.
+for stale in "$BROWSE"/*/archives; do
+  [ -d "$stale" ] || continue
+  mountpoint -q "$stale" && continue
+  sudo rmdir "$stale" 2>/dev/null && echo "  removed the old empty 'archives' pin at ${stale#$BROWSE/}"
+done
 
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
 sudo chmod 0755 "$BROWSE"
