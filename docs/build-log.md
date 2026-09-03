@@ -317,6 +317,33 @@ column paints immediately with the disks sized, and the archive's number
 arrives when the walk finishes.
 
 
+### Why `make browse` kept failing on pi2
+
+```
+umount: /srv/browse/SSD-1TB: target is busy.
+  /srv/browse/SSD-1TB is busy. Close Finder windows and shells on it, then re-run.
+```
+
+Samba. `smbd` forks a process per connection and parks its working directory
+inside the share, so one Finder window left open on a Mac anywhere on the
+tailnet pins `/srv/browse/<disk>` — and the rebuild, which unmounts the whole
+tree before recreating it, cannot proceed. pi2 hit it and pi did not because
+pi2 is the board whose share was actually being browsed; it has nothing to do
+with k3s, which mounts nothing under `/srv`.
+
+Telling the operator to go and close windows was the wrong answer to a
+condition the script can resolve itself: the share is being rebuilt, so the
+thing serving it should not be running. `smbd` is stopped for the rebuild and
+started again on the way out, including on failure — that is what the `trap`
+is for. Finder reconnects on its own.
+
+Two smaller changes fell out of the same look. The agent's own scan holds a
+directory open while it runs, which is transient rather than a standing
+conflict, so the unmount is retried a few times before it gives up. And when it
+does give up, `fuser -vm` names the pid and command still holding the mount,
+because a bare "target is busy" sends you hunting for a Finder window that may
+not be the problem.
+
 ### Plug something in and read it
 
 `deploy/setup-automount.sh`, and a folder in the share that mirrors it.
