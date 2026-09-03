@@ -48,6 +48,26 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # MagicDNS names do not resolve inside a pod. DNS there goes to CoreDNS,
+      # which has never heard of the tailnet, so every monitor failed with
+      # "getaddrinfo ENOTFOUND pi.<tailnet>.ts.net" while the same URLs
+      # answered fine from a laptop.
+      #
+      # The addresses are given here rather than in the URLs so the names
+      # survive: the boards' certificates are issued to their tailnet names, and
+      # a monitor pointed at a bare address would fail TLS instead. Routing to
+      # the address already works, which is how the dashboard polls the agents.
+      #
+      # The operator's own DNSConfig does not help. Its nameserver only carries
+      # records for proxies the operator created, and the boards are ordinary
+      # tailnet machines. Proper name resolution for those would mean an egress
+      # proxy per board plus a CoreDNS stub, which is four moving parts and two
+      # extra pods to save editing two lines when a board is added.
+      hostAliases:
+        - ip: "<pi-tailscale-ip>"
+          hostnames: ["pi.<tailnet>.ts.net"]
+        - ip: "<pi2-tailscale-ip>"
+          hostnames: ["pi2.<tailnet>.ts.net"]
       containers:
         - name: uptime-kuma
           image: louislam/uptime-kuma:1.23.16
