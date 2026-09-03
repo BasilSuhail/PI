@@ -46,5 +46,13 @@
     "url": "https://kiwix.taild9f605.ts.net/",
     "nodeId": "jug2",
     "icon": "/app-icons/kiwix.svg"
+  },
+  {
+    "name": "qBittorrent",
+    "url": "https://torrent.taild9f605.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/qbittorrent.svg",
+    "switchable": true,
+    "check": false
   }
 ]

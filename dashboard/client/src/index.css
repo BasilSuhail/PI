@@ -181,7 +181,6 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .mrow.duo{gap:14px}
 .duo .half{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .duo .half>.lbl{flex:0 0 46px}
-.duo .half:last-child>.lbl{flex:0 0 40px}
 .duo .half>.fig{font-size:10px}
 /* Which disk these bytes are actually on. Small enough to read as an
    annotation on the figure rather than a value of its own. */
@@ -189,7 +188,13 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   color:var(--faint);border:1px solid var(--panel-line);border-radius:3px;
   padding:1px 3px;line-height:1.35}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
-@media (max-width:520px){.mrow.duo{flex-direction:column;align-items:stretch;gap:6px}}
+/* Stacked on a phone, where two meters side by side leave neither enough bar
+   to read. Once stacked they are ordinary rows and have to line up with the
+   ones above: same label column, same margins, nothing about them special. */
+@media (max-width:520px){
+  .mrow.duo{flex-direction:column;align-items:stretch;gap:0;margin:0}
+  .duo .half{margin:6px 0}
+}
 .meter{height:8px;flex:1;min-width:24px;overflow:hidden;
   border:1px solid var(--meter-edge);border-radius:2px;
   background:var(--groove);box-shadow:inset 0 1px 2px rgba(0,0,0,.18)}
@@ -215,7 +220,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* Named, because "9h 33m" is not guessable and the row had the room. */
 .c-meta>span:not(.chip){display:flex;align-items:baseline;gap:6px;min-width:0}
 .c-meta em{flex:none;font-style:normal;font-size:9px;letter-spacing:.09em;color:var(--faint)}
-.c-meta b{font-weight:400;font-size:13px;color:var(--ink)}
+.c-meta b{font-weight:400;font-size:13px;color:var(--ink);white-space:nowrap}
+/* A figure and its label are one thing and must break as one — never "2.3"
+   above "W". */
+.c-meta em{white-space:nowrap}
 .c-meta svg{flex:none;color:var(--muted);align-self:center}
 .chip{justify-self:end;display:inline-flex;align-items:center;gap:4px;
   padding:3px 9px;border-radius:10px;
@@ -288,6 +296,16 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   background:linear-gradient(var(--bar-2),var(--bar-edge));border-top:1px solid var(--bar-edge);
   font-family:var(--mono);font-size:9px}
 .statusbar span{display:flex;align-items:center;gap:5px}
+
+/* Four readings across a phone leaves each about eighty pixels, which is not
+   enough for "UPTIME 10h 44m" and was the reason it wrapped. Two rows of two
+   gives every one of them room, and the chip takes the corner. */
+@media (max-width:560px){
+  .c-meta{grid-template-columns:1fr 1fr;gap:9px 12px}
+  .c-meta b{font-size:12px}
+  .c-meta em{font-size:8.5px}
+  .chip{font-size:10px;padding:3px 8px}
+}
 
 @media (max-width:900px){
   body{padding:0;
@@ -395,6 +413,43 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .app-info strong{color:var(--ink);font-size:13px}
 .app-info span{margin-top:3px;color:var(--muted);font-size:9px}
 .app-info small{margin-top:8px;color:var(--faint);font-family:var(--mono);font-size:9px}
+/* The tile is an anchor, so the switch cannot live inside it — a button
+   nested in a link is invalid markup and eats the click. The slot is the
+   positioning context that lets the two be siblings and still look like one
+   object. */
+.app-slot{position:relative;display:flex}
+.app-slot>.app-tile{flex:1;min-width:0}
+.app-power{position:absolute;top:10px;right:10px;z-index:1;
+  display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:9px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
+  color:var(--ink-2);background:linear-gradient(var(--btn-1),var(--btn-2));
+  border:1px solid var(--btn-edge);box-shadow:inset 0 1px var(--gloss)}
+/* The tile lifts on hover and the switch is its sibling, not its child, so
+   without this it stays behind while the card moves out from under it. */
+.app-slot:hover .app-power{transform:translateY(-3px)}
+.app-power{transition:transform .16s ease,filter .16s ease}
+.app-power:hover{filter:brightness(1.06)}
+.app-power:active{filter:brightness(.94)}
+.app-power:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+.app-power:disabled{opacity:.55;cursor:default}
+/* Running is the state worth marking: the client is live and the tunnel is
+   carrying traffic, which is not the state to leave it in by accident. */
+.app-power.on{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent);
+  background:color-mix(in srgb,var(--crit) 12%,transparent)}
+.app-power svg{flex:none}
+/* The tunnel, on the tile. Green only when there is an address to show:
+   "the pod is running" is not the claim being made here. */
+.app-vpn{display:flex;align-items:center;gap:5px;margin-top:6px;padding-top:6px;
+  border-top:1px solid var(--panel-line);
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-vpn.up{color:var(--ok)}
+.app-vpn svg{flex:none}
+
+.app-note.bad{border-color:color-mix(in srgb,var(--crit) 40%,transparent);
+  background:color-mix(in srgb,var(--crit) 9%,transparent)}
+.app-note.bad strong{color:var(--crit)}
+
 .app-health{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:10px;
   color:var(--muted);font-family:var(--mono);font-size:9px}
 .app-arrow{position:absolute;right:11px;bottom:12px;color:var(--faint)}

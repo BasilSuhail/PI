@@ -8,7 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 
-import type { NodeRole } from '../../shared/fleet';
+import type { NodeRole, TorrentState } from '../../shared/fleet';
 
 const TIMEOUT_MS = 3000;
 
@@ -78,6 +78,126 @@ export const fetchClusterRoles = async (): Promise<Map<string, NodeRole>> => {
     return roles;
   } catch {
     return roles;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * The one workload the console can switch on and off: qBittorrent, which runs
+ * behind a VPN and is meant to be off unless something is downloading.
+ *
+ * Scale rather than delete. Zero replicas means nothing running and no RAM
+ * held, while the deployment, its secret and its tailnet name stay exactly as
+ * configured — so starting it again is one integer and not a redeploy.
+ *
+ * The ServiceAccount is allowed `get` and `patch` on this deployment's scale
+ * subresource and nothing else in the cluster (k8s/qbittorrent.yaml). A bug
+ * here cannot reach another workload even if it tried.
+ */
+const TORRENT = { ns: 'jug', name: 'qbittorrent' };
+
+const scaleUrl = (server: string) =>
+  `${server}/apis/apps/v1/namespaces/${TORRENT.ns}/deployments/${TORRENT.name}/scale`;
+
+/**
+ * gluetun's control server, reachable inside the cluster only. Two GET routes
+ * are open on it (see the ConfigMap in k8s/qbittorrent.yaml); everything else,
+ * including anything that could change the tunnel, is denied.
+ *
+ * Asked directly rather than inferred from the pod being ready, because
+ * "running" and "protected" are different claims and only one of them matters
+ * before a download starts.
+ */
+const GLUETUN = 'http://qbittorrent.jug.svc.cluster.local:8000';
+
+const askGluetun = async <T>(path: string): Promise<T | null> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`${GLUETUN}${path}`, { signal: controller.signal, cache: 'no-store' });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    // Stopped, still starting, or not installed. All of them mean "no tunnel
+    // to report", which the caller shows as an absence rather than an error.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** The tunnel as gluetun describes it, or null when there is nothing to ask. */
+const fetchVpn = async (): Promise<TorrentState['vpn']> => {
+  const [status, ip] = await Promise.all([
+    askGluetun<{ status?: string }>('/v1/vpn/status'),
+    askGluetun<{ public_ip?: string; country?: string }>('/v1/publicip/ip'),
+  ]);
+  if (!status && !ip) return null;
+  return {
+    status: status?.status ?? null,
+    publicIp: ip?.public_ip ?? null,
+    country: ip?.country ?? null,
+  };
+};
+
+export const fetchTorrentState = async (): Promise<TorrentState> => {
+  const creds = await credentials();
+  if (!creds) return { wanted: 0, ready: 0, reachable: false, vpn: null };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(scaleUrl(creds.server), {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    if (!res.ok) return { wanted: 0, ready: 0, reachable: false, vpn: null };
+    const body = (await res.json()) as { spec?: { replicas?: number }; status?: { replicas?: number } };
+    const wanted = body.spec?.replicas ?? 0;
+    return {
+      wanted,
+      // status.replicas counts pods that exist; a pod that exists but is not
+      // ready still reads as starting, which is what the button should say.
+      ready: body.status?.replicas ?? 0,
+      reachable: true,
+      // Only worth asking when something is meant to be running. Asking a
+      // stopped workload costs a two-second timeout to learn nothing.
+      vpn: wanted > 0 ? await fetchVpn() : null,
+    };
+  } catch {
+    return { wanted: 0, ready: 0, reachable: false, vpn: null };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** Start or stop it. Returns the state the cluster accepted, or null. */
+export const setTorrentRunning = async (running: boolean): Promise<TorrentState | null> => {
+  const creds = await credentials();
+  if (!creds) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(scaleUrl(creds.server), {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${creds.token}`,
+        // Merge patch rather than strategic: scale is a subresource with one
+        // field worth setting, and a merge patch says exactly that.
+        'Content-Type': 'application/merge-patch+json',
+      },
+      body: JSON.stringify({ spec: { replicas: running ? 1 : 0 } }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { spec?: { replicas?: number }; status?: { replicas?: number } };
+    // No VPN read here: the pod has only just been asked to start and the
+    // tunnel cannot exist yet. The next poll reports it.
+    return { wanted: body.spec?.replicas ?? 0, ready: body.status?.replicas ?? 0, reachable: true, vpn: null };
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
