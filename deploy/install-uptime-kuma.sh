@@ -95,9 +95,25 @@ else
   echo "  Logs:  sudo k3s kubectl -n tailscale logs deploy/operator" >&2
 fi
 
-echo
-echo "First visit asks you to create an admin account. After that:"
-echo "  Settings > Notifications > Setup Notification > Discord, paste the"
-echo "  webhook URL, Test, then tick Default enabled."
-echo
+cat <<'NEXT'
+
+First visit asks you to create an admin account. Then, in this order:
+
+  1. Settings > Notifications > Setup Notification > Discord, paste the
+     webhook URL, Test, then tick "Default enabled". Do this BEFORE adding
+     monitors: "Default enabled" only applies to monitors created after it,
+     and retrofitting it means opening every monitor one at a time.
+
+  2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
+     this repo. One monitor: the 6TB. Both boards boot from their SSD, so a
+     dead SSD is a dead board and the ping already says so — the 6TB is the
+     only disk that can vanish without anything else noticing.
+
+One trap that file exists to avoid: monitors must NOT point at the services'
+.ts.net names. MagicDNS does not resolve inside a pod — that is what the
+hostAliases in k8s/uptime-kuma.yaml work around, and they cover the two boards
+only. The services are checked on their in-cluster names instead, which also
+tests the app rather than the tailnet round trip to it.
+
+NEXT
 echo "Rollback:  sudo k3s kubectl delete -f ${REPO_ROOT}/k8s/uptime-kuma.yaml"
