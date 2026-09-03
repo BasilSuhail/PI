@@ -135,6 +135,23 @@ export interface AppTile {
   nodeId: string | null;
   icon: string | null;
   healthy: boolean | null;
+  /**
+   * A tile the console can switch on and off rather than only open. True for
+   * the download stack, which runs behind a VPN and is meant to be off unless
+   * something is downloading, and for nothing else — the cluster permission
+   * behind the switch names one deployment.
+   */
+  switchable?: boolean;
+}
+
+/** What the cluster says about the switchable workload. */
+export interface TorrentState {
+  /** Replicas asked for: what the switch last set. */
+  wanted: number;
+  /** Replicas that exist. Between the two is starting, or stopping. */
+  ready: number;
+  /** False when the cluster cannot be reached, which is not the same as off. */
+  reachable: boolean;
 }
 
 /**

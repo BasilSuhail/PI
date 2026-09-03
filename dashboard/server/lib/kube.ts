@@ -82,3 +82,86 @@ export const fetchClusterRoles = async (): Promise<Map<string, NodeRole>> => {
     clearTimeout(timer);
   }
 };
+
+/**
+ * The one workload the console can switch on and off: qBittorrent, which runs
+ * behind a VPN and is meant to be off unless something is downloading.
+ *
+ * Scale rather than delete. Zero replicas means nothing running and no RAM
+ * held, while the deployment, its secret and its tailnet name stay exactly as
+ * configured — so starting it again is one integer and not a redeploy.
+ *
+ * The ServiceAccount is allowed `get` and `patch` on this deployment's scale
+ * subresource and nothing else in the cluster (k8s/qbittorrent.yaml). A bug
+ * here cannot reach another workload even if it tried.
+ */
+const TORRENT = { ns: 'jug', name: 'qbittorrent' };
+
+const scaleUrl = (server: string) =>
+  `${server}/apis/apps/v1/namespaces/${TORRENT.ns}/deployments/${TORRENT.name}/scale`;
+
+export interface TorrentState {
+  /** Replicas asked for: what the button last set. */
+  wanted: number;
+  /** Replicas actually up. Between the two is "starting" or "stopping". */
+  ready: number;
+  /** Null when the cluster cannot be reached, which is not the same as off. */
+  reachable: boolean;
+}
+
+export const fetchTorrentState = async (): Promise<TorrentState> => {
+  const creds = await credentials();
+  if (!creds) return { wanted: 0, ready: 0, reachable: false };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(scaleUrl(creds.server), {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    if (!res.ok) return { wanted: 0, ready: 0, reachable: false };
+    const body = (await res.json()) as { spec?: { replicas?: number }; status?: { replicas?: number } };
+    return {
+      wanted: body.spec?.replicas ?? 0,
+      // status.replicas counts pods that exist; a pod that exists but is not
+      // ready still reads as starting, which is what the button should say.
+      ready: body.status?.replicas ?? 0,
+      reachable: true,
+    };
+  } catch {
+    return { wanted: 0, ready: 0, reachable: false };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** Start or stop it. Returns the state the cluster accepted, or null. */
+export const setTorrentRunning = async (running: boolean): Promise<TorrentState | null> => {
+  const creds = await credentials();
+  if (!creds) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(scaleUrl(creds.server), {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${creds.token}`,
+        // Merge patch rather than strategic: scale is a subresource with one
+        // field worth setting, and a merge patch says exactly that.
+        'Content-Type': 'application/merge-patch+json',
+      },
+      body: JSON.stringify({ spec: { replicas: running ? 1 : 0 } }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { spec?: { replicas?: number }; status?: { replicas?: number } };
+    return { wanted: body.spec?.replicas ?? 0, ready: body.status?.replicas ?? 0, reachable: true };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};

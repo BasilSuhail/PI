@@ -624,6 +624,72 @@ stranded mid-card. Each reading also names itself now: `9h 33m` is not
 guessable, and the row had the room.
 
 
+## 12. qBittorrent behind AirVPN
+
+`deploy/install-torrent.sh`. Two containers, one pod, one network namespace.
+
+gluetun brings up WireGuard and owns the routing; qBittorrent has no network
+of its own and uses whatever gluetun has set up. That shared namespace is the
+whole security property — the client cannot be configured around the VPN,
+cannot fall back to the host's connection, and cannot start talking before the
+tunnel exists, because there is no other route for it to take.
+
+It is also why the VPN is **not separately switchable**. A toggle that could
+leave the client running with the tunnel down is exactly the failure this shape
+exists to make impossible, so the two start and stop together.
+
+**Nothing here touches the board's networking.** The WireGuard interface lives
+in the pod's namespace; the Pi's routing table, and tailscaled with it, are in
+a different one and never see it. A host-level VPN would take the default route
+and drop Tailscale — the console, the shares and SSH with it — which is the
+failure this arrangement avoids rather than risks.
+
+**One exception to "everything through the tunnel", and it has to be right.**
+The Tailscale ingress reaches this pod over cluster networking, and the
+killswitch would drop the reply: the deployment comes up healthy and the page
+never loads. `FIREWALL_OUTBOUND_SUBNETS` allows the cluster's own pod and service
+networks to answer directly, and nothing outside them bypasses the VPN. Those
+ranges are read from the live cluster at install time rather than written into
+the manifest: k3s' defaults are only defaults, and a wrong value here does not
+fail loudly — it presents as a healthy pod whose web interface never loads.
+
+**The whole 6TB is mounted, not a folder inside it.** A finished download is
+hard-linked into place, and a hard link cannot cross a mount boundary — two
+mounts would mean copying every completed file, so a 40GB film would cost 80GB
+for as long as it kept seeding.
+
+That wide mount is why **Vaultwarden's data moved to the SSD**. It belonged
+there anyway by the rule the rest of the layout uses — a few megabytes of
+SQLite read at random is the definition of what goes on the fast disk, and it
+sat on the 6TB to be findable rather than because it was big. A torrent client
+with write access to a password vault is a bad trade for a convenience.
+
+### The console's power switch, and what it costs
+
+The workload installs stopped and is meant to be off unless something is
+downloading. Turning it on is a button on its Apps tile, which is the first
+write the console can make against the cluster in the life of this project.
+
+The grant is the smallest thing that can implement it:
+
+| | |
+|---|---|
+| `Role`, not `ClusterRole` | it cannot leave the `jug` namespace |
+| `deployments/scale` | it can set a replica count. It cannot edit the pod spec, read a secret, or exec into anything |
+| `resourceNames` | this one deployment by name. Jellyfin, the vault and the console itself are out of reach |
+
+The subresource is the part doing the work. Write access to a *deployment*
+would be a node compromise waiting to happen — you could add a privileged
+container with the host filesystem mounted. `scale` accepts one integer and
+refuses everything else, so the worst it can do is start or stop a torrent
+client, or ask for an absurd number of replicas on a board that is already
+fully readable to the same process through the agents.
+
+`make torrent-on` and `make torrent-off` throw the same switch from the Mac.
+They exist so the button stays optional: delete the RoleBinding and the console
+loses its only cluster write while both targets keep working.
+
+
 ## Security posture
 
 | | |

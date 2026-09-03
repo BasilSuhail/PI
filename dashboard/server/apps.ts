@@ -26,6 +26,8 @@ interface AppConfig {
   icon?: string;
   /** Skip the probe for services that are not HTTP, e.g. Samba on 445. */
   check?: boolean;
+  /** Show a power switch on the tile. Only the download stack sets this. */
+  switchable?: boolean;
 }
 
 /**
@@ -107,6 +109,7 @@ export const fetchApps = async (): Promise<AppTile[]> => {
       // address to leave for. There is nothing to probe: if the tile is on
       // screen, the thing it opens is already running.
       healthy: app.url.startsWith('#') ? true : app.check === false ? null : await probe(app.url),
+      switchable: app.switchable ?? false,
     })),
   );
 };
