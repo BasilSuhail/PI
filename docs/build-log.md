@@ -317,6 +317,44 @@ column paints immediately with the disks sized, and the archive's number
 arrives when the walk finishes.
 
 
+### `findmnt` answers with rows, not a row
+
+`make automount` failed on jug2 with `umount: /media/bootfs: not mounted`, and
+succeeded on jug while quietly doing none of what it claimed. One cause behind
+both: every call here treated `findmnt` as though it returns a single line
+naming a device. It returns a row per mount, a path can carry more than one,
+and a `systemd` automount unit reports its source as `systemd-1` rather than a
+device.
+
+**The udev rule was invalid.** `findmnt -no SOURCE /boot/firmware` came back
+three rows deep on jug, so the exclusion list was built as a multi-line string
+and the rule went out as:
+
+```
+ENV{DEVNAME}!="/dev/sda2" ENV{DEVNAME}!="/dev/sda1
+/dev/sda1
+/dev/sda1"
+```
+
+udev cannot parse that, so the whole rule was dropped — which means the
+automount rule has not been in force on either board, and the boot-partition
+exclusion it exists to enforce was not enforcing anything.
+
+**The cleanup unmounted nothing, then aborted.** It asked `findmnt -T`, which
+answers for the filesystem *containing* a path rather than the one mounted at
+it. An empty leftover directory under `/media` therefore reported the root
+filesystem, matched the exclusion list, and the script tried to unmount
+something that had never been mounted — fatal under `set -e`, which is jug2's
+error. On jug the directories really were mounted, but the multi-row source
+came back as `systemd-1` first and matched nothing, so the OS partitions stayed
+mounted under `/media`, writable, which is the hazard the cleanup exists to
+remove.
+
+`device_at` now takes the first row naming a device, the cleanup asks whether
+the path *is* a mount point rather than what contains it, and a drive that will
+not unmount is reported rather than fatal — this is opportunistic tidying of an
+old mistake, and it should not be able to end the run.
+
 ### Why `make browse` kept failing on jug2
 
 ```
