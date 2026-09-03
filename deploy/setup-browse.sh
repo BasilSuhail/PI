@@ -312,14 +312,27 @@ if [ -d "$ARCHIVE" ]; then
   fi
 fi
 
-# An earlier version pinned the archive as "archives" by the same trick, and
-# the directory it created at the root of the disk outlived the mount. Remove
-# it, but only while it is empty and not mounted: rmdir refusing a directory
-# with anything in it is the whole safety mechanism.
+# An earlier version pinned the archive as "archives" by this same trick, and
+# that mount is still live on a board that has not been rebuilt since. It sits
+# at the root of the disk, OUTSIDE $BROWSE — the teardown above only walks
+# $BROWSE, so nothing has ever taken it down, and it shows up beside the new
+# "1) Archive" as a second copy of the same 18GB.
+#
+# Unmount it and remove the directory. Safe because it is only ever a bind:
+# the files live at $ARCHIVE and are not touched. Anything that is not a bind
+# of the archive is left exactly where it is.
 for stale in "$BROWSE"/*/archives; do
-  [ -d "$stale" ] || continue
-  mountpoint -q "$stale" && continue
-  sudo rmdir "$stale" 2>/dev/null && echo "  removed the old empty 'archives' pin at ${stale#$BROWSE/}"
+  [ -e "$stale" ] || continue
+  if mountpoint -q "$stale" 2>/dev/null; then
+    stale_src=$(findmnt -no SOURCE --target "$stale" 2>/dev/null | head -1 || true)
+    case "$stale_src" in
+      *"[/${ARCHIVE#/}]"|"$ARCHIVE")
+        sudo umount "$stale" 2>/dev/null || { echo "  old 'archives' pin is busy, leaving it" >&2; continue; }
+        echo "  unmounted the old 'archives' pin at ${stale#"$BROWSE"/}" ;;
+      *) echo "  ${stale#"$BROWSE"/} is not a bind of $ARCHIVE — leaving it alone" >&2; continue ;;
+    esac
+  fi
+  sudo rmdir "$stale" 2>/dev/null && echo "  removed the old 'archives' directory at ${stale#"$BROWSE"/}"
 done
 
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
