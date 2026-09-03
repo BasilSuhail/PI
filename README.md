@@ -15,9 +15,41 @@ not the silicon.
 | `docs/storage.md` | the browse root, the Storage view, and the Samba shares |
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
-| `deploy/` | installs the dashboard as a service on a node |
-| `k8s/` | manifests applied to the cluster — the dashboard, Uptime Kuma, the Tailscale operator |
+| `deploy/` | install scripts run on a board — the dashboard, the services, the disks |
+| `k8s/` | manifests applied to the cluster — the dashboard, Uptime Kuma, Vaultwarden, Jellyfin, Kiwix, the Tailscale operator |
 | `Makefile` | the deploy commands — `make` on its own lists them |
+
+## The disks
+
+Two rules, and everything else follows from them.
+
+**A drive is a folder.** Open a board's share and you see its drives, named for
+what they are. Two disks in pi2 is two folders. Plug a third in and there are
+three. Nothing that is not a drive sits beside them.
+
+```
+pi2/
+├── SSD-1TB/            the 1TB, whole: "1) Archive" first, then the OS
+│   ├── 1) Archive/     apps, databases, backups, keys — your data
+│   ├── bin/ boot/ etc/ usr/ ...
+│   └── srv/
+└── HDD-6TB/            the 6TB
+    ├── Jellyfin/Media/ films and shows
+    ├── Kiwix/          .zim archives
+    └── Downloads/
+```
+
+**The split is by how a file is read, not by what it is called.** Anything read
+at random — settings, databases, caches, artwork — lives on the SSD under
+`1) Archive/Apps/`. Anything you would recognise as a file — films, `.zim`
+archives, downloads — lives on the 6TB. A database is called data and behaves
+like an app: Jellyfin's library index is 50MB and thousands of tiny seeks, and
+on a spinning disk it makes the whole interface feel slow.
+
+`1) Archive` is a directory, not a mount or a shortcut. It sorts first because
+digits sort before letters. Three earlier attempts put it somewhere clever and
+each one made the same files reachable by two paths at once, which is what a
+duplicate is.
 
 Issues carry the planning: [#1](../../issues/1) what fits on one board,
 [#2](../../issues/2) what a single big box would take,
@@ -42,6 +74,26 @@ the board is holding.
 `make agents` if `agent/` changed. `make` lists the rest.
 
 Details and troubleshooting: [`docs/deploy.md`](docs/deploy.md).
+
+## The services
+
+All on pi2, each on its own tailnet name with a real certificate, all reachable
+from a phone. They are tiles in the console's Apps tab, and any of them can be
+installed as its own app from a browser — Safari's File, then Add to Dock.
+
+| | | |
+|---|---|---|
+| Console | `pi2.<tailnet>.ts.net` | the fleet, the files, the launcher |
+| Uptime | `uptime.<tailnet>.ts.net` | `make uptime` |
+| Vault | `vault.<tailnet>.ts.net` | `make vault` |
+| Jellyfin | `jellyfin.<tailnet>.ts.net` | `make media` |
+| Kiwix | `kiwix.<tailnet>.ts.net` | `make media` |
+| qBittorrent | `torrent.<tailnet>.ts.net` | `make torrent` — off by default |
+
+`make media` also moves every app's files into the layout above: settings on the
+SSD under `1) Archive/Apps/`, content on the 6TB. It replaced local-path volumes,
+which put the vault in a directory named after a UUID inside k3s' internals —
+findable by nobody and backed up by nothing.
 
 <details>
 <summary><strong>Storage — one-time setup</strong></summary>
@@ -83,6 +135,21 @@ ssh pi 'sudo apt-get install -y libvips-tools'
 
 ```bash
 ssh pi2 'sudo apt-get install -y libvips-tools'
+```
+
+Then the services, once the Tailscale operator exists — `make uptime` installs
+it and everything after that reuses it:
+
+```bash
+make uptime
+```
+
+```bash
+make vault
+```
+
+```bash
+make media
 ```
 
 Check it worked:
@@ -309,8 +376,84 @@ ssh pi2 'sudo k3s kubectl -n pi rollout restart deployment/vaultwarden'
 **What a JSON export leaves behind:** file attachments, Sends, and password
 history. Everything else, TOTP codes included, comes across.
 
-**There is no backup of this volume.** Worth remembering before anything is
-written here that exists nowhere else.
+**Where it lives.** `1) Archive/Apps/Vaultwarden/` on pi2's SSD — visible in
+Finder, copyable like anything else. It used to be a local-path volume in a
+directory named after a UUID inside k3s' internals, which is a bad place for
+the most important file on the board: you cannot back up what you cannot find.
+
+**There is still no backup of it.** Findable is not the same as backed up.
+Worth remembering before anything is written here that exists nowhere else.
+
+</details>
+
+<details>
+<summary><strong>qBittorrent — downloads, behind AirVPN</strong></summary>
+
+```bash
+make torrent
+```
+
+Installs **stopped**. Two containers in one pod sharing one network namespace:
+gluetun brings up WireGuard and owns the routing, qBittorrent has no network of
+its own. That shared namespace is the whole point — the client cannot be
+configured around the VPN, cannot fall back to the board's connection, and
+cannot send a packet before the tunnel exists, because there is no other route
+for it to take.
+
+It is also why the VPN is not separately switchable. A toggle that could leave
+the client running with the tunnel down is the exact failure this shape makes
+impossible, so the two start and stop together.
+
+**Nothing here touches the board's networking.** The WireGuard interface lives
+in the pod's namespace; the Pi's routing table, and tailscaled with it, are in a
+different one and never see it. A VPN installed on the board itself would take
+the default route and drop Tailscale — the console, the shares and SSH with it.
+
+**Before the first run**, from AirVPN's Client Area:
+
+1. Config Generator, choose WireGuard and a server. You need the `[Interface]`
+   PrivateKey, the `[Peer]` PresharedKey, and the `[Interface]` Address.
+2. Ports, and reserve one. Traffic only reaches the client on a port AirVPN is
+   forwarding; without one it downloads but seeds poorly.
+
+`make torrent` asks for those four and puts them straight into a Secret.
+Nothing is echoed and nothing lands on the board's disk. Eddie is not involved
+— this is a separate device on the same subscription and uses one of the plan's
+connection slots.
+
+**Turning it on.** The console's Apps tab, the qBittorrent tile, the power
+switch on it. Works from a phone; there is no terminal step. The tile shows
+the address traffic is actually leaving from, read from gluetun rather than
+inferred from the pod being up — "running" and "protected" are different
+claims and only the second one matters.
+
+`make torrent-on` and `make torrent-off` do the same from the Mac. They exist
+so the button stays optional: the console's permission to press it is a single
+RoleBinding, and deleting it leaves both commands working.
+
+**What the button can do, and cannot.** The console has been read-only against
+the cluster until this. The grant is a `Role` in one namespace, on
+`deployments/scale`, for one deployment by name. The subresource is the part
+doing the work: write access to a *deployment* would let a compromised console
+add a privileged container with the host filesystem mounted and take the board,
+while `scale` accepts one integer and refuses everything else.
+
+**Where downloads go.** `/data/Downloads` in the client, which is
+`HDD-6TB/Downloads` in Finder. The add-torrent form shows that path and lets
+you change it per torrent — anywhere under `/data`, which is the whole 6TB.
+Incomplete files sit beside the finished ones rather than staging on the SSD,
+so completing a download is a rename inside one filesystem and never a copy.
+
+The whole 6TB is mounted for the same reason: a finished download is
+hard-linked into place, and a hard link cannot cross a mount boundary. Two
+mounts would mean a 40GB film costing 80GB for as long as it kept seeding.
+
+**First login.** qBittorrent 5 does not ship a default password. It generates
+one and prints it to its log:
+
+```bash
+ssh pi2 'sudo k3s kubectl -n pi logs deploy/qbittorrent -c qbittorrent | grep -i password'
+```
 
 </details>
 
@@ -323,18 +466,20 @@ written here that exists nowhere else.
 
 ## Status
 
-k3s running on pi2, with the dashboard on it as a Deployment behind Traefik.
-Agents on both boards. Live over Tailscale.
+k3s on pi2 with the console on it as a Deployment behind Traefik. Agents on
+both boards. Live over Tailscale.
 
-The disks already attached are browsable from the console and mountable in
-Finder — neither waits on the 8TB, which is still blocked on a 12V supply and
-still holds up the archive tier proper.
-
-The Waveshare PCIe SATA HAT sits on pi2 and is confirmed working: an ASMedia
-SATA controller on the PCIe bus with a 6TB storage drive on one port, on its
-own 12V supply. `make sata NODE=pi2` reports the port, the controller, and
+pi2 carries a 1TB SSD and a 6TB HDD on a Waveshare PCIe SATA HAT, on its own
+12V supply. Both appear as folders in Finder and as their own meters on the
+console's node card. `make sata NODE=pi2` reports the port, the controller and
 whether the controller is actually switched on — a hot-plugged drive once left
 it disabled while looking perfectly healthy — without changing anything.
 
-pi has not had the cgroup flag applied, so its `mem_limit`s are unenforced
-and container memory reads blank on the dashboard.
+Jellyfin, Kiwix, Vaultwarden and Uptime Kuma are running, each on its own
+tailnet name, each with its settings on the SSD and its content on the 6TB.
+
+Everything is one disk deep. There is no backup of anything yet, the vault
+included, and that is the next thing worth solving.
+
+pi has not had the cgroup flag applied, so its `mem_limit`s are unenforced and
+container memory reads blank on the console.
