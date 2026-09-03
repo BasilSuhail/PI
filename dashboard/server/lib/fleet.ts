@@ -5,7 +5,7 @@
 
 import type { Capability, FleetNode, ProcessRow } from '../../shared/fleet';
 import { fetchClusterRoles } from './kube';
-import { fetchCpu, fetchDisks, fetchMem, fetchNet, fetchProcesses, fetchSystem } from './glances';
+import { fetchCpu, fetchDisks, fetchMem, fetchNet, fetchProcesses, fetchSystem, parentDisk } from './glances';
 import { fetchCache } from './files';
 import { dialHost } from './dial';
 import { fetchShim } from './shim';
@@ -281,13 +281,6 @@ const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
  */
 
 /** sda2→sda, mmcblk0p1→mmcblk0, nvme0n1p1→nvme0n1. */
-const parentDisk = (dev: string): string => {
-  const mp = dev.match(/^(mmcblk\d+|nvme\d+n\d+)p\d+$/);
-  if (mp) return mp[1];
-  const sd = dev.match(/^((?:sd|vd|xvd|hd)[a-z]+)\d+$/);
-  if (sd) return sd[1];
-  return dev;
-};
 
 const withRotation = (
   disks: DiskStatsValue[],

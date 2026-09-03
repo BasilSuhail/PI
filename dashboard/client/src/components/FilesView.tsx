@@ -7,13 +7,12 @@
  * than a control above them, so moving between machines is the same gesture
  * as opening a folder.
  *
- * A board holds nothing itself, so the second column is the places on it that
- * can hold something: the named roots first — "1) Archive", the one folder
- * that holds data rather than operating system — then the disks. The archive
- * is a sibling of the disks rather than a pin inside one, which is both the
- * shape Finder shows and the reason the sizes add up: a pin appeared twice in
- * the same listing, once as a shortcut and once at its real path, and its
- * bytes were counted both times.
+ * A board holds nothing itself. Everything is on one of its drives, so the
+ * second column is drives and only drives — being "on pi" is not a place a
+ * file could be saved. The archive is a folder inside the drive that holds it,
+ * named to sort first there; it is not a sibling of the drives and it is not a
+ * pin. Partitions are not drives either: the boot partition belongs to the
+ * disk it is on, not to a row of its own.
  *
  * Every entry is shown, dotfiles included. On these boards the answer is
  * usually a dotfile — .cache, .ollama, a stray .venv — and hiding them would
@@ -234,42 +233,30 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
       if (isNodeCol(key)) {
         const board = nodes.find((n) => n.id === node);
+        // The roots call is kept as a reachability check — it is the cheapest
+        // question the agent answers, and a board that cannot answer it should
+        // show an error rather than an empty list of drives. Its answer is no
+        // longer used to build this column: drives come from the fleet poll.
         getRoots(node)
-          .then((res) => {
+          .then(() => {
             const boardDisks = board?.disks ?? [];
             const names = diskNames(boardDisks);
 
-            // A named root that is neither the whole filesystem nor a disk in
-            // its own right: the archive. Listed before the disks, so the
-            // folder holding the data comes before the machinery holding it.
-            const named = res.roots.filter(
-              (r) => r.path !== '/' && !boardDisks.some((d) => d.mount === r.path),
-            );
-
-            const entries: DirEntry[] = [
-              ...named.map((r) => ({
-                name: r.name,
-                dir: true,
-                link: false,
-                // Filled in below. A root is a folder, not a disk, so nothing
-                // in the fleet poll already knows its size.
-                bytes: 0,
-                mtime: 0,
-                hidden: false,
-                path: r.path,
-                locked: !r.writable,
-              })),
-              ...boardDisks.map((d, i) => ({
-                name: names[i],
-                dir: true,
-                link: false,
-                bytes: d.usedBytes,
-                mtime: 0,
-                hidden: false,
-                path: d.mount,
-                capacity: d.totalBytes,
-              })),
-            ];
+            // Drives, and only drives. A board has drives; the archive is a
+            // folder inside the one that holds it, not a sibling of them. An
+            // earlier pass listed named roots here too and put the archive in
+            // the same column as the disks, which is the thing this column
+            // exists to not do.
+            const entries: DirEntry[] = boardDisks.map((d, i) => ({
+              name: names[i],
+              dir: true,
+              link: false,
+              bytes: d.usedBytes,
+              mtime: 0,
+              hidden: false,
+              path: d.mount,
+              capacity: d.totalBytes,
+            }));
             done({
               path: key,
               parent: null,
@@ -280,33 +267,6 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
               entries,
             });
 
-            // Sizing a root means walking it, which is the slow call on this
-            // screen. Off the critical path on purpose: the column paints at
-            // once with the disks already sized, and each root's number lands
-            // when it lands. A failure here leaves the row without a size,
-            // which is the honest thing to show and not worth an error.
-            named.forEach((root) => {
-              getListing(node, root.path)
-                .then((listing) =>
-                  setCells((prev) => {
-                    const cell = prev[slot];
-                    if (!cell?.listing) return prev;
-                    return {
-                      ...prev,
-                      [slot]: {
-                        ...cell,
-                        listing: {
-                          ...cell.listing,
-                          entries: cell.listing.entries.map((e) =>
-                            e.path === root.path ? { ...e, bytes: listing.total } : e,
-                          ),
-                        },
-                      },
-                    };
-                  }),
-                )
-                .catch(() => {});
-            });
           })
           .catch(failed);
       } else {

@@ -268,54 +268,64 @@ and the HAT's activity LED showed green. Every visible symptom pointed at the
 disk or the 12V supply, and both were fine. A reboot restored it;
 `deploy/check-sata-hat.sh` reads that register now.
 
-### One folder for data, disks for everything else
+### One folder per drive
 
-`deploy/setup-browse.sh`. The share and the console both open on the same two
-kinds of thing, and the split is the whole rule:
-
-```
-/srv/browse/
-├── 1) Archive      → bind of /srv/archive. Apps, databases, storage,
-│                     backups, keys. The one folder worth copying somewhere
-│                     else, because copying it takes everything that matters.
-├── SSD-1TB         → bind of /. The OS and the random directories a Linux
-│                     install accumulates. Nothing hidden, just not mixed in.
-└── HDD-6TB         → the 6TB. Every disk added later joins on the same
-                      terms: its own folder at the top.
-```
-
-The leading `1)` is the entire sorting mechanism — digits sort before letters,
-so Finder puts the archive first with no pin, no shortcut and no second copy.
-The console reads the same name from `BROWSE_ROOTS` in the unit file, quoted
-there because systemd splits an unquoted `Environment=` on whitespace and the
-label contains a space. `fstab` carries the space as `\040` for the same
-reason.
-
-**The bug this replaced.** The previous pass bind-mounted `/srv/archive` a
-second time *inside* the disk folder that already contained it, as a pin. That
-made the same bytes reachable by two paths in one listing, and the sizer
-counted both. `/srv` read **60.6GB on a disk holding 27.3GB**:
+`deploy/setup-browse.sh`. The share opens on drives and only drives, the way
+"This PC" does on Windows. A machine has drives, the drives are what you open,
+and anything that is not a drive has no business sitting beside them. Two disks
+in pi2 is two folders; plug in a third and there are three.
 
 ```
-srv 60.6GB  =  archive 18.3  +  browse 42.3
-browse 42.3 =  archives-pin 18.3  +  real srv/archive 18.3  +  ~5.7 OS
+pi2/
+├── SSD-1TB/          <- /            "1) Archive", bin, boot, etc, ...
+├── HDD-6TB/          <- /srv/storage
+└── MY STICK/         <- /media/MY STICK   (only while it is plugged in)
 ```
 
-The root cause was in `subtree_bytes` in the agent, and it outlived the pin.
-It stopped at a device boundary the way `du -x` does — but **a bind mount of a
-filesystem onto itself keeps the same `st_dev`**. `/srv/browse/SSD-1TB` is `/`
-bound at a path inside `/`, so walking the root walked the whole disk a second
-time and the device check never fired. It now reads `/proc/self/mountinfo` and
-refuses to descend into any mount point below the one it started at, which is
-what `du -x` was always meant to mean. The device check stays as a second net
-for anything mounted since the set was last read.
+**The archive is a directory, not a mount.** It lives at `/1) Archive`, at the
+root of the disk, named what it is called. It appears first in that disk's own
+listing because digits sort before letters — no pin, no bind, no shortcut, and
+no special case in the console. `deploy/setup-archive.sh` renames `/srv/archive`
+to it, which on one filesystem is instant and moves no data.
 
-Consequences worth knowing: a disk is counted once, under its own folder, so
-`SSD-1TB` no longer inherits the 6TB's bytes through `/srv/storage`, and the
-archive's size in the console is fetched off the critical path — the board's
-column paints immediately with the disks sized, and the archive's number
-arrives when the walk finishes.
+Three earlier attempts put it somewhere else and each produced a duplicate: a
+pin bound inside the disk folder, then a folder at the top level beside the
+drives, then a bind named "1) Archive" inside the disk. Every one of them made
+the same files reachable by two paths within one drive. A directory cannot do
+that, which is the whole reason for the change.
 
+**Mount propagation was making copies of everything.** systemd leaves `/`
+shared, so `mount --bind / /srv/browse/SSD-1TB` joins the same peer group and
+every mount created under `/` afterwards is copied inside the bind. pi2 had
+grown a full set:
+
+```
+/srv/browse/SSD-1TB/srv/browse/HDD-6TB
+/srv/browse/SSD-1TB/srv/browse/1) Archive
+/srv/browse/SSD-1TB/srv/browse/2) Plugged in
+```
+
+Every disk folder is `--make-rprivate` immediately after it is bound now. A
+drive's folder shows that drive as it was when the tree was built, and nothing
+else.
+
+A drive found only under `/media` is one somebody plugged in, and it gets a
+folder like any other drive, named by its label — `PHOTOS` says more than
+`SSD-32GB`. A disk already seen elsewhere is skipped there, because that mount
+is the OS, or an already-mounted disk, turning up twice.
+
+**The console counts drives the same way.** `fetchDisks` deduplicated by device
+name, so `/dev/sda1` — the 512MB boot partition on the same physical disk as
+`/dev/sda2` — came through as a third drive: "SSD 1TB, HDD 6TB, SSD 1GB" for a
+board with two disks. It keys on the physical disk now, and the board's column
+lists drives and nothing else.
+
+**The sizing bug underneath all of it.** `subtree_bytes` stopped at a device
+boundary the way `du -x` does, and a bind mount of a filesystem onto itself
+keeps the same `st_dev`, so the guard never fired: `/srv/browse/SSD-1TB` is `/`
+bound at a path inside `/`, and walking the root walked the whole disk twice.
+`/srv` read 60.6GB on a disk holding 27.3GB. It reads `/proc/self/mountinfo`
+now and refuses to descend into a mount point below the one it started at.
 
 ### `findmnt` answers with rows, not a row
 

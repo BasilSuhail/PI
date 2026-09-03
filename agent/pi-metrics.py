@@ -43,7 +43,7 @@ def _parse_roots(raw):
 
 
 BROWSE_ROOTS = _parse_roots(
-    os.environ.get("BROWSE_ROOTS", "system=/,1) Archive=/srv/archive")
+    os.environ.get("BROWSE_ROOTS", "system=/,1) Archive=/1) Archive")
 )
 
 # Only these may ever be modified, and only once write endpoints exist. Every
@@ -52,7 +52,7 @@ BROWSE_ROOTS = _parse_roots(
 WRITABLE = tuple(
     os.path.realpath(p)
     for p in os.environ.get(
-        "BROWSE_WRITABLE", "/srv/archive:/srv/browse:/media:/mnt"
+        "BROWSE_WRITABLE", "/1) Archive:/srv/browse:/media:/mnt"
     ).split(":")
     if p
 )

@@ -11,7 +11,8 @@
 # Read the migration note this prints at the end before mounting that disk.
 set -euo pipefail
 
-ARCHIVE="${ARCHIVE:-/srv/archive}"
+ARCHIVE="${ARCHIVE:-/1) Archive}"
+OLD_ARCHIVE="${OLD_ARCHIVE:-/srv/archive}"
 OWNER="${OWNER:-$(id -un)}"
 # Wikipedia alone is ~100GB; refuse to start somewhere that cannot hold it.
 MIN_FREE_GB="${MIN_FREE_GB:-200}"
@@ -28,6 +29,30 @@ fi
 # No subdirectories. The tree used to be seeded with backups/, documents/,
 # photos/ and the rest, which is someone else deciding how you file things.
 # This is your space; make the folders you actually want.
+# The archive used to live at /srv/archive and be shown in the share through a
+# bind mount named "1) Archive". A bind means the same files are reachable by
+# two paths inside one drive, which is where every duplicate in the file views
+# came from — and it needed mount propagation turned off to stay put, which in
+# turn hid it from the console.
+#
+# It is a plain directory at the root of the disk now, named what it is called.
+# Nothing binds it, nothing pins it, and both the share and the console see one
+# folder because there is only one. A rename on the same filesystem: instant,
+# atomic, and no byte of data moves.
+if [ -d "$OLD_ARCHIVE" ] && [ ! -e "$ARCHIVE" ]; then
+  echo "==> Moving $OLD_ARCHIVE -> $ARCHIVE"
+  sudo mv "$OLD_ARCHIVE" "$ARCHIVE"
+elif [ -d "$OLD_ARCHIVE" ] && [ -d "$ARCHIVE" ]; then
+  # Both exist. Never merge them silently — say so and change nothing.
+  if [ -z "$(ls -A "$OLD_ARCHIVE" 2>/dev/null)" ]; then
+    sudo rmdir "$OLD_ARCHIVE" && echo "==> Removed the empty $OLD_ARCHIVE"
+  else
+    echo "Both $OLD_ARCHIVE and $ARCHIVE exist and hold files." >&2
+    echo "Move what you want by hand, then re-run. Nothing was changed." >&2
+    exit 1
+  fi
+fi
+
 echo "==> Creating $ARCHIVE (${free_gb}GB free)"
 sudo mkdir -p "$ARCHIVE"
 sudo chown -R "$OWNER:$(id -gn "$OWNER")" "$ARCHIVE"

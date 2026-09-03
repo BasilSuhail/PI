@@ -102,6 +102,21 @@ export const fetchMem = async (host: string): Promise<MemStats | null> => {
   };
 };
 
+/**
+ * The physical disk a partition belongs to: sda2 -> sda, nvme0n1p3 -> nvme0n1.
+ *
+ * Lives here because the disk list is built here and fleet.ts needs the same
+ * answer for the rotational join. One definition, so the two cannot disagree
+ * about what counts as a disk.
+ */
+export const parentDisk = (dev: string): string => {
+  const mp = dev.match(/^(mmcblk\d+|nvme\d+n\d+)p\d+$/);
+  if (mp) return mp[1];
+  const sd = dev.match(/^((?:sd|vd|xvd|hd)[a-z]+)\d+$/);
+  if (sd) return sd[1];
+  return dev;
+};
+
 export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
   const fs = await get<Array<{
     mnt_point?: string;
@@ -112,22 +127,30 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
   }>>(host, 'fs');
   if (!Array.isArray(fs)) return [];
 
-  // One row per physical device. A bind mount is the same filesystem seen at a
-  // second path, and Glances reports it as a second entry with identical size
-  // and usage — /srv/browse/archive alongside /. Summing those double-counted
-  // every board's capacity, so pi read 937GB when it holds 468.
+  // One row per physical DISK, not per filesystem. Two things collapse here:
   //
-  // The shallowest mount point wins, which is the real one rather than the
-  // bind: / beats /srv/browse/archive.
-  const byDevice = new Map<string, (typeof fs)[number]>();
+  //   A bind mount is the same filesystem seen at a second path, and Glances
+  //   reports it as a second entry with identical size and usage. Summing
+  //   those double-counted every board's capacity — pi read 937GB when it
+  //   holds 468.
+  //
+  //   A partition is not a drive. /dev/sda1 is the 512MB boot partition on the
+  //   same physical disk as /dev/sda2, and keying on the device name let it
+  //   through as a third drive: pi2 showed "SSD 1TB, HDD 6TB, SSD 1GB" for a
+  //   board with two disks in it. A machine has drives; the partitions inside
+  //   one are its business, not a row of their own.
+  //
+  // The shallowest mount point wins, which is the disk's real root rather than
+  // a bind or a partition mounted deeper: / beats /boot/firmware.
+  const byDisk = new Map<string, (typeof fs)[number]>();
   for (const d of fs) {
-    const device = d.device_name ?? '?';
-    const seen = byDevice.get(device);
+    const disk = parentDisk((d.device_name ?? '?').replace(/^\/dev\//, ''));
+    const seen = byDisk.get(disk);
     const depth = (d.mnt_point ?? '').split('/').length;
-    if (!seen || depth < (seen.mnt_point ?? '').split('/').length) byDevice.set(device, d);
+    if (!seen || depth < (seen.mnt_point ?? '').split('/').length) byDisk.set(disk, d);
   }
 
-  return [...byDevice.values()].map((d) => ({
+  return [...byDisk.values()].map((d) => ({
     mount: d.mnt_point ?? '?',
     device: d.device_name ?? '?',
     totalBytes: d.size ?? 0,
