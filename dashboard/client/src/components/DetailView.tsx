@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'preact/hooks';
 import { Alert, Back, Box, Cpu, Disk, List, Mem, Net, Power, Thermo, Wifi } from './icons';
 import type { ContainerRow, FleetNode, ProcessRow } from '../../../shared/fleet';
-import { getContainers, getProcesses } from '../lib/api';
+import { getContainers, getProcesses, usePoll } from '../lib/api';
 import { bytes, bytesPerSec, capacity, cpuTone, diskTone, pct, uptime } from '../lib/format';
 import { Meter, PanelTitle, Sparkline, StatusDot } from './primitives';
 
@@ -17,27 +17,28 @@ export const DetailView = ({
   onBack: () => void;
 }) => {
   const [sort, setSort] = useState<Sort>('cpu');
-  const [processes, setProcesses] = useState<ProcessRow[]>([]);
-  const [containers, setContainers] = useState<ContainerRow[]>([]);
 
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const [p, c] = await Promise.all([
-        getProcesses(node.id).catch(() => []),
-        getContainers(node.id).catch(() => []),
-      ]);
-      if (!alive) return;
-      setProcesses(p);
-      setContainers(c);
-    };
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [node.id]);
+  /**
+   * The same chained poll the rest of the console uses, rather than a bare
+   * setInterval.
+   *
+   * An interval fires whether or not the previous request came back. A process
+   * list from jug during an ingest burst can take seconds — the Glances client
+   * allows six of them — so a five second interval stacked requests on the one
+   * board least able to absorb them, and each one made the next slower. usePoll
+   * waits for the answer before scheduling the next ask.
+   */
+  const detail = usePoll(
+    async () =>
+      Promise.all([
+        getProcesses(node.id).catch(() => [] as ProcessRow[]),
+        getContainers(node.id).catch(() => [] as ContainerRow[]),
+      ]),
+    5000,
+    [node.id],
+  );
+
+  const [processes, containers] = detail.data ?? [[] as ProcessRow[], [] as ContainerRow[]];
 
   const sorted = [...processes].sort((a, b) =>
     sort === 'cpu' ? (b.cpuPct ?? -1) - (a.cpuPct ?? -1) : b.memBytes - a.memBytes,

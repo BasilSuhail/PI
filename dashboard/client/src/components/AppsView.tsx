@@ -52,14 +52,18 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
         {apps.map((app, i) => (
           <a
             class="app-tile"
-            href={app.healthy ? app.url : undefined}
+            // healthy === null means the tile asked not to be probed, which is
+            // not the same as failing one. Only a tile that actually answered
+            // false is held shut; an unprobed one opens like any other, since
+            // nothing here knows whether it is up.
+            href={app.healthy === false ? undefined : app.url}
             target={isInternal(app.url) ? undefined : '_blank'}
             rel="noreferrer"
             onClick={(e) => {
               if (isInternal(app.url)) {
                 e.preventDefault();
                 onOpenView(app.url.slice(1));
-              } else if (!app.healthy) {
+              } else if (app.healthy === false) {
                 e.preventDefault();
               }
             }}

@@ -11,9 +11,10 @@ Convention: `jug1` is the 8GB board, `jug2` the 16GB board. Names follow the sto
 | | jug1 | jug2 |
 |---|---|---|
 | RAM | 8GB | 16GB |
-| Boot | SD card, `/boot/firmware` only — must stay in the slot | 1TB SSD |
-| Root | 512GB SATA SSD on Waveshare PCIe HAT | same 1TB SSD |
-| Bulk | 8TB HDD — **blocked on 12V** | — |
+| Boot | SD card, `/boot/firmware` only — must stay in the slot | its own SSD |
+| Root | its own 512GB SSD | 1TB SSD — apps, and the faster small backups |
+| Expansion | none | Waveshare PCIe SATA HAT — ASMedia ASM106x, one port in use |
+| Bulk | — | 6TB HDD (ST6000VX009) on the HAT, 12V barrel fitted — plain storage, not the archive |
 | LAN | see `~/.ssh/config` on the Mac | same |
 | OS | Debian 13 trixie, aarch64, 4 cores | same |
 | Runs | OSINT stack (Docker Compose), `llama-server` | k3s server |
@@ -253,10 +254,24 @@ copy to the new disk mounted elsewhere, verify, then swap and delete. It also
 refuses to run anywhere with less than 200GB free, since Wikipedia alone would
 not fit.
 
-Placement was decided by measurement rather than by which board has the SATA
-HAT. jug1 sustains ~350% of a core during ingest bursts against a load average
-of 4.33 on four cores; jug2 idles at 1.6% with load 0.038. Reads for Jellyfin
-and Samba belong on the board that has cycles to serve them.
+Placement was decided by measurement, before the SATA HAT moved. jug1 sustains
+~350% of a core during ingest bursts against a load average of 4.33 on four
+cores; jug2 idles at 1.6% with load 0.038. Reads for Jellyfin and Samba belong
+on the board that has cycles to serve them.
+
+The hardware has since agreed with the measurement. The Waveshare PCIe SATA HAT
+came off jug1 and went onto jug2, so the board that will hold the bulk disks is
+also the board with the cycles to serve them. Each board still boots and roots
+from a single SSD of its own; nothing is attached to the HAT's spare ports yet.
+
+The 6TB's first hot-plug left the controller disabled, and the symptom was
+misleading enough to be worth recording. Connecting a powered drive glitched
+the PCIe link; the kernel recovered it, and the controller came back with its
+COMMAND register at `0x0000` — memory decoding off, so every hardware register
+read `0xffffffff` and no disk could be detected while the drive spun happily
+and the HAT's activity LED showed green. Every visible symptom pointed at the
+disk or the 12V supply, and both were fine. A reboot restored it;
+`deploy/check-sata-hat.sh` reads that register now.
 
 ## Security posture
 
@@ -276,7 +291,10 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 
 ## Open
 
-- [ ] **12V supply for the 8TB.** £15–25. No longer blocks the archive tier: `/srv/archive` lives on jug2's spare 873GB and the disk swaps in underneath later, per the migration `deploy/setup-archive.sh` prints. Still blocks the archive being an archive — one drive holding the only copy is a countdown.
+- [x] **12V supply.** A 12V 3A barrel is fitted and working: the drive spins up and the SATA link trains at 6.0 Gbps, which no dead or wrong-polarity supply would allow. Never metered — proven by the disk instead, which is the test that matters. Comfortable for one 3.5" drive, marginal for two.
+- [x] **Confirm the SATA HAT enumerates on jug2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`. jug2's own 1TB SSD is on `host0`, not on the HAT. Both ports were free at that check; `link1` now carries the 6TB at 6.0 Gbps.
+- [x] **Mount the 6TB as plain storage.** Done, live: formatted ext4 and mounted at `/srv/storage` on a `nofail` fstab line of its own — the documented "mount it anywhere, by UUID" route, fixed rather than plug-in. `/srv/archive` never moved in the end: a half-run migration was undone folder by folder, and the SSD's original is the copy in place. The copy the detour left on the 6TB is just files, deletable whenever. Disk naming — `SSD 1TB` / `HDD 6TB` in the console and Finder alike — lands with this PR: the agent reports whether a disk spins, and both the Files view and `setup-browse.sh` name from that plus the sold-as size.
+- [ ] **Run `make automount` after this merge.** The rule was mounting each board's own root and boot partitions under `/media` at every boot — writable, through the console's file browser. Fixed in the repo by excluding them by device and PARTUUID; both boards need the re-run to pick up the rule and to unmount the two self-mounts jug2 is carrying right now.
 - [ ] **cgroup flag on jug1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the Fritz!Box.

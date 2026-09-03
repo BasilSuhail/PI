@@ -1,19 +1,24 @@
 import { useMemo, useState } from 'preact/hooks';
-import type { AppTile } from '../../shared/fleet';
 import { AppsView } from './components/AppsView';
 import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView, type SortKey, SORT_COLUMNS } from './components/FleetView';
 import { Alert, Box, Grid, Moon, Refresh, Sun, Wifi } from './components/icons';
-import { getCredentials, getNodes, useHistory, usePoll } from './lib/api';
+import { getApps, getCredentials, getNodes, useHistory, usePoll } from './lib/api';
 import { relative } from './lib/format';
 
 const POLL_MS = 3000;
 
-const fetchApps = async (): Promise<AppTile[]> => {
-  const res = await fetch('/api/apps', { cache: 'no-store' });
-  return res.ok ? ((await res.json()) as AppTile[]) : [];
-};
+type View = 'fleet' | 'detail' | 'apps' | 'files';
+
+/**
+ * A tile's `#name` is config, so it is checked against the views that exist
+ * rather than cast. A typo in apps.json used to switch to a view nothing
+ * renders, leaving the page blank with no way back but the toolbar.
+ */
+const VIEWS: View[] = ['fleet', 'detail', 'apps', 'files'];
+const asView = (name: string): View | null =>
+  (VIEWS as string[]).includes(name) ? (name as View) : null;
 
 const isDark = () =>
   document.documentElement.dataset.theme
@@ -21,13 +26,13 @@ const isDark = () =>
     : matchMedia('(prefers-color-scheme: dark)').matches;
 
 export default function App() {
-  const [view, setView] = useState<'fleet' | 'detail' | 'apps' | 'files'>('fleet');
+  const [view, setView] = useState<View>('fleet');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>('cpuPct');
   const [spin, setSpin] = useState(false);
 
   const fleet = usePoll(getNodes, POLL_MS);
-  const apps = usePoll(fetchApps, 15_000);
+  const apps = usePoll(getApps, 15_000);
   // Read from the environment and measured in days, so polling it at the fleet
   // rate would be a request a minute for a number that moves once a day.
   const creds = usePoll(getCredentials, 300_000);
@@ -113,7 +118,15 @@ export default function App() {
         {view === 'fleet' && fleet.data && (
           <FleetView nodes={nodes} sort={sort} credentials={creds.data ?? []} onOpen={openDetail} />
         )}
-        {view === 'apps' && <AppsView apps={apps.data ?? []} onOpenView={(next) => setView(next as 'files')} />}
+        {view === 'apps' && (
+          <AppsView
+            apps={apps.data ?? []}
+            onOpenView={(next) => {
+              const target = asView(next);
+              if (target) setView(target);
+            }}
+          />
+        )}
         {view === 'files' && <FilesView nodes={nodes} />}
         {view === 'detail' && selected && (
           <DetailView node={selected} history={history.get(selected.id) ?? []} onBack={() => setView('fleet')} />

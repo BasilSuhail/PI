@@ -218,16 +218,45 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
   return false;
 };
 
+const statOrNull = async (file: string) => {
+  try {
+    return await stat(file);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Vite writes a content hash into every filename under assets/, so those can be
+ * held forever: changing one produces a different name. Nothing else in the
+ * bundle is hashed. The icons and tile artwork are copied verbatim out of
+ * public/ and keep their names across builds, so serving them immutable for a
+ * year meant revised artwork could never reach a browser that had already
+ * loaded the old file — which is exactly what happened when the Uptime and
+ * Vault tiles were redrawn.
+ */
+const isHashed = (relative: string) => relative.startsWith('/assets/');
+
+const cacheControl = (file: string): string => {
+  const relative = file.slice(STATIC_DIR.length);
+  if (relative.endsWith('index.html')) return 'no-store';
+  return isHashed(relative) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600';
+};
+
 const serveStatic = async (req: IncomingMessage, pathname: string, res: ServerResponse) => {
   // normalize() collapses any ../ before it can escape the static directory.
   const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   let file = join(STATIC_DIR, rel === '/' ? 'index.html' : rel);
 
-  try {
-    if ((await stat(file)).isDirectory()) file = join(file, 'index.html');
-  } catch {
+  let info = await statOrNull(file);
+  if (info?.isDirectory()) {
+    file = join(file, 'index.html');
+    info = await statOrNull(file);
+  }
+  if (!info) {
     // Single-page app: unknown paths fall back to the shell.
     file = join(STATIC_DIR, 'index.html');
+    info = await statOrNull(file);
   }
 
   if (!file.startsWith(STATIC_DIR)) {
@@ -235,9 +264,7 @@ const serveStatic = async (req: IncomingMessage, pathname: string, res: ServerRe
     return;
   }
 
-  try {
-    await stat(file);
-  } catch {
+  if (!info) {
     res.writeHead(404).end('not found');
     return;
   }
@@ -245,10 +272,10 @@ const serveStatic = async (req: IncomingMessage, pathname: string, res: ServerRe
   const type = MIME[extname(file)] ?? 'application/octet-stream';
   const head: Record<string, string> = {
     'Content-Type': type,
-    'Cache-Control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable',
+    'Cache-Control': cacheControl(file),
   };
 
-  const { size } = await stat(file);
+  const { size } = info;
   const gzip = COMPRESSIBLE.test(type) && size >= GZIP_MIN && acceptsGzip(req);
   if (gzip) {
     head['Content-Encoding'] = 'gzip';

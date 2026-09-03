@@ -337,9 +337,6 @@ export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessR
     .slice(0, limit);
 };
 
-export const isReachable = async (host: string): Promise<boolean> =>
-  (await get<unknown>(host, 'now')) !== null;
-
 const round = (n: number) => Math.round(n * 10) / 10;
 
 /** Glances reads the Docker socket itself, so container stats need no extra agent. */

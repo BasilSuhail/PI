@@ -31,6 +31,3 @@ const mine = new Set<string>(
 );
 
 export const dialHost = (ip: string): string => (mine.has(ip) ? '127.0.0.1' : ip);
-
-/** Only for a log line at startup, so the substitution is visible. */
-export const localAddresses = (): string[] => [...mine];
