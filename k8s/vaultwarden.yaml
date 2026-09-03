@@ -91,16 +91,30 @@ spec:
             # copying it out is a sudo job. Visible and findable, which is the
             # thing it was not before; not yet hand-manageable.
       volumes:
+  # A note on `type: Directory` below, which is doing real work.
+  #
+  # The alternative, DirectoryOrCreate, is the default reflex and it is wrong for
+  # a disk that can go away. With the 6TB unmounted, /srv/storage still exists —
+  # it is the mount point, an empty directory on the boot disk. DirectoryOrCreate
+  # would create the app's folders inside it, the app would start, find no
+  # database, and cheerfully build a new one on the boot SSD. Mount the 6TB again
+  # and the real data reappears underneath, with the app now pointed at a second
+  # copy it made while the disk was missing.
+  #
+  # Directory refuses. The app's subdirectory only exists when the disk is
+  # mounted, so an unmounted disk means the pod stops at ContainerCreating with
+  # the missing path named in its events. Loud and harmless, instead of quiet and
+  # not.
         # SSD, under the archive: what the app is.
         - name: config
           hostPath:
             path: __APPS_DIR__/Vaultwarden
-            type: DirectoryOrCreate
+            type: Directory
         # 6TB: the vault database and its attachments.
         - name: data
           hostPath:
             path: __DATA_DIR__/Vaultwarden
-            type: DirectoryOrCreate
+            type: Directory
 ---
 apiVersion: v1
 kind: Service

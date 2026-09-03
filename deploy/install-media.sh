@@ -79,6 +79,25 @@ if [ ! -d "$DATA_DIR" ]; then
   exit 1
 fi
 
+# Existing is not the same as mounted. A mount point is a real directory on the
+# boot disk when nothing is mounted on it, so "the folder is there" proves
+# nothing — and creating the app folders inside an unmounted mount point is
+# exactly how the whole media library ends up on the boot SSD, invisible, until
+# the disk is mounted over the top of it.
+if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
+  echo >&2
+  echo "  WARNING: $DATA_DIR is not a mount point." >&2
+  echo "  Nothing is mounted there, so this is space on the boot disk." >&2
+  echo "  If you meant the 6TB, stop now and check: findmnt $DATA_DIR" >&2
+  echo >&2
+  printf "  Continue anyway? [y/N] " >&2
+  read -r reply
+  case "$reply" in
+    [yY]) echo "  Continuing on the boot disk." >&2 ;;
+    *) echo "  Stopped. Nothing was changed." >&2; exit 1 ;;
+  esac
+fi
+
 echo "==> Creating the folders"
 for app in "${APPS[@]}"; do
   sudo mkdir -p "$APPS_DIR/$app" "$DATA_DIR/$app"

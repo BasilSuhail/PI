@@ -103,6 +103,20 @@ spec:
               # than a missing capability.
               add: ["SETGID", "SETUID", "NET_RAW"]
       volumes:
+  # A note on `type: Directory` below, which is doing real work.
+  #
+  # The alternative, DirectoryOrCreate, is the default reflex and it is wrong for
+  # a disk that can go away. With the 6TB unmounted, /srv/storage still exists —
+  # it is the mount point, an empty directory on the boot disk. DirectoryOrCreate
+  # would create the app's folders inside it, the app would start, find no
+  # database, and cheerfully build a new one on the boot SSD. Mount the 6TB again
+  # and the real data reappears underneath, with the app now pointed at a second
+  # copy it made while the disk was missing.
+  #
+  # Directory refuses. The app's subdirectory only exists when the disk is
+  # mounted, so an unmounted disk means the pod stops at ContainerCreating with
+  # the missing path named in its events. Loud and harmless, instead of quiet and
+  # not.
         # Kuma keeps its config and its heartbeat database in one directory
         # and cannot be told to split them, so the whole of /app/data is the
         # data half. What lands on the SSD is a marker naming where it went,
@@ -110,7 +124,7 @@ spec:
         - name: data
           hostPath:
             path: __DATA_DIR__/Uptime
-            type: DirectoryOrCreate
+            type: Directory
 ---
 apiVersion: v1
 kind: Service
