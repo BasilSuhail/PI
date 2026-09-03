@@ -34,6 +34,64 @@ const offlineNode = (device: TailnetDevice, ip: string | null): FleetNode => ({
   topProcesses: [],
 });
 
+/**
+ * The last answer a board gave, so one missed poll does not blank its card.
+ *
+ * jug runs a model that holds its cores flat out, and Glances gets starved
+ * enough that a fetch occasionally passes the six second timeout. Every fetch
+ * that misses returns nothing, so the card rendered empty for a poll and came
+ * back on the next one. The board was up throughout; the console simply had
+ * nothing to say that second and said it loudly.
+ *
+ * Only a poll that got both CPU and memory is remembered, and a remembered
+ * answer is served for at most this long. A board that is genuinely gone
+ * therefore empties its card after half a minute rather than showing a
+ * comfortable number forever.
+ */
+const RETAIN_MS = 30_000;
+
+interface Probe {
+  cpu: Awaited<ReturnType<typeof fetchCpu>>;
+  mem: Awaited<ReturnType<typeof fetchMem>>;
+  shim: Awaited<ReturnType<typeof fetchShim>>;
+  system: Awaited<ReturnType<typeof fetchSystem>>;
+  disks: Awaited<ReturnType<typeof fetchDisks>>;
+  net: Awaited<ReturnType<typeof fetchNet>>;
+  topProcesses: Awaited<ReturnType<typeof fetchProcesses>>;
+}
+
+const lastGood = new Map<string, { at: number; probe: Probe }>();
+
+/**
+ * Fills gaps in this poll from the last good one, and says whether it had to.
+ *
+ * An empty list means the fetch failed rather than that the board has no disks
+ * or no processes, so those fall back too.
+ */
+const withLastGood = (id: string, fresh: Probe, now: number): { probe: Probe; stale: boolean } => {
+  // CPU and memory are the signals the card is built around. A poll that got
+  // both is a real reading worth remembering; anything less is a gap to fill.
+  if (fresh.cpu && fresh.mem) {
+    lastGood.set(id, { at: now, probe: fresh });
+    return { probe: fresh, stale: false };
+  }
+
+  const held = lastGood.get(id);
+  if (!held || now - held.at >= RETAIN_MS) return { probe: fresh, stale: false };
+
+  const prev = held.probe;
+  const probe: Probe = {
+    cpu: fresh.cpu ?? prev.cpu,
+    mem: fresh.mem ?? prev.mem,
+    shim: fresh.shim ?? prev.shim,
+    system: fresh.system.uptimeSec == null && fresh.system.os == null ? prev.system : fresh.system,
+    disks: fresh.disks.length ? fresh.disks : prev.disks,
+    net: fresh.net.length ? fresh.net : prev.net,
+    topProcesses: fresh.topProcesses.length ? fresh.topProcesses : prev.topProcesses,
+  };
+  return { probe, stale: true };
+};
+
 const buildNode = async (
   device: TailnetDevice,
   roles: Map<string, NodeRoleValue>,
@@ -58,10 +116,19 @@ const buildNode = async (
     fetchCache(host).catch(() => null),
   ]);
 
+  // A saturated board answers some of that and not the rest. Fill the gaps
+  // from the last poll that worked, rather than rendering a card of blanks
+  // about a machine that is plainly up.
+  const { probe, stale } = withLastGood(
+    device.id,
+    { cpu, mem, shim, system, disks, net, topProcesses },
+    Date.now(),
+  );
+
   // On the tailnet but nothing answered — agents are missing or down. That is
   // distinct from the machine being off, so it carries an error rather than
   // silently reading as offline.
-  if (!cpu && !mem && !shim) {
+  if (!probe.cpu && !probe.mem && !probe.shim) {
     return {
       ...offlineNode(device, ip),
       online: true,
@@ -71,30 +138,31 @@ const buildNode = async (
   }
 
   const capabilities: Capability[] = [];
-  if (shim?.power) capabilities.push('power');
-  if (shim?.throttled) capabilities.push('throttle');
+  if (probe.shim?.power) capabilities.push('power');
+  if (probe.shim?.throttled) capabilities.push('throttle');
 
   return {
     id: device.id,
     name: device.name,
     tailscaleIp: ip,
     online: true,
+    stale,
     lastSeen: device.lastSeen,
     role: roleFor(device, roles),
-    model: shim?.model ?? null,
-    os: system.os,
-    arch: system.arch,
-    kernel: system.kernel,
-    uptimeSec: system.uptimeSec,
-    cpu,
-    mem,
-    temp: { cpuC: shim?.tempC ?? null, throttled: shim?.throttled ?? null },
-    power: shim?.power ?? null,
-    disks,
+    model: probe.shim?.model ?? null,
+    os: probe.system.os,
+    arch: probe.system.arch,
+    kernel: probe.system.kernel,
+    uptimeSec: probe.system.uptimeSec,
+    cpu: probe.cpu,
+    mem: probe.mem,
+    temp: { cpuC: probe.shim?.tempC ?? null, throttled: probe.shim?.throttled ?? null },
+    power: probe.shim?.power ?? null,
+    disks: probe.disks,
     cache,
-    net,
+    net: probe.net,
     capabilities,
-    topProcesses: topBySortableMetric(topProcesses),
+    topProcesses: topBySortableMetric(probe.topProcesses),
   };
 };
 
