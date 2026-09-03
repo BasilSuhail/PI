@@ -10,9 +10,12 @@ SHIM_PORT=9101
 #
 # This is its background loop, not the request rate: it rebuilds every enabled
 # plugin on this timer whether or not anyone is asking. On jug1 that means a
-# 189-process list plus a Docker stats call for six containers, and jug1 has no
-# CPU to spare — measured at load 8.77 on four cores, with `llama-server`
-# holding three of them.
+# 189-process list plus a Docker stats call for six containers.
+#
+# Do not oversell what this saves. Glances costs about 0.4% of one core on jug1,
+# measured over a 50 second window against the board's own clock, which agrees
+# with the 0.54% recorded in issue #1. The reason to do it is that the work is
+# needless, not that the board is drowning in it.
 #
 # Five rather than the two it used to be. The console polls every three seconds
 # and now holds its own answer for 2.5, so nothing downstream can tell the
