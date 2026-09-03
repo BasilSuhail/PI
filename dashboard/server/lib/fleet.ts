@@ -274,17 +274,30 @@ const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
  * Names a disk by what it is.
  *
  * The shim reports whether each block device spins; Glances reports where each
- * filesystem is mounted. Joined on the device basename ("/dev/sda" -> "sda"),
- * a mount point can carry the fact that its disk is an HDD — which is what
- * lets the card and the Finder tree both say "HDD 6TB" about a disk Glances
- * only knows as /dev/sdb1 mounted at /srv/storage.
+ * filesystem is mounted. The two name devices differently — the shim says
+ * "sda" (the physical disk), Glances says "/dev/sda2" (the partition) — so the
+ * join has to strip both the /dev/ prefix and the partition suffix to match
+ * them. Without that, every disk reads "disk" instead of "SSD" or "HDD".
  */
+
+/** sda2→sda, mmcblk0p1→mmcblk0, nvme0n1p1→nvme0n1. */
+const parentDisk = (dev: string): string => {
+  const mp = dev.match(/^(mmcblk\d+|nvme\d+n\d+)p\d+$/);
+  if (mp) return mp[1];
+  const sd = dev.match(/^((?:sd|vd|xvd|hd)[a-z]+)\d+$/);
+  if (sd) return sd[1];
+  return dev;
+};
+
 const withRotation = (
   disks: DiskStatsValue[],
   shim: Awaited<ReturnType<typeof fetchShim>>,
 ): DiskStatsValue[] => {
   const spins = new Map((shim?.disks ?? []).map((d) => [d.device, d.rotational]));
-  return disks.map((d) => ({ ...d, rotational: spins.get(d.device.replace(/^\/dev\//, '')) ?? null }));
+  return disks.map((d) => ({
+    ...d,
+    rotational: spins.get(parentDisk(d.device.replace(/^\/dev\//, ''))) ?? null,
+  }));
 };
 
 type DiskStatsValue = FleetNode['disks'][number];

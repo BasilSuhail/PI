@@ -266,6 +266,18 @@ def read_disks():
                 rotational = f.read().strip() == "1"
         except (OSError, ValueError):
             continue
+        # USB-SATA bridges do not pass through the rotational flag; the
+        # kernel defaults to 1 (spinning) for every USB disk, which makes
+        # a Pi's boot SSD read "HDD". If the sysfs device path walks
+        # through a USB controller, override: nobody puts a spinning disk
+        # behind USB on these boards.
+        if rotational:
+            try:
+                real = os.path.realpath(base + "/device")
+                if "usb" in real.lower():
+                    rotational = False
+            except OSError:
+                pass
         model = None
         for model_path in (base + "/device/model", base + "/device/name"):
             try:
