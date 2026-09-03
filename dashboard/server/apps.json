@@ -1,6 +1,38 @@
 [
-  { "name": "OSINT", "url": "https://pi.<tailnet>.ts.net/", "nodeId": "pi", "icon": "/app-icons/osint.png" },
-  { "name": "OSINT News", "url": "https://pi.<tailnet>.ts.net/news", "nodeId": "pi", "icon": "/app-icons/osint-news.png" },
-  { "name": "OSINT API", "url": "https://pi.<tailnet>.ts.net/api/docs", "nodeId": "pi", "icon": "/app-icons/osint-api.png" },
-  { "name": "Files", "url": "#files", "nodeId": null, "icon": "/app-icons/files.png" }
+  {
+    "name": "OSINT",
+    "url": "https://pi.<tailnet>.ts.net/",
+    "nodeId": "pi",
+    "icon": "/app-icons/osint.png"
+  },
+  {
+    "name": "OSINT News",
+    "url": "https://pi.<tailnet>.ts.net/news",
+    "nodeId": "pi",
+    "icon": "/app-icons/osint-news.png"
+  },
+  {
+    "name": "OSINT API",
+    "url": "https://pi.<tailnet>.ts.net/api/docs",
+    "nodeId": "pi",
+    "icon": "/app-icons/osint-api.png"
+  },
+  {
+    "name": "Uptime",
+    "url": "https://uptime.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/uptime.svg"
+  },
+  {
+    "name": "Vault",
+    "url": "https://vault.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/vault.svg"
+  },
+  {
+    "name": "Files",
+    "url": "#files",
+    "nodeId": null,
+    "icon": "/app-icons/files.png"
+  }
 ]
