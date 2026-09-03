@@ -28,7 +28,25 @@ interface RawDevice {
   addresses: string[];
   lastSeen: string;
   os: string;
+  /** Absent on an ordinary machine; present on anything the operator made. */
+  tags?: string[];
 }
+
+/**
+ * Tags carried by machines the Tailscale Kubernetes operator registers.
+ *
+ * The operator tags itself tag:k8s-operator and every proxy it creates
+ * tag:k8s. Those are Linux devices on the tailnet with no agent on them, so
+ * without this they arrive as boards that answer nothing, and the fleet reads
+ * "2/4 online" while both real boards are fine.
+ *
+ * Tags rather than names, so a service added later is excluded the day it
+ * appears rather than after someone notices a fourth broken card.
+ */
+const INFRA_TAGS = new Set(['tag:k8s', 'tag:k8s-operator']);
+
+const isClusterInfra = (tags: string[] | undefined): boolean =>
+  (tags ?? []).some((t) => INFRA_TAGS.has(t));
 
 /** Tailscale reports lastSeen but not a live flag for every device type. */
 const ONLINE_WINDOW_MS = 5 * 60 * 1000;
@@ -65,6 +83,7 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
     Online: boolean;
     LastSeen: string;
     OS: string;
+    Tags?: string[];
   }
 
   try {
@@ -72,7 +91,7 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
     const peers = [...Object.values(status.Peer ?? {}), ...(status.Self ? [status.Self] : [])];
 
     return peers
-      .filter((p) => p.OS === 'linux')
+      .filter((p) => p.OS === 'linux' && !isClusterInfra(p.Tags))
       .map((p) => ({
         id: p.ID,
         name: p.HostName || p.DNSName.split('.')[0],
@@ -155,8 +174,9 @@ const discoverDevices = async (): Promise<TailnetDevice[]> => {
     const now = Date.now();
 
     return devices
-      // Only Linux nodes run the agents. Phones and laptops are viewers.
-      .filter((d) => d.os === 'linux')
+      // Only Linux nodes run the agents. Phones and laptops are viewers, and
+      // the operator's own machines are plumbing rather than boards.
+      .filter((d) => d.os === 'linux' && !isClusterInfra(d.tags))
       .map((d) => ({
         id: d.id,
         name: d.hostname || d.name.split('.')[0],
