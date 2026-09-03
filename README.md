@@ -269,6 +269,51 @@ on port 61208, the console itself, and the shim on 9101.
 
 </details>
 
+<details>
+<summary><strong>Vaultwarden — a copy of the password vault</strong></summary>
+
+```bash
+make vault
+```
+
+Needs `make uptime` first, which installs the Tailscale operator this uses to
+get a name of its own. Lands at `https://vault.<tailnet>.ts.net`, roughly
+40 MB.
+
+**What this is, and is not.** Bitwarden's own service stays the source of
+truth and is not touched. This holds a copy, imported once and left alone.
+Nothing syncs between them, so the copy drifts the moment a password changes
+in one and not the other.
+
+A Bitwarden client points at one server at a time, so the two do not fight:
+keep the browser extension and desktop app on bitwarden.com as they are, and
+use Vaultwarden through its own web page.
+
+**After the deploy, in this order:**
+
+1. Open the URL and create an account. Use a different master password: this
+   is not the vault you already have.
+2. In Bitwarden, Tools, Export vault, format `.json`. Here, Tools, Import
+   data, "Bitwarden (json)". Delete the export afterwards, it is plain text.
+3. Close registration:
+
+```bash
+ssh pi2 'sudo k3s kubectl -n pi patch configmap vaultwarden-config \
+  --type merge -p "{\"data\":{\"SIGNUPS_ALLOWED\":\"false\"}}"'
+```
+
+```bash
+ssh pi2 'sudo k3s kubectl -n pi rollout restart deployment/vaultwarden'
+```
+
+**What a JSON export leaves behind:** file attachments, Sends, and password
+history. Everything else, TOTP codes included, comes across.
+
+**There is no backup of this volume.** Worth remembering before anything is
+written here that exists nowhere else.
+
+</details>
+
 ## Scope
 
 - **Kubernetes** — k3s on ARM, and where an orchestrator is not worth it
