@@ -588,6 +588,42 @@ The Discord notification is deliberately not in that file. It is a webhook URL,
 which is a credential, and the import assumes it is notification id 1 — the
 first one set up, which it will be on a fresh install.
 
+### The node card, one row per drive
+
+`FleetView.tsx` and the meter block in `index.css`.
+
+The card showed a single `DISK` bar for the filesystem the board booted from,
+which was true of jug and a lie about jug2 the moment the 6TB arrived. Every
+drive gets a row now, named for what it is — `SSD1`, `HDD1`, `SD1` — numbered
+per kind, because the number answers "which of these" and there is no useful
+ordering between an SSD and a spinning disk to encode. Deliberately shorter
+than the Files view's names: there the question is which drive you are opening
+and "SSD 1TB" answers it, here the name sits in a 46px column beside a meter
+and the capacity is already on the row.
+
+The figure is used and total rather than a percentage. `27 GB / 917 GB` answers
+both how full and how big; the meter carries the proportion on its own.
+
+**Rows share a left edge and a right edge, and the meter takes what is left.**
+So a row reading `27 GB / 917 GB` gets a shorter bar than one reading `5%`, and
+the ragged bar ends are the figures saying how much they had to say. Fixed
+columns would have to be as wide as the longest figure on any board, spending
+that room on every row that does not need it.
+
+Swap and the thumbnail cache keep sharing one line — neither is a drive, and
+two halves cost one row where two rows cost two — and each now carries a small
+tag naming the disk it sits on, which is the boot disk in both cases.
+
+**The footer was `space-between`, so it never lined up.** Each reading sat
+wherever its own text width put it: `3.1 W` on one board and `2.4 W` on the
+next landed in different places and no two cards in the row agreed. Fixed
+tracks fix that horizontally, and `margin-top:auto` fixes it vertically — a
+board with one drive keeps its footer level with a board that has three,
+because the slack collects above the rule instead of leaving the readings
+stranded mid-card. Each reading also names itself now: `9h 33m` is not
+guessable, and the row had the room.
+
+
 ## Security posture
 
 | | |
