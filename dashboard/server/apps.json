@@ -1,6 +1,38 @@
 [
-  { "name": "OSINT", "url": "https://jug.taild9f605.ts.net/", "nodeId": "jug", "icon": "/app-icons/osint.png" },
-  { "name": "OSINT News", "url": "https://jug.taild9f605.ts.net/news", "nodeId": "jug", "icon": "/app-icons/osint-news.png" },
-  { "name": "OSINT API", "url": "https://jug.taild9f605.ts.net/api/docs", "nodeId": "jug", "icon": "/app-icons/osint-api.png" },
-  { "name": "Files", "url": "#files", "nodeId": null, "icon": "/app-icons/files.png" }
+  {
+    "name": "OSINT",
+    "url": "https://jug.taild9f605.ts.net/",
+    "nodeId": "jug",
+    "icon": "/app-icons/osint.png"
+  },
+  {
+    "name": "OSINT News",
+    "url": "https://jug.taild9f605.ts.net/news",
+    "nodeId": "jug",
+    "icon": "/app-icons/osint-news.png"
+  },
+  {
+    "name": "OSINT API",
+    "url": "https://jug.taild9f605.ts.net/api/docs",
+    "nodeId": "jug",
+    "icon": "/app-icons/osint-api.png"
+  },
+  {
+    "name": "Uptime",
+    "url": "https://uptime.taild9f605.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/uptime.svg"
+  },
+  {
+    "name": "Vault",
+    "url": "https://vault.taild9f605.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/vault.svg"
+  },
+  {
+    "name": "Files",
+    "url": "#files",
+    "nodeId": null,
+    "icon": "/app-icons/files.png"
+  }
 ]

@@ -19,6 +19,8 @@ export interface TailnetDevice {
   online: boolean;
   lastSeen: string;
   os: string;
+  /** Present on machines the operator registered; absent on a real board. */
+  tags?: string[];
 }
 
 interface RawDevice {
@@ -91,7 +93,7 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
     const peers = [...Object.values(status.Peer ?? {}), ...(status.Self ? [status.Self] : [])];
 
     return peers
-      .filter((p) => p.OS === 'linux' && !isClusterInfra(p.Tags))
+      .filter((p) => p.OS === 'linux')
       .map((p) => ({
         id: p.ID,
         name: p.HostName || p.DNSName.split('.')[0],
@@ -100,6 +102,7 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
         online: p.Online,
         lastSeen: p.LastSeen,
         os: p.OS,
+        tags: p.Tags,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch {
@@ -137,11 +140,18 @@ export const tailnetIpFor = (hostname: string): string | null => {
 
 export const fetchTailnetDevices = async (): Promise<TailnetDevice[]> => {
   const devices = await discoverDevices();
+
+  // Every machine's address is recorded, the operator's included, before any
+  // filtering. Two different questions: which machines are boards, and which
+  // names this server can reach. A launcher tile pointing at a service the
+  // operator exposed still has to resolve, even though that service is not a
+  // board and must not appear in the fleet.
   for (const device of devices) {
     const ip = ipv4Of(device);
     if (ip) tailnetIps.set(device.name.toLowerCase(), ip);
   }
-  return devices;
+
+  return devices.filter((d) => !isClusterInfra(d.tags));
 };
 
 const discoverDevices = async (): Promise<TailnetDevice[]> => {
@@ -174,9 +184,8 @@ const discoverDevices = async (): Promise<TailnetDevice[]> => {
     const now = Date.now();
 
     return devices
-      // Only Linux nodes run the agents. Phones and laptops are viewers, and
-      // the operator's own machines are plumbing rather than boards.
-      .filter((d) => d.os === 'linux' && !isClusterInfra(d.tags))
+      // Only Linux nodes run the agents. Phones and laptops are viewers.
+      .filter((d) => d.os === 'linux')
       .map((d) => ({
         id: d.id,
         name: d.hostname || d.name.split('.')[0],
@@ -185,6 +194,7 @@ const discoverDevices = async (): Promise<TailnetDevice[]> => {
         online: now - new Date(d.lastSeen).getTime() < ONLINE_WINDOW_MS,
         lastSeen: d.lastSeen,
         os: d.os,
+        tags: d.tags,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   } finally {
