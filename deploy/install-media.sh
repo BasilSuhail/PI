@@ -112,6 +112,9 @@ fi
 
 echo "==> Creating the folders"
 for app in "${APPS[@]}"; do sudo mkdir -p "$APPS_DIR/$app"; done
+# Kuma takes ownership of everything inside its mount, so its data sits one
+# level below the app folder and the note stays outside it.
+sudo mkdir -p "$APPS_DIR/Uptime/data"
 for app in "${DATA_APPS[@]}"; do sudo mkdir -p "$DATA_DIR/$app"; done
 # Jellyfin's brain on the SSD, its films on the 6TB.
 sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
