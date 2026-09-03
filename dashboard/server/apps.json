@@ -21,13 +21,13 @@
     "name": "Uptime",
     "url": "https://uptime.taild9f605.ts.net/",
     "nodeId": "jug2",
-    "icon": "U"
+    "icon": "/app-icons/uptime.svg"
   },
   {
     "name": "Vault",
     "url": "https://vault.taild9f605.ts.net/",
     "nodeId": "jug2",
-    "icon": "V"
+    "icon": "/app-icons/vault.svg"
   },
   {
     "name": "Files",
