@@ -13,33 +13,47 @@ be removed without losing a byte.
 
 ## The browse root
 
-One directory per disk, built by bind mount:
+One directory per disk, named by what the disk is — `SSD-1TB`, `HDD-6TB` — so
+both doors into the files answer "which drive?" before "where on it?":
 
 ```
 /srv/browse/
-├── archive     the curated tree, /srv/archive
-├── ssd-1tb
-├── ssd-512
-└── sdcard
+├── SSD-1TB/
+│   ├── etc, home, srv, …     the whole boot SSD, system files included
+│   └── boot/firmware         the boot partition, bound inside at its real path
+└── HDD-6TB/                  the archive disk's own filesystem
 ```
+
+The console's Files view carries the same names from the same sysfs facts —
+whether the disk spins, and its sold-as size — so Finder and the console agree
+without sharing code.
 
 Bind mounts rather than symlinks. Samba only follows a symlink out of a share
 with `wide links = yes`, which switches off a protection worth keeping; a bind
 mount gives the same view without that.
 
+A mount under a bound root is invisible through the bind — the bind shows the
+directory underneath, not what is mounted on it — so a second filesystem on the
+same disk is bound again inside the disk's folder, at its real path. A
+filesystem on a *different* disk is deliberately not: the HDD's mount point
+inside `SSD-1TB` shows the empty directory that is really there, and the HDD
+is reached under its own name.
+
 Build or rebuild it with:
 
 ```bash
-ssh <node> 'bash ~/PI/deploy/setup-browse.sh'
+make browse
 ```
 
-It reads what is mounted, skips the operating system's own filesystems, binds
-the rest, and writes an fstab line per disk so the tree survives a reboot. It
-is idempotent, and it prunes entries for disks that have gone.
+It reads what is mounted, names each physical disk from sysfs, binds each
+disk's filesystem into a folder of its own, and writes an fstab line per bind
+so the tree survives a reboot. It is idempotent: a re-run clears the old tree
+and rebuilds, and refuses to continue while Finder or a shell holds a folder
+open, because deleting around a live mount is how files get lost.
 
 **Adding a disk later** is two steps: mount it anywhere (`/mnt/whatever`, by
-UUID, with `nofail`), then re-run the script. It appears in the console and in
-Finder with no further configuration.
+UUID, with `nofail`), then re-run the script. It appears under its own name in
+the console and in Finder with no further configuration.
 
 ## The Storage view
 

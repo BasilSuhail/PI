@@ -58,15 +58,50 @@ const magnitude = (n: number): string =>
 const IMAGE = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 
 /**
- * A disk's name in the column. The device is what distinguishes them on these
- * boards — sda is the SSD, mmcblk0 the card — and the mount point is what
- * makes a second partition of the same device tell itself apart.
+ * A disk's name: what it is, then how big it is — "SSD 1TB", "HDD 6TB".
+ *
+ * Whether it spins comes from the agent reading sysfs (see withRotation in the
+ * server); size is rounded to the capacity the shelf sold it as, because
+ * "SSD 1000GB" is noise and nobody has ever said it. An agent too old to
+ * report spinning falls back to the device prefix, and an SD card says so,
+ * which on these boards is the one case where the kind matters more than the
+ * number.
  */
-const diskName = (device: string, mount: string): string => {
+const diskKind = (device: string, rotational: boolean | null | undefined): string => {
+  if (rotational === true) return 'HDD';
+  if (rotational === false) return 'SSD';
   const dev = device.replace(/^\/dev\//, '');
-  if (/^mmcblk/.test(dev)) return mount === '/' ? 'SD card' : `SD card · ${mount}`;
-  if (/^(sd|nvme|vd)/.test(dev)) return mount === '/' ? 'SSD' : `SSD · ${mount}`;
-  return mount === '/' ? dev : mount;
+  if (/^mmcblk/.test(dev)) return 'SD card';
+  return 'disk';
+};
+
+/** Sold-as capacity: 0.98 TB reads "1TB", 5.95 TB reads "6TB", 512 GB reads "512GB". */
+const diskCapacity = (bytes: number): string => {
+  const tb = bytes / 1e12;
+  if (tb >= 0.95) return `${Math.round(tb)}TB`;
+  const gb = bytes / 1e9;
+  const shelf = [120, 128, 250, 256, 500, 512, 750, 768];
+  const sold = shelf.find((c) => Math.abs(gb - c) / c <= 0.08);
+  return `${sold ?? Math.round(gb)}GB`;
+};
+
+/**
+ * One name per mounted row, decided against the whole set: when a disk has
+ * more than one mounted partition, the mount point is what tells them apart,
+ * and only then. A board whose disks each mount once — both of them do today —
+ * shows plain "SSD 1TB" and "HDD 6TB", which is the point.
+ */
+const diskNames = (disks: FleetNode['disks']): string[] => {
+  const counts = new Map<string, number>();
+  for (const d of disks) {
+    const dev = d.device.replace(/^\/dev\//, '');
+    counts.set(dev, (counts.get(dev) ?? 0) + 1);
+  }
+  return disks.map((d) => {
+    const dev = d.device.replace(/^\/dev\//, '');
+    const base = `${diskKind(d.device, d.rotational)} ${diskCapacity(d.totalBytes)}`;
+    return (counts.get(dev) ?? 0) > 1 && d.mount !== '/' ? `${base} · ${d.mount}` : base;
+  });
 };
 
 /**
@@ -97,6 +132,13 @@ const TAGS: { name: string; hex: string }[] = [
 ];
 
 const tagHex = (name: string) => TAGS.find((t) => t.name === name)?.hex ?? '#9aa2ac';
+
+/** Whether a keystroke belongs to a text field rather than to the browser. */
+const isTyping = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  if (!el?.tagName) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+};
 
 export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const reachable = nodes.filter((n) => n.online && !n.error);
@@ -194,8 +236,10 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         getRoots(node)
           .then((res) => {
             setRootsByNode((prev) => ({ ...prev, [node]: res.roots }));
-            const entries: DirEntry[] = (board?.disks ?? []).map((d) => ({
-              name: diskName(d.device, d.mount),
+            const boardDisks = board?.disks ?? [];
+            const names = diskNames(boardDisks);
+            const entries: DirEntry[] = boardDisks.map((d, i) => ({
+              name: names[i],
               dir: true,
               link: false,
               bytes: d.usedBytes,
@@ -221,7 +265,9 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           .catch(failed);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deliberately keyed on the trail and the reload counter alone. `cells` is
+    // read inside, but adding it would re-run the effect on the very state this
+    // sets and loop.
   }, [trail, reload]);
 
   // A new column arrives off the right edge; follow it, the way Finder does.
@@ -368,6 +414,11 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
+      // The listener is on the window, so it also hears the search field. A
+      // space typed there was being swallowed and opening Quick Look instead
+      // of reaching the input, which made the field impossible to type a
+      // two-word filter into.
+      if (isTyping(ev.target)) return;
       if (ev.key === 'Escape') {
         setPreview(null);
         return;
@@ -840,6 +891,23 @@ const Grille = ({
   onOpen: (entry: DirEntry) => void;
   onPreview: (entry: DirEntry) => void;
 }) => {
+  // The same three states the column view renders. Grid is the default view,
+  // so without these a board that refused a path or was still sizing one drew
+  // an empty grid and said nothing at all about why.
+  if (cell.loading && !cell.listing) {
+    return (
+      <div class="fx-grid empty">
+        <div class="fx-note"><span class="fx-spinner" /> Sizing the tree…</div>
+      </div>
+    );
+  }
+  if (cell.error) {
+    return (
+      <div class="fx-grid empty">
+        <div class="fx-note bad"><Alert size={14} /> {cell.error}</div>
+      </div>
+    );
+  }
   const listing = cell.listing;
   if (!listing) return <div class="fx-grid" />;
 
@@ -857,7 +925,12 @@ const Grille = ({
               // Lazy on purpose: the board only makes a thumbnail for a tile
               // that is actually scrolled into view.
               <img
-                src={thumbUrl(node, `${listing.path.replace(/\/$/, '')}/${entry.name}`)}
+                // childKey, not a hand-rolled join: an entry carrying its own
+                // path does not sit where its name would put it, and the Quick
+                // Look this tile opens already resolves it that way. Two rules
+                // for one path is how the thumbnail and the preview end up
+                // showing different files.
+                src={thumbUrl(node, childKey(listing.path, entry))}
                 alt=""
                 loading="lazy"
                 onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}

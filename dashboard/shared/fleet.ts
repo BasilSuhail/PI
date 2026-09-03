@@ -60,6 +60,8 @@ export interface DiskStats {
   totalBytes: number;
   usedBytes: number;
   usedPct: number;
+  /** Spins, rather than flashes. Null when the agent is too old to say. */
+  rotational?: boolean | null;
 }
 
 export interface NetStats {

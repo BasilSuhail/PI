@@ -15,6 +15,13 @@ export interface TailnetDevice {
   id: string;
   name: string;
   hostname: string;
+  /**
+   * The full MagicDNS name, e.g. `uptime.<tailnet>.ts.net`. Unique across the
+   * tailnet, where `hostname` is not — Tailscale appends `-1`, `-2` here when
+   * two machines claim the same one. This is what a URL contains, so it is
+   * what name lookups are keyed on.
+   */
+  dnsName: string;
   addresses: string[];
   online: boolean;
   lastSeen: string;
@@ -22,6 +29,10 @@ export interface TailnetDevice {
   /** Present on machines the operator registered; absent on a real board. */
   tags?: string[];
 }
+
+/** The first label of the MagicDNS name, lowercased. See TailnetDevice. */
+const magicDnsLabel = (device: TailnetDevice): string =>
+  (device.dnsName.split('.')[0] || device.name).toLowerCase();
 
 interface RawDevice {
   id: string;
@@ -92,12 +103,14 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
     const status = JSON.parse(raw) as { Peer?: Record<string, LocalPeer>; Self?: LocalPeer };
     const peers = [...Object.values(status.Peer ?? {}), ...(status.Self ? [status.Self] : [])];
 
+    // Not filtered to Linux here. Every machine's address feeds the name map;
+    // the board filter belongs to the caller. See fetchTailnetDevices.
     return peers
-      .filter((p) => p.OS === 'linux')
       .map((p) => ({
         id: p.ID,
         name: p.HostName || p.DNSName.split('.')[0],
         hostname: p.HostName,
+        dnsName: p.DNSName ?? '',
         addresses: p.TailscaleIPs ?? [],
         online: p.Online,
         lastSeen: p.LastSeen,
@@ -111,7 +124,7 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
 };
 
 /**
- * Tailnet short name -> IPv4, refreshed on every discovery pass.
+ * MagicDNS label -> IPv4, rebuilt on every discovery pass.
  *
  * MagicDNS names resolve on a board, where tailscaled is the resolver. They do
  * not resolve inside a pod: DNS there goes to CoreDNS, which has never heard of
@@ -121,15 +134,28 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
  * Reconfiguring the pod's DNS would trade a red tile for the risk of no DNS at
  * all. The addresses are already in hand here, so anything that needs to reach
  * a tailnet name by name can ask for one instead.
+ *
+ * Keyed on the MagicDNS label rather than on the reported hostname. The two
+ * agree only while Tailscale has never had to disambiguate: delete and re-add
+ * a machine — which is exactly what the documented Uptime Kuma rollback does —
+ * and two devices report the hostname `uptime` while MagicDNS calls the second
+ * `uptime-1`. On the hostname the pair collide and last-write-wins decides,
+ * silently, whether the tile probes the live proxy or the dead one. The label
+ * is unique by construction, and it is what the URL being resolved actually
+ * contains.
+ *
+ * Rebuilt rather than merged so a machine that goes away takes its address
+ * with it. Merging left a deleted proxy's 100.x in the map forever, and under
+ * the systemd install — where MagicDNS does resolve — that turned a working
+ * lookup into a connection to an address nothing answers on.
  */
-const tailnetIps = new Map<string, string>();
+let tailnetIps = new Map<string, string>();
+
+/** Whether a discovery pass has ever filled the map. See warmTailnetIps. */
+let discovered = false;
 
 /**
  * The address behind a MagicDNS name, or null to let ordinary DNS handle it.
- *
- * Null until the first discovery pass has run. The fleet polls far more often
- * than the launcher does, so in practice the map is filled before anything
- * asks.
  */
 export const tailnetIpFor = (hostname: string): string | null => {
   // Only MagicDNS names are answered here. Everything else is someone else's
@@ -138,20 +164,40 @@ export const tailnetIpFor = (hostname: string): string | null => {
   return tailnetIps.get(hostname.toLowerCase().split('.')[0]) ?? null;
 };
 
+/**
+ * Runs one discovery pass if none has run yet, so a caller that needs the
+ * address map does not race the fleet poll to fill it.
+ *
+ * The launcher was that caller. On a cold pod both /api/nodes and /api/apps
+ * are requested at the same instant; whenever the probes won, every tailnet
+ * tile resolved to null, fell back to the DNS that does not work in a pod, and
+ * the whole shelf rendered unreachable until the next apps poll fifteen
+ * seconds later. Once warm this costs nothing.
+ */
+export const warmTailnetIps = async (): Promise<void> => {
+  if (discovered) return;
+  await fetchTailnetDevices().catch(() => []);
+};
+
 export const fetchTailnetDevices = async (): Promise<TailnetDevice[]> => {
   const devices = await discoverDevices();
 
-  // Every machine's address is recorded, the operator's included, before any
-  // filtering. Two different questions: which machines are boards, and which
-  // names this server can reach. A launcher tile pointing at a service the
-  // operator exposed still has to resolve, even though that service is not a
-  // board and must not appear in the fleet.
+  // Every machine's address is recorded, whatever it runs and whoever created
+  // it. Two different questions: which machines are boards, and which names
+  // this server can reach. A launcher tile may point at a service the operator
+  // exposed, or at a Mac running `tailscale serve`; neither is a board, and
+  // both still have to resolve. The board filters are applied after this.
+  const fresh = new Map<string, string>();
   for (const device of devices) {
     const ip = ipv4Of(device);
-    if (ip) tailnetIps.set(device.name.toLowerCase(), ip);
+    if (ip) fresh.set(magicDnsLabel(device), ip);
   }
+  tailnetIps = fresh;
+  discovered = true;
 
-  return devices.filter((d) => !isClusterInfra(d.tags));
+  // Only Linux nodes run the agents; phones and laptops are viewers. Cluster
+  // infrastructure is Linux but has no agent either, so it goes too.
+  return devices.filter((d) => d.os === 'linux' && !isClusterInfra(d.tags));
 };
 
 const discoverDevices = async (): Promise<TailnetDevice[]> => {
@@ -184,12 +230,11 @@ const discoverDevices = async (): Promise<TailnetDevice[]> => {
     const now = Date.now();
 
     return devices
-      // Only Linux nodes run the agents. Phones and laptops are viewers.
-      .filter((d) => d.os === 'linux')
       .map((d) => ({
         id: d.id,
         name: d.hostname || d.name.split('.')[0],
         hostname: d.hostname,
+        dnsName: d.name,
         addresses: d.addresses,
         online: now - new Date(d.lastSeen).getTime() < ONLINE_WINDOW_MS,
         lastSeen: d.lastSeen,

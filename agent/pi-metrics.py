@@ -241,6 +241,52 @@ def read_model():
         return None
 
 
+def read_disks():
+    """One row per physical block device.
+
+    Glances reports mount points, and a mount point cannot say whether the
+    thing under it spins. That fact lives in sysfs, so it is reported here:
+    the console names a disk "HDD 6TB" or "SSD 1TB" by what it is, and the
+    Finder tree is built to the same names by setup-browse.sh reading the
+    same files. Loops, ram and zram are not disks and stay out.
+    """
+    disks = []
+    try:
+        names = sorted(os.listdir("/sys/block"))
+    except OSError:
+        return disks
+    for name in names:
+        if name.startswith(("loop", "ram", "zram")):
+            continue
+        base = "/sys/block/" + name
+        try:
+            with open(base + "/size") as f:
+                sectors = int(f.read().strip())
+            with open(base + "/queue/rotational") as f:
+                rotational = f.read().strip() == "1"
+        except (OSError, ValueError):
+            continue
+        model = None
+        for model_path in (base + "/device/model", base + "/device/name"):
+            try:
+                with open(model_path) as f:
+                    text = f.read().strip("\x00").strip()
+                if text:
+                    model = text
+                    break
+            except OSError:
+                continue
+        disks.append(
+            {
+                "device": name,
+                "sizeBytes": sectors * 512,
+                "rotational": rotational,
+                "model": model,
+            }
+        )
+    return disks
+
+
 def collect():
     power = read_power()
     throttled = read_throttled()
@@ -259,6 +305,7 @@ def collect():
         "power": power,
         "throttled": throttled,
         "capabilities": capabilities,
+        "disks": read_disks(),
     }
 
 

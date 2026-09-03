@@ -1,7 +1,7 @@
 /** Thin fetch layer plus the polling hook the views use. */
 
-import { useEffect, useRef, useState } from 'react';
-import type { ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import type { AppTile, ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
 
 const json = async <T>(path: string): Promise<T> => {
   const res = await fetch(path, { cache: 'no-store' });
@@ -13,6 +13,7 @@ const json = async <T>(path: string): Promise<T> => {
 };
 
 export const getNodes = () => json<FleetNode[]>('/api/nodes');
+export const getApps = () => json<AppTile[]>('/api/apps');
 export const getCredentials = () => json<CredentialStatus[]>('/api/credentials');
 export const getProcesses = (id: string, limit = 30) =>
   json<ProcessRow[]>(`/api/nodes/${encodeURIComponent(id)}/processes?limit=${limit}`);
@@ -70,7 +71,10 @@ export const usePoll = <T>(
       alive.current = false;
       clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `fetcher` is deliberately not a dependency: callers pass an inline arrow
+    // that would be a new function every render and restart the poll on each
+    // one. `deps` is how a caller says which of its own values the fetcher
+    // closes over.
   }, [intervalMs, tick, ...deps]);
 
   return { data, error, loading, updatedAt, refresh: () => setTick((t) => t + 1) };
