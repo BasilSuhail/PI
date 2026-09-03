@@ -36,11 +36,12 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s agents deploy check logs bootstrap archive automount browse samba mounts
+.PHONY: help dashboard dashboard-k8s uptime agents deploy check logs bootstrap archive automount browse samba mounts
 
 help:
 	@echo "make dashboard       dashboard/ or deploy/ changed, launcher tiles included"
 	@echo "make dashboard-k8s   the same dashboard in the cluster, asks for a Tailscale key once"
+	@echo "make uptime          Uptime Kuma on its own tailnet name, asks for an OAuth client once"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          both of the above"
 	@echo "make check           services up, dashboard answering"
@@ -61,6 +62,11 @@ dashboard:
 # tailscaled socket, so node discovery has to use the API.
 dashboard-k8s:
 	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-dashboard-k8s.sh ~/$(REPO_DIR)/dashboard'
+
+# -t because the first run asks for a Tailscale OAuth client, which the
+# operator needs before it can put a Service on the tailnet under its own name.
+uptime:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-uptime-kuma.sh'
 
 agents:
 	@for node in $(AGENT_NODES); do \

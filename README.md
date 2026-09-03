@@ -16,7 +16,7 @@ not the silicon.
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
 | `deploy/` | installs the dashboard as a service on a node |
-| `k8s/` | manifests applied to the cluster — the dashboard workload, and its read-only node access |
+| `k8s/` | manifests applied to the cluster — the dashboard, Uptime Kuma, the Tailscale operator |
 | `Makefile` | the deploy commands — `make` on its own lists them |
 
 Issues carry the planning: [#1](../../issues/1) what fits on one board,
@@ -226,6 +226,46 @@ and a running pod does not see a Secret change.
 in the `jug` namespace. The key is never echoed, never written to the board's
 disk, and never passed on a command line the console builds. The date is not a
 secret and is only there because Tailscale will not tell a token its own expiry.
+
+</details>
+
+<details>
+<summary><strong>Uptime Kuma — alerts when something dies</strong></summary>
+
+```bash
+make uptime
+```
+
+Puts Uptime Kuma on jug2 at its own tailnet name, `https://uptime.<tailnet>.ts.net`,
+so it does not have to share the console's URL. Roughly 100 MB.
+
+**Once, in the Tailscale admin console, before the first run.** The operator
+registers machines on your tailnet, so it needs its own credentials:
+
+1. Access Controls: add tag owners for `tag:k8s-operator` and `tag:k8s`.
+2. Settings, then OAuth clients, then Generate. Give it **write** scope on
+   Devices Core and on Auth Keys, tagged `tag:k8s-operator`.
+
+`make uptime` asks for the client ID and secret once and puts them straight
+into a Secret. Neither is echoed and neither lands on the board's disk.
+
+**Once, in Discord, for alerts.** Uptime Kuma can show red on a page, but it
+cannot reach you without somewhere to send to:
+
+1. Pick or make a channel for alerts.
+2. Gear icon next to the channel, then Integrations, then Webhooks.
+3. New Webhook, name it, then Copy Webhook URL.
+
+**Then, in Uptime Kuma itself.** The first visit asks you to create an admin
+account. After that, Settings, then Notifications, then Setup Notification,
+choose Discord, paste the URL, hit Test, and tick Default enabled so new
+monitors use it without being asked.
+
+The webhook is a credential and belongs only in Kuma's own settings. It never
+goes in this repo.
+
+**Worth monitoring**: the OSINT API and news page, both boards' Glances agents
+on port 61208, the console itself, and the shim on 9101.
 
 </details>
 
