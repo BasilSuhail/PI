@@ -88,6 +88,7 @@ installed as its own app from a browser — Safari's File, then Add to Dock.
 | Vault | `vault.<tailnet>.ts.net` | `make vault` |
 | Jellyfin | `jellyfin.<tailnet>.ts.net` | `make media` |
 | Kiwix | `kiwix.<tailnet>.ts.net` | `make media` |
+| qBittorrent | `torrent.<tailnet>.ts.net` | `make torrent` — off by default |
 
 `make media` also moves every app's files into the layout above: settings on the
 SSD under `1) Archive/Apps/`, content on the 6TB. It replaced local-path volumes,
@@ -382,6 +383,77 @@ the most important file on the board: you cannot back up what you cannot find.
 
 **There is still no backup of it.** Findable is not the same as backed up.
 Worth remembering before anything is written here that exists nowhere else.
+
+</details>
+
+<details>
+<summary><strong>qBittorrent — downloads, behind AirVPN</strong></summary>
+
+```bash
+make torrent
+```
+
+Installs **stopped**. Two containers in one pod sharing one network namespace:
+gluetun brings up WireGuard and owns the routing, qBittorrent has no network of
+its own. That shared namespace is the whole point — the client cannot be
+configured around the VPN, cannot fall back to the board's connection, and
+cannot send a packet before the tunnel exists, because there is no other route
+for it to take.
+
+It is also why the VPN is not separately switchable. A toggle that could leave
+the client running with the tunnel down is the exact failure this shape makes
+impossible, so the two start and stop together.
+
+**Nothing here touches the board's networking.** The WireGuard interface lives
+in the pod's namespace; the Pi's routing table, and tailscaled with it, are in a
+different one and never see it. A VPN installed on the board itself would take
+the default route and drop Tailscale — the console, the shares and SSH with it.
+
+**Before the first run**, from AirVPN's Client Area:
+
+1. Config Generator, choose WireGuard and a server. You need the `[Interface]`
+   PrivateKey, the `[Peer]` PresharedKey, and the `[Interface]` Address.
+2. Ports, and reserve one. Traffic only reaches the client on a port AirVPN is
+   forwarding; without one it downloads but seeds poorly.
+
+`make torrent` asks for those four and puts them straight into a Secret.
+Nothing is echoed and nothing lands on the board's disk. Eddie is not involved
+— this is a separate device on the same subscription and uses one of the plan's
+connection slots.
+
+**Turning it on.** The console's Apps tab, the qBittorrent tile, the power
+switch on it. Works from a phone; there is no terminal step. The tile shows
+the address traffic is actually leaving from, read from gluetun rather than
+inferred from the pod being up — "running" and "protected" are different
+claims and only the second one matters.
+
+`make torrent-on` and `make torrent-off` do the same from the Mac. They exist
+so the button stays optional: the console's permission to press it is a single
+RoleBinding, and deleting it leaves both commands working.
+
+**What the button can do, and cannot.** The console has been read-only against
+the cluster until this. The grant is a `Role` in one namespace, on
+`deployments/scale`, for one deployment by name. The subresource is the part
+doing the work: write access to a *deployment* would let a compromised console
+add a privileged container with the host filesystem mounted and take the board,
+while `scale` accepts one integer and refuses everything else.
+
+**Where downloads go.** `/data/Downloads` in the client, which is
+`HDD-6TB/Downloads` in Finder. The add-torrent form shows that path and lets
+you change it per torrent — anywhere under `/data`, which is the whole 6TB.
+Incomplete files sit beside the finished ones rather than staging on the SSD,
+so completing a download is a rename inside one filesystem and never a copy.
+
+The whole 6TB is mounted for the same reason: a finished download is
+hard-linked into place, and a hard link cannot cross a mount boundary. Two
+mounts would mean a 40GB film costing 80GB for as long as it kept seeding.
+
+**First login.** qBittorrent 5 does not ship a default password. It generates
+one and prints it to its log:
+
+```bash
+ssh jug2 'sudo k3s kubectl -n jug logs deploy/qbittorrent -c qbittorrent | grep -i password'
+```
 
 </details>
 
