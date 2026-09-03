@@ -103,6 +103,21 @@ the tailnet URL answers nothing.
 Either way it lands at `https://pi2.<tailnet>.ts.net` — tailnet-only, real
 certificate, no open ports.
 
+## Services beyond the dashboard
+
+```bash
+make uptime
+```
+
+The first of these installs the Tailscale operator as well, through k3s'
+bundled helm-controller so nothing extra is needed on the board. After that,
+any Service with an Ingress marked `ingressClassName: tailscale` gets its own
+tailnet name and certificate, which is what lets a second app exist without
+fighting the console for `/`.
+
+The operator's OAuth client is asked for once and stored as a Secret. See the
+README section for the tag owners it needs first.
+
 ## When something is wrong
 
 ```bash

@@ -1,0 +1,125 @@
+# Uptime Kuma: the thing that tells you a service died, instead of you finding
+# out by opening the console and looking.
+#
+# Deployed by deploy/install-uptime-kuma.sh. Lives in the `pi` namespace
+# alongside the dashboard, because a second namespace for one small workload
+# buys nothing on a single-node cluster.
+#
+# Reached on its own tailnet name rather than a path under the console's. Kuma
+# is a single-page app that assumes it owns the root path, and serving it from
+# a subdirectory breaks its websocket and its asset URLs. The Tailscale
+# operator gives it a name of its own, which is also the shape every service
+# added after this one will want.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uptime-kuma
+  namespace: pi
+spec:
+  accessModes: [ReadWriteOnce]
+  # SQLite plus a few months of heartbeats. Kuma prunes its own history, and
+  # local-path can be grown later if that turns out to be wrong.
+  resources:
+    requests:
+      storage: 2Gi
+  # k3s' bundled provisioner. Node-local, which is fine: one replica pinned to
+  # the board that holds the volume is exactly what this workload wants.
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uptime-kuma
+  namespace: pi
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the volume is ReadWriteOnce and SQLite does
+  # not want two writers, so the old pod has to be gone before the new one
+  # starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: uptime-kuma
+  template:
+    metadata:
+      labels:
+        app: uptime-kuma
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: uptime-kuma
+          image: louislam/uptime-kuma:1.23.16
+          ports:
+            - name: http
+              containerPort: 3001
+          env:
+            # Kuma checks for its own updates and shows a banner. The board
+            # deploys from this repo, so the banner is noise.
+            - name: UPTIME_KUMA_DISABLE_FRAME_SAMEORIGIN
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
+              memory: 96Mi
+              cpu: 20m
+            # Idles near 100 MB. The ceiling is for a runaway, not a target.
+            limits:
+              memory: 384Mi
+          # Kuma serves its own dashboard, so a plain GET proves the process is
+          # answering. Slow start: it runs migrations on a cold database.
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              # NET_RAW is kept deliberately. Without it Kuma cannot send ICMP,
+              # so ping monitors fail while HTTP ones work, which reads as a
+              # dead board rather than a missing capability.
+              drop: ["ALL"]
+              add: ["NET_RAW"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: uptime-kuma
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uptime-kuma
+  namespace: pi
+spec:
+  selector:
+    app: uptime-kuma
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The Tailscale operator watches for this class and puts the Service on the
+# tailnet under metadata.name, so this becomes https://uptime.<tailnet>.ts.net
+# with a real certificate and no open ports. Requires the operator: see
+# k8s/tailscale-operator.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uptime
+  namespace: pi
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: uptime-kuma
+      port:
+        name: http
+  tls:
+    - hosts: ["uptime"]
