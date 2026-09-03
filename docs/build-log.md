@@ -444,6 +444,100 @@ drive in two rows of the same column — the duplication this PR exists to
 remove.
 
 
+## 11. Jellyfin, Kiwix, and where an app's files live
+
+`deploy/install-media.sh`. Two new services, and the same storage layout
+applied to the two that were already running.
+
+**The split is by how a file is read, not by what it is called.**
+
+```
+SSD-1TB/1) Archive/Apps/     read at random — settings, databases, caches
+├── Jellyfin/
+│   ├── data/    library database, artwork
+│   └── cache/   transcode scratch, image cache
+├── Kiwix/       the library index
+├── Vaultwarden/ settings
+└── Uptime/      all of it. a few megabytes.
+
+HDD-6TB/                     read start to finish — things you would call files
+├── Jellyfin/
+│   └── Media/   Movies/ and Shows/
+├── Kiwix/       the .zim archives
+└── Vaultwarden/ the vault database and attachments
+```
+
+The obvious cut — "app on the fast disk, data on the big disk" — is right in
+spirit and wrong on one word. A database is called data and behaves like an
+app: thousands of tiny reads scattered across a file, where a seek costs a
+spinning disk around 5ms against an SSD's 0.1. Jellyfin's library index is
+50MB. Putting it on the 6TB buys nothing and makes every library browse and
+every scan feel slow from the far side of a seek. Its cache is worse in
+principle: rewritten constantly, thrown away without consequence, and the least
+useful possible tenant for six terabytes.
+
+Uptime Kuma moved to the SSD entirely for the other half of the same argument.
+It writes a heartbeat row per monitor every sixty seconds, forever — tiny,
+constant, and enough on its own to keep a 6TB disk awake day and night for a
+database that would fit on a floppy.
+
+What is left on the 6TB is what the rule was always reaching for: films, `.zim`
+archives, attachments. Things you would recognise as files, read start to
+finish, which is the one thing a spinning disk is genuinely good at. Both paths
+are `APPS_DIR` and `DATA_DIR` on the installer, so the cut is a decision rather
+than a fact of the code.
+
+**No PersistentVolumeClaims.** k3s' local-path provisioner puts a volume in
+`/var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>`. Vaultwarden's vault was
+sitting in one: a directory named after a UUID, inside a container runtime's
+internals. You cannot find it, you cannot back up what you cannot find, and it
+tells you nothing about what is eating the disk. `hostPath` directories on
+named drives do all three. The old PVCs are left in place by the installer —
+repointing a workload and deleting its old volume in the same breath is how
+data goes missing — and removed by hand once the pods are up.
+
+**Jellyfin has to be told to split itself.** Left alone it writes the library
+database and the artwork inside its config directory, so `JELLYFIN_CONFIG_DIR`,
+`JELLYFIN_DATA_DIR` and `JELLYFIN_CACHE_DIR` are set explicitly. Without those
+three the split would be a lie.
+
+**Kiwix is given a library file, not a glob.** A shell glob that matches
+nothing expands to a literal `*.zim`, and `kiwix-serve` exits on a file it
+cannot open — so an empty content folder would be a crash loop on first deploy.
+The library is rebuilt from whatever `.zim` files are present on every start,
+which also means the folder is the only source of truth: there is no index that
+can disagree with what is on the disk. Drop a file in and restart.
+
+**What was deliberately not changed.** Vaultwarden and Uptime Kuma still run
+exactly as they did — same user, same capabilities. Only their storage moved.
+Kuma's entrypoint hands off through `setpriv` and already needed three
+capabilities added back to survive that; forcing a uid on top of it is the
+same guess that caused the crash loop recorded in `k8s/uptime-kuma.yaml`.
+Jellyfin and Kiwix, which have no such history, run as the login user so their
+files stay manageable from Finder. The cost of the caution is that
+Vaultwarden's `db.sqlite3` is still written `0600 root` — findable and
+visible now, which it was not before, but copying it out is a `sudo` job.
+
+**hostPath volumes are not chowned by Kubernetes.** `fsGroup` is honoured for
+volume types that support ownership management and a raw `hostPath` is not one
+of them, so whatever a directory is created as is what the container gets.
+Uptime Kuma is the case that nearly broke: its entrypoint drops to the image's
+`node` account through `setpriv`, and it had been sitting on a local-path
+volume — whose provisioner creates directories world-writable, which is the
+only reason ownership was never a question before. Moving it to a plain
+directory made it one.
+
+Readiness proves a process answers, not that it can write where it was pointed,
+and a media server that cannot write its database will serve a login page while
+failing at the only thing it is for. The installer asks each container directly
+after the rollout, with a `touch` in its own data folder, and prints the `id`
+and `chown` to run if any of them cannot.
+
+**Jellyfin on a Pi 5 direct-plays and does not transcode.** A client that needs
+the video re-encoded will stutter and 4K will not work. That is the hardware,
+not the configuration.
+
+
 ## Security posture
 
 | | |

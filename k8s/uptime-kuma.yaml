@@ -10,22 +10,9 @@
 # a subdirectory breaks its websocket and its asset URLs. The Tailscale
 # operator gives it a name of its own, which is also the shape every service
 # added after this one will want.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: uptime-kuma
-  namespace: jug
-spec:
-  accessModes: [ReadWriteOnce]
-  # SQLite plus a few months of heartbeats. Kuma prunes its own history, and
-  # local-path can be grown later if that turns out to be wrong.
-  resources:
-    requests:
-      storage: 2Gi
-  # k3s' bundled provisioner. Node-local, which is fine: one replica pinned to
-  # the board that holds the volume is exactly what this workload wants.
-  storageClassName: local-path
----
+# Its heartbeat database used to be a local-path PersistentVolumeClaim, in a
+# directory named after a UUID inside k3s' internals. Named directories on
+# named drives now — see k8s/jellyfin.yaml for the reasoning.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -48,6 +35,10 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # Left running as it is. Its entrypoint hands off through setpriv and
+      # already needed three capabilities added back to survive that; forcing
+      # a uid on top of it is exactly the guess that caused the crash loop the
+      # capabilities note below describes. Only the volume changes here.
       # MagicDNS names do not resolve inside a pod. DNS there goes to CoreDNS,
       # which has never heard of the tailnet, so every monitor failed with
       # "getaddrinfo ENOTFOUND jug.<tailnet>.ts.net" while the same URLs
@@ -112,9 +103,31 @@ spec:
               # than a missing capability.
               add: ["SETGID", "SETUID", "NET_RAW"]
       volumes:
+  # A note on `type: Directory` below, which is doing real work.
+  #
+  # The alternative, DirectoryOrCreate, is the default reflex and it is wrong for
+  # a disk that can go away. With the 6TB unmounted, /srv/storage still exists —
+  # it is the mount point, an empty directory on the boot disk. DirectoryOrCreate
+  # would create the app's folders inside it, the app would start, find no
+  # database, and cheerfully build a new one on the boot SSD. Mount the 6TB again
+  # and the real data reappears underneath, with the app now pointed at a second
+  # copy it made while the disk was missing.
+  #
+  # Directory refuses. The app's subdirectory only exists when the disk is
+  # mounted, so an unmounted disk means the pod stops at ContainerCreating with
+  # the missing path named in its events. Loud and harmless, instead of quiet and
+  # not.
+        # All of it on the SSD, and it is the size of a photograph.
+        #
+        # Kuma writes a heartbeat row per monitor every sixty seconds, forever.
+        # Tiny, constant, and enough on its own to keep a 6TB disk awake day and
+        # night — audible, warm, and wearing out for a database that would fit
+        # on a floppy. It has no business on the big disk: it is not big, and
+        # what it does is exactly what the big disk is worst at.
         - name: data
-          persistentVolumeClaim:
-            claimName: uptime-kuma
+          hostPath:
+            path: __APPS_DIR__/Uptime
+            type: Directory
 ---
 apiVersion: v1
 kind: Service
