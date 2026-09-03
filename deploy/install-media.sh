@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# Jellyfin and Kiwix, and moves Vaultwarden and Uptime Kuma onto the same
+# storage layout. Runs on the board.
+#
+# One idea, applied four times: an app has two halves, and they belong on
+# different drives for different reasons.
+#
+#   APPS_DIR   the SSD, inside the archive. Settings — small, precious, the
+#              thing you would carry to another machine. Open this folder to
+#              answer "what is installed here".
+#   DATA_DIR   the 6TB. Databases, artwork, caches, media, .zim files — large,
+#              replaceable, the thing that fills a disk. One folder per app,
+#              named after the app, so the drive answers "what is this holding".
+#
+# Both are overridable, which is the point:
+#
+#     DATA_DIR=/srv/storage/media bash deploy/install-media.sh
+#
+# Nothing here uses a PersistentVolumeClaim. k3s' local-path provisioner puts
+# volumes in /var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>, and a
+# directory named after a UUID inside a container runtime's internals cannot
+# be found in Finder, cannot be backed up without knowing k3s, and cannot tell
+# you what is eating the disk. Named directories on named drives do all three.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OWNER="${OWNER:-$(id -un)}"
+OWNER_UID="$(id -u "$OWNER")"
+OWNER_GID="$(id -g "$OWNER")"
+
+# The archive moved from /srv/archive to "/1) Archive". Both are accepted so
+# this works whichever the board is carrying, rather than failing on a board
+# that has not run deploy/setup-archive.sh since the rename.
+if [ -z "${APPS_DIR:-}" ]; then
+  for candidate in "/1) Archive" /srv/archive; do
+    [ -d "$candidate" ] && { APPS_DIR="$candidate/Apps"; break; }
+  done
+fi
+APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
+
+# The 6TB, by its mount point rather than its device: a disk swapped for a
+# bigger one at the same path should need no edit here.
+DATA_DIR="${DATA_DIR:-/srv/storage}"
+
+APPS=(Jellyfin Kiwix Vaultwarden Uptime)
+
+if ! sudo systemctl is-active --quiet k3s; then
+  echo "k3s is not running on this board. This installs into the cluster." >&2
+  exit 1
+fi
+
+kube() { sudo k3s kubectl "$@"; }
+
+if ! kube -n tailscale get secret operator-oauth >/dev/null 2>&1; then
+  echo "The Tailscale operator is not installed — run 'make uptime' first." >&2
+  echo "Jellyfin and Kiwix each want a tailnet name of their own, and the" >&2
+  echo "operator is what hands those out." >&2
+  exit 1
+fi
+
+# Say where everything is going before touching anything. The whole point of
+# this layout is that you can answer "where is my data" without reading a
+# manifest, and that starts with the install telling you.
+echo "==> Layout"
+printf '  %-14s %s\n' "apps  (SSD)" "$APPS_DIR"
+printf '  %-14s %s\n' "data  (6TB)" "$DATA_DIR"
+echo
+for app in "${APPS[@]}"; do
+  printf '  %-12s %s\n' "$app" "$APPS_DIR/$app"
+  printf '  %-12s %s\n' "" "$DATA_DIR/$app"
+done
+echo
+
+# A missing DATA_DIR almost always means the 6TB is not mounted, and creating
+# the directory anyway would silently write the media library onto the boot
+# SSD until it filled. Refuse instead.
+if [ ! -d "$DATA_DIR" ]; then
+  echo "$DATA_DIR does not exist. Is the drive mounted? Check: findmnt $DATA_DIR" >&2
+  exit 1
+fi
+
+echo "==> Creating the folders"
+for app in "${APPS[@]}"; do
+  sudo mkdir -p "$APPS_DIR/$app" "$DATA_DIR/$app"
+done
+# Jellyfin's three halves, spelled out so the folder reads as an explanation.
+sudo mkdir -p "$DATA_DIR/Jellyfin/data" "$DATA_DIR/Jellyfin/cache" \
+              "$DATA_DIR/Jellyfin/Media/Movies" "$DATA_DIR/Jellyfin/Media/Shows"
+sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix"
+
+# A note in each app's SSD folder, because a folder holding only a config file
+# does not explain itself six months later.
+for app in "${APPS[@]}"; do
+  sudo tee "$APPS_DIR/$app/WHERE-IS-MY-DATA.txt" >/dev/null <<NOTE
+$app
+
+  This folder      $APPS_DIR/$app
+                   settings and configuration. Small. Back this up.
+
+  Its data         $DATA_DIR/$app
+                   database, cache, and content. Large.
+
+Written by deploy/install-media.sh. Change the split by re-running it with
+APPS_DIR= or DATA_DIR= set.
+NOTE
+done
+sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR"
+
+echo "==> Applying manifests"
+# The paths are substituted here rather than being fixed in the manifests,
+# which is what makes them configurable. sed's delimiter is | because the
+# values are paths and one of them contains a space and a bracket.
+render() {
+  sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
+      -e "s|__DATA_DIR__|${DATA_DIR}|g" \
+      -e "s|__UID__|${OWNER_UID}|g" \
+      -e "s|__GID__|${OWNER_GID}|g" "$1"
+}
+
+for manifest in jellyfin kiwix vaultwarden uptime-kuma; do
+  render "${REPO_ROOT}/k8s/${manifest}.yaml" | kube apply -f -
+done
+
+# The old PVCs are deliberately left in place. Vaultwarden is empty and Kuma's
+# heartbeat history is being started over, so neither is worth migrating — but
+# deleting a volume in the same breath as repointing the thing that used it is
+# how data goes missing. Remove them by hand once the pods are up and right.
+echo
+echo "==> The old volumes are still there, untouched:"
+kube -n jug get pvc 2>/dev/null | sed 's/^/  /' || true
+echo "  Remove when you are happy:  sudo k3s kubectl -n jug delete pvc vaultwarden uptime-kuma"
+
+echo
+echo "==> Waiting for the rollouts"
+for app in jellyfin kiwix vaultwarden uptime-kuma; do
+  kube -n jug rollout status "deployment/$app" --timeout=300s || {
+    echo "  $app did not come up. Logs:" >&2
+    kube -n jug logs "deployment/$app" --tail=30 2>&1 | sed 's/^/    /' >&2
+  }
+done
+
+echo
+echo "==> Addresses"
+kube -n jug get ingress -o custom-columns=NAME:.metadata.name,HOST:.spec.tls[0].hosts[0] --no-headers 2>/dev/null |
+  while read -r name host; do printf '  %-12s https://%s.%s\n' "$name" "$host" "taild9f605.ts.net"; done
+
+cat <<NEXT
+
+Jellyfin
+  Open it and run the setup wizard. Add a library pointing at /media/Movies
+  and /media/Shows — those are ${DATA_DIR}/Jellyfin/Media/* from the board.
+  Copy films in through the HDD-6TB folder in Finder.
+
+  This board direct-plays. It does not meaningfully transcode: a client that
+  needs the video re-encoded will stutter, and 4K will not work at all. Play
+  to something that handles the codec natively and it is fine.
+
+Kiwix
+  Serving an empty catalogue until there is something to serve. Download a
+  .zim from https://download.kiwix.org/zim/ into ${DATA_DIR}/Kiwix, then:
+
+    sudo k3s kubectl -n jug rollout restart deployment/kiwix
+
+  The library is rebuilt from whatever is in that folder on every start, so
+  the folder is the truth and there is no index to keep in step with it.
+
+Rollback:  sudo k3s kubectl -n jug delete -f ${REPO_ROOT}/k8s/jellyfin.yaml -f ${REPO_ROOT}/k8s/kiwix.yaml
+NEXT

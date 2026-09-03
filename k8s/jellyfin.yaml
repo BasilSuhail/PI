@@ -1,0 +1,150 @@
+# Jellyfin: the media server. Deployed by deploy/install-media.sh.
+#
+# The point of this file is where the bytes go, and that is deliberately not
+# one place. An app has two halves with completely different sizes and
+# completely different reasons to be looked at:
+#
+#   the app     its settings, on the SSD, under the archive's Apps/ folder.
+#               Small, precious, the thing you would carry to another machine.
+#   the data    its library database, artwork, transcode cache and the media
+#               itself, on the 6TB. Large, replaceable, the thing that fills a
+#               disk.
+#
+# Jellyfin can be told to split those, which is what the JELLYFIN_*_DIR
+# variables below do. Left to itself it puts the database inside the config
+# directory and the split would be a lie.
+#
+# hostPath rather than a PersistentVolumeClaim on purpose. local-path volumes
+# land in /var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>, which is
+# invisible: you cannot find it in Finder, you cannot back it up without
+# knowing k3s' internals, and you certainly cannot tell at a glance what is
+# eating the disk. A named directory on a named drive can do all three.
+#
+# __APPS_DIR__ and __DATA_DIR__ are substituted by the installer, which is also
+# what makes them configurable per board.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jellyfin
+  namespace: jug
+spec:
+  replicas: 1
+  # SQLite on a ReadWriteOnce path: the old pod must be gone before the new
+  # one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jellyfin
+  template:
+    metadata:
+      labels:
+        app: jellyfin
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      # As the login user, not as root. Everything written lands owned by the
+      # account that owns the archive, so the same files are manageable from
+      # Finder over Samba and from a shell. A media server that leaves
+      # root-owned directories in your own folders is one you have to sudo to
+      # tidy up after.
+      securityContext:
+        runAsUser: __UID__
+        runAsGroup: __GID__
+        fsGroup: __GID__
+      containers:
+        - name: jellyfin
+          image: jellyfin/jellyfin:10.10.3
+          ports:
+            - name: http
+              containerPort: 8096
+          env:
+            # The split described at the top. Without these three, "config"
+            # holds the database and the artwork too.
+            - name: JELLYFIN_CONFIG_DIR
+              value: /config
+            - name: JELLYFIN_DATA_DIR
+              value: /data
+            - name: JELLYFIN_CACHE_DIR
+              value: /cache
+            - name: JELLYFIN_LOG_DIR
+              value: /data/log
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            - name: cache
+              mountPath: /cache
+            - name: media
+              mountPath: /media
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            # Idles near 300MB with a small library. The ceiling is for a
+            # runaway scan, not a target.
+            limits:
+              memory: 1Gi
+          # Jellyfin runs migrations and a library scan on a cold start, so the
+          # first readiness check has to be patient.
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+      volumes:
+        # SSD, under the archive: what the app is.
+        - name: config
+          hostPath:
+            path: __APPS_DIR__/Jellyfin
+            type: DirectoryOrCreate
+        # 6TB: what the app holds.
+        - name: data
+          hostPath:
+            path: __DATA_DIR__/Jellyfin/data
+            type: DirectoryOrCreate
+        - name: cache
+          hostPath:
+            path: __DATA_DIR__/Jellyfin/cache
+            type: DirectoryOrCreate
+        - name: media
+          hostPath:
+            path: __DATA_DIR__/Jellyfin/Media
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin
+  namespace: jug
+spec:
+  selector:
+    app: jellyfin
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Its own tailnet machine, the same shape as Uptime and Vault: a root path and
+# a real certificate, because Jellyfin's clients assume they own the root.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jellyfin
+  namespace: jug
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: jellyfin
+      port:
+        name: http
+  tls:
+    - hosts: ["jellyfin"]

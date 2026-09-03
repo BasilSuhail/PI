@@ -444,6 +444,71 @@ drive in two rows of the same column — the duplication this PR exists to
 remove.
 
 
+## 11. Jellyfin, Kiwix, and where an app's files live
+
+`deploy/install-media.sh`. Two new services, and the same storage layout
+applied to the two that were already running.
+
+**An app has two halves, and they belong on different drives.**
+
+```
+SSD-1TB/1) Archive/Apps/        the app        settings. small. back this up.
+├── Jellyfin/
+├── Kiwix/
+├── Vaultwarden/
+└── Uptime/
+
+HDD-6TB/                        the data       databases, caches, content.
+├── Jellyfin/                                  large. replaceable.
+│   ├── data/     library database, artwork
+│   ├── cache/    transcodes and image cache
+│   └── Media/    Movies/ and Shows/
+├── Kiwix/        the .zim files
+├── Vaultwarden/  the vault database
+└── Uptime/       heartbeat history
+```
+
+Same name on both drives, so the two halves of one app are obviously related.
+Open `Apps/` to answer "what is installed here"; open the 6TB to answer "what
+is it holding". Both are `APPS_DIR` and `DATA_DIR` on the installer, so the
+split is a decision rather than a fact of the code.
+
+**No PersistentVolumeClaims.** k3s' local-path provisioner puts a volume in
+`/var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>`. Vaultwarden's vault was
+sitting in one: a directory named after a UUID, inside a container runtime's
+internals. You cannot find it, you cannot back up what you cannot find, and it
+tells you nothing about what is eating the disk. `hostPath` directories on
+named drives do all three. The old PVCs are left in place by the installer —
+repointing a workload and deleting its old volume in the same breath is how
+data goes missing — and removed by hand once the pods are up.
+
+**Jellyfin has to be told to split itself.** Left alone it writes the library
+database and the artwork inside its config directory, so `JELLYFIN_CONFIG_DIR`,
+`JELLYFIN_DATA_DIR` and `JELLYFIN_CACHE_DIR` are set explicitly. Without those
+three the split would be a lie.
+
+**Kiwix is given a library file, not a glob.** A shell glob that matches
+nothing expands to a literal `*.zim`, and `kiwix-serve` exits on a file it
+cannot open — so an empty content folder would be a crash loop on first deploy.
+The library is rebuilt from whatever `.zim` files are present on every start,
+which also means the folder is the only source of truth: there is no index that
+can disagree with what is on the disk. Drop a file in and restart.
+
+**What was deliberately not changed.** Vaultwarden and Uptime Kuma still run
+exactly as they did — same user, same capabilities. Only their storage moved.
+Kuma's entrypoint hands off through `setpriv` and already needed three
+capabilities added back to survive that; forcing a uid on top of it is the
+same guess that caused the crash loop recorded in `k8s/uptime-kuma.yaml`.
+Jellyfin and Kiwix, which have no such history, run as the login user so their
+files stay manageable from Finder. The cost of the caution is that
+Vaultwarden's `db.sqlite3` is still written `0600 root` — findable and
+visible now, which it was not before, but copying it out is a `sudo` job.
+
+**Jellyfin on a Pi 5 direct-plays and does not transcode.** A client that needs
+the video re-encoded will stutter and 4K will not work. That is the hardware,
+not the configuration.
+
+
 ## Security posture
 
 | | |

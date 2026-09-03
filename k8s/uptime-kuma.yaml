@@ -10,22 +10,9 @@
 # a subdirectory breaks its websocket and its asset URLs. The Tailscale
 # operator gives it a name of its own, which is also the shape every service
 # added after this one will want.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: uptime-kuma
-  namespace: jug
-spec:
-  accessModes: [ReadWriteOnce]
-  # SQLite plus a few months of heartbeats. Kuma prunes its own history, and
-  # local-path can be grown later if that turns out to be wrong.
-  resources:
-    requests:
-      storage: 2Gi
-  # k3s' bundled provisioner. Node-local, which is fine: one replica pinned to
-  # the board that holds the volume is exactly what this workload wants.
-  storageClassName: local-path
----
+# Its heartbeat database used to be a local-path PersistentVolumeClaim, in a
+# directory named after a UUID inside k3s' internals. Named directories on
+# named drives now — see k8s/jellyfin.yaml for the reasoning.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -48,6 +35,10 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # Left running as it is. Its entrypoint hands off through setpriv and
+      # already needed three capabilities added back to survive that; forcing
+      # a uid on top of it is exactly the guess that caused the crash loop the
+      # capabilities note below describes. Only the volume changes here.
       # MagicDNS names do not resolve inside a pod. DNS there goes to CoreDNS,
       # which has never heard of the tailnet, so every monitor failed with
       # "getaddrinfo ENOTFOUND jug.<tailnet>.ts.net" while the same URLs
@@ -112,9 +103,14 @@ spec:
               # than a missing capability.
               add: ["SETGID", "SETUID", "NET_RAW"]
       volumes:
+        # Kuma keeps its config and its heartbeat database in one directory
+        # and cannot be told to split them, so the whole of /app/data is the
+        # data half. What lands on the SSD is a marker naming where it went,
+        # so the Apps folder still answers "is this installed, and where".
         - name: data
-          persistentVolumeClaim:
-            claimName: uptime-kuma
+          hostPath:
+            path: __DATA_DIR__/Uptime
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
