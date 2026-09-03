@@ -136,24 +136,74 @@ if [ ${#disk_root[@]} -eq 0 ]; then
   exit 1
 fi
 
+# Samba is the reason this script used to fail more often than it worked.
+# smbd forks a process per connection and parks its working directory inside
+# the share, so one Finder window left open on a Mac anywhere on the tailnet
+# pins /srv/browse/<disk> and the rebuild aborts. "Close Finder windows and
+# shells on it, then re-run" put that on the operator, every time, for a
+# condition the script can simply resolve: the share is being rebuilt, so the
+# thing serving it should not be running. Stopped here, started again on the
+# way out — including on failure, which is what the trap is for.
+SMB_UNITS=""
+for unit in smbd nmbd; do
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then SMB_UNITS="$SMB_UNITS $unit"; fi
+done
+restore_samba() {
+  [ -n "$SMB_UNITS" ] || return 0
+  echo "==> Starting Samba again ($SMB_UNITS)"
+  # shellcheck disable=SC2086
+  sudo systemctl start $SMB_UNITS || true
+}
+if [ -n "$SMB_UNITS" ]; then
+  echo "==> Stopping Samba while the tree is rebuilt ($SMB_UNITS)"
+  echo "    Finder will reconnect on its own; open windows may blink."
+  trap restore_samba EXIT
+  # shellcheck disable=SC2086
+  sudo systemctl stop $SMB_UNITS
+fi
+
+# Whatever still holds a mount after Samba is down, named. A generic "target is
+# busy" sends you looking for a Finder window that is not the problem; a pid
+# and a command name is something you can act on.
+holders() {
+  command -v fuser >/dev/null 2>&1 && sudo fuser -vm "$1" 2>&1 | sed 's/^/      /' && return 0
+  command -v lsof  >/dev/null 2>&1 && sudo lsof "$1" 2>/dev/null | sed 's/^/      /' && return 0
+  echo "      (install psmisc for fuser to see what is holding it)"
+}
+
+# The agent walks this tree to size it, and a scan in flight holds a directory
+# open for as long as it runs. That is transient, unlike Samba, so it is worth
+# waiting out rather than failing on.
+unmount_tree() {
+  local point="$1" try
+  # Cut propagation first. The removable mirror is a slave of /media, but a
+  # mirror re-created from fstab at boot is a shared peer of it, and
+  # unmounting a peer unmounts the original — every plugged-in drive, ejected
+  # by a script that only meant to rebuild a folder. Making it slave again is
+  # a no-op when it already is.
+  sudo mount --make-rslave "$point" 2>/dev/null || true
+  for try in 1 2 3 4; do
+    if sudo umount -R "$point" 2>/dev/null; then return 0; fi
+    sleep 1
+  done
+  # Once more with the error showing. Four silent failures then a bare "target
+  # is busy" tells you less than the kernel's own last word on it.
+  sudo umount -R "$point"
+}
+
 echo "==> Clearing the old tree"
 # Old fstab lines first, then unmount what they describe. umount -R walks the
-# nested binds inside each folder; a folder that stays busy means Finder or a
-# shell is sitting in it, and deleting around a live mount is exactly the
-# mistake this script refuses to make — abort and say so instead.
+# nested binds inside each folder. Deleting around a live mount is the one
+# mistake this script must never make, so a folder that will not come free
+# stops the run — but only after saying what is holding it.
 sudo sed -i "\|$MARK|d" "$FSTAB"
 sudo mkdir -p "$BROWSE"
 for point in "$BROWSE"/*; do
   [ -e "$point" ] || continue
   if mountpoint -q "$point"; then
-    # Cut propagation first. The removable mirror is a slave of /media, but a
-    # mirror re-created from fstab at boot is a shared peer of it, and
-    # unmounting a peer unmounts the original — every plugged-in drive, ejected
-    # by a script that only meant to rebuild a folder. Making it slave again is
-    # a no-op when it already is.
-    sudo mount --make-rslave "$point" 2>/dev/null || true
-    sudo umount -R "$point" || {
-      echo "  $point is busy. Close Finder windows and shells on it, then re-run." >&2
+    unmount_tree "$point" || {
+      echo "  $point will not unmount. Still holding it:" >&2
+      holders "$point" >&2
       exit 1
     }
   fi
