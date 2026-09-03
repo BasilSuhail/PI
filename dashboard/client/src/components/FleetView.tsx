@@ -71,6 +71,9 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
       <p class="c-role">
         {node.role}
         {node.cpu ? ` · ${node.cpu.cores} cores · load ${node.cpu.loadAvg.map((l) => l.toFixed(2)).join(' ')}` : ''}
+        {/* Said out loud rather than shown as live. The board was too busy to
+            answer this poll, so part of this card is the previous one. */}
+        {node.stale ? ' · holding last reading' : ''}
       </p>
 
       <div class="mrow">

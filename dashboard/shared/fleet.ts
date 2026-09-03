@@ -73,6 +73,12 @@ export interface FleetNode {
   name: string;
   tailscaleIp: string;
   online: boolean;
+  /**
+   * True when part of this card came from the previous poll rather than this
+   * one, because the board was too busy to answer in time. The board is up;
+   * the numbers are a few seconds old. Absent on an offline node.
+   */
+  stale?: boolean;
   /** ISO timestamp. Meaningful mainly when offline. */
   lastSeen: string;
   role: NodeRole;
