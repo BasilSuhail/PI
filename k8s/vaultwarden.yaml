@@ -110,10 +110,17 @@ spec:
           hostPath:
             path: __APPS_DIR__/Vaultwarden
             type: Directory
-        # 6TB: the vault database and its attachments.
+        # SSD, beside the settings. The vault is a few megabytes of SQLite
+        # read at random, which is the definition of what belongs on the fast
+        # disk — it sat on the 6TB to be findable, not because it was big.
+        #
+        # It has to be off the 6TB for a second reason now: qBittorrent mounts
+        # that whole disk so downloads can be hard-linked into place, and a
+        # torrent client with write access to a password vault is a bad trade
+        # for a convenience.
         - name: data
           hostPath:
-            path: __DATA_DIR__/Vaultwarden
+            path: __APPS_DIR__/Vaultwarden/data
             type: Directory
 ---
 apiVersion: v1

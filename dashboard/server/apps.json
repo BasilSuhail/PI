@@ -46,5 +46,13 @@
     "url": "https://kiwix.<tailnet>.ts.net/",
     "nodeId": "pi2",
     "icon": "/app-icons/kiwix.svg"
+  },
+  {
+    "name": "qBittorrent",
+    "url": "https://torrent.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/qbittorrent.svg",
+    "switchable": true,
+    "check": false
   }
 ]

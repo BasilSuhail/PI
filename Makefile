@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media agents deploy check logs bootstrap archive automount browse samba mounts sata
+.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse samba mounts sata
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -44,6 +44,8 @@ help:
 	@echo "make uptime          Uptime Kuma on its own tailnet name, asks for an OAuth client once"
 	@echo "make vault           Vaultwarden on its own tailnet name, needs make uptime first"
 	@echo "make media           Jellyfin and Kiwix, and moves all four apps' data onto the 6TB"
+	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
+	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
@@ -80,6 +82,18 @@ vault:
 # Override where things land:  make media DATA_DIR=/somewhere/else
 media:
 	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-media.sh'
+
+# Interactive: asks for the WireGuard keys on the first run.
+torrent:
+	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-torrent.sh'
+
+# The same switch the console's button throws, from here instead. Kept so the
+# button is optional: delete the RoleBinding in k8s/qbittorrent.yaml and the
+# console loses its only cluster write while these two still work.
+torrent-on:
+	@ssh $(DASH_NODE) 'sudo k3s kubectl -n pi scale deployment/qbittorrent --replicas=1'
+torrent-off:
+	@ssh $(DASH_NODE) 'sudo k3s kubectl -n pi scale deployment/qbittorrent --replicas=0'
 
 agents:
 	@for node in $(AGENT_NODES); do \
