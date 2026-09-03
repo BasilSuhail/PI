@@ -7,10 +7,13 @@
  * than a control above them, so moving between machines is the same gesture
  * as opening a folder.
  *
- * A board holds nothing itself. Everything is on one of its disks, so the
- * second column is disks and only disks — being "on jug" is not a place a
- * file could be saved, and the tree should not pretend otherwise. Named roots
- * like the archive are pinned inside the disk that actually holds them.
+ * A board holds nothing itself, so the second column is the places on it that
+ * can hold something: the named roots first — "1) Archive", the one folder
+ * that holds data rather than operating system — then the disks. The archive
+ * is a sibling of the disks rather than a pin inside one, which is both the
+ * shape Finder shows and the reason the sizes add up: a pin appeared twice in
+ * the same listing, once as a shortcut and once at its real path, and its
+ * bytes were counted both times.
  *
  * Every entry is shown, dotfiles included. On these boards the answer is
  * usually a dotfile — .cache, .ollama, a stray .venv — and hiding them would
@@ -18,7 +21,7 @@
  */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { DirEntry, DirListing, DirRoots, FleetNode } from '../../../shared/fleet';
+import type { DirEntry, DirListing, FleetNode } from '../../../shared/fleet';
 import { getListing, getRoots, thumbUrl, upload, write } from '../lib/api';
 import { bytes } from '../lib/format';
 import { Alert, Chevron, Disk, DocBig, FolderBig, Grid, List, Search, Tag } from './icons';
@@ -106,9 +109,9 @@ const diskNames = (disks: FleetNode['disks']): string[] => {
 
 /**
  * Where a row leads. An entry carrying its own path is followed to it — that
- * covers boards, disks, and a root pinned into a disk's listing, none of which
- * sit where their name would put them. Joining the name onto the parent is the
- * fallback for ordinary directories, not the rule.
+ * covers boards, disks, and the archive, none of which sit where their name
+ * would put them. Joining the name onto the parent is the fallback for
+ * ordinary directories, not the rule.
  */
 const childKey = (parent: string, entry: DirEntry): string =>
   entry.path ?? `${parent.replace(/\/$/, '')}/${entry.name}`;
@@ -166,8 +169,6 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
    */
   const [ahead, setAhead] = useState<string[]>([]);
   const [preview, setPreview] = useState<Picked | null>(null);
-  /** Named roots per board, so a disk's column can pin the ones that live on it. */
-  const [rootsByNode, setRootsByNode] = useState<Record<string, DirRoots['roots']>>({});
   const [clip, setClip] = useState<{ node: string; path: string; name: string; cut: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -235,19 +236,40 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
         const board = nodes.find((n) => n.id === node);
         getRoots(node)
           .then((res) => {
-            setRootsByNode((prev) => ({ ...prev, [node]: res.roots }));
             const boardDisks = board?.disks ?? [];
             const names = diskNames(boardDisks);
-            const entries: DirEntry[] = boardDisks.map((d, i) => ({
-              name: names[i],
-              dir: true,
-              link: false,
-              bytes: d.usedBytes,
-              mtime: 0,
-              hidden: false,
-              path: d.mount,
-              capacity: d.totalBytes,
-            }));
+
+            // A named root that is neither the whole filesystem nor a disk in
+            // its own right: the archive. Listed before the disks, so the
+            // folder holding the data comes before the machinery holding it.
+            const named = res.roots.filter(
+              (r) => r.path !== '/' && !boardDisks.some((d) => d.mount === r.path),
+            );
+
+            const entries: DirEntry[] = [
+              ...named.map((r) => ({
+                name: r.name,
+                dir: true,
+                link: false,
+                // Filled in below. A root is a folder, not a disk, so nothing
+                // in the fleet poll already knows its size.
+                bytes: 0,
+                mtime: 0,
+                hidden: false,
+                path: r.path,
+                locked: !r.writable,
+              })),
+              ...boardDisks.map((d, i) => ({
+                name: names[i],
+                dir: true,
+                link: false,
+                bytes: d.usedBytes,
+                mtime: 0,
+                hidden: false,
+                path: d.mount,
+                capacity: d.totalBytes,
+              })),
+            ];
             done({
               path: key,
               parent: null,
@@ -257,11 +279,39 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
               complete: true,
               entries,
             });
+
+            // Sizing a root means walking it, which is the slow call on this
+            // screen. Off the critical path on purpose: the column paints at
+            // once with the disks already sized, and each root's number lands
+            // when it lands. A failure here leaves the row without a size,
+            // which is the honest thing to show and not worth an error.
+            named.forEach((root) => {
+              getListing(node, root.path)
+                .then((listing) =>
+                  setCells((prev) => {
+                    const cell = prev[slot];
+                    if (!cell?.listing) return prev;
+                    return {
+                      ...prev,
+                      [slot]: {
+                        ...cell,
+                        listing: {
+                          ...cell.listing,
+                          entries: cell.listing.entries.map((e) =>
+                            e.path === root.path ? { ...e, bytes: listing.total } : e,
+                          ),
+                        },
+                      },
+                    };
+                  }),
+                )
+                .catch(() => {});
+            });
           })
           .catch(failed);
       } else {
         getListing(node, key)
-          .then((listing) => done({ ...listing, entries: withPins(listing, node) }))
+          .then(done)
           .catch(failed);
       }
     });
@@ -275,30 +325,6 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
     const el = strip.current;
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trail.length]);
-
-  /**
-   * A named root shown at the top of the disk that holds it. Only on the
-   * disk's own column: deeper down it would appear again at every level.
-   */
-  const withPins = (listing: DirListing, node: string): DirEntry[] => {
-    const board = nodes.find((n) => n.id === node);
-    const isMount = (board?.disks ?? []).some((d) => d.mount === listing.path);
-    if (!isMount) return listing.entries;
-    const pins = (rootsByNode[node] ?? [])
-      .filter((r) => r.path !== listing.path && r.path.startsWith(listing.path.replace(/\/$/, '') + '/'))
-      .map((r) => ({
-        name: r.name,
-        dir: true,
-        link: false,
-        bytes: 0,
-        mtime: 0,
-        hidden: false,
-        path: r.path,
-        locked: !r.writable,
-        pinned: true,
-      }));
-    return [...pins, ...listing.entries];
-  };
 
   /**
    * The filter applies to the column being looked at and nothing else. Columns
@@ -824,11 +850,11 @@ const Column = ({
     <div class="fx-col">
       {listing.entries.map((entry) => (
         <button
-          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''} ${entry.pinned ? 'pin' : ''}`}
+          class={`fx-row ${entry.name === selectedName ? 'on' : ''} ${entry.hidden ? 'hidden' : ''}`}
           onClick={() => onOpen(entry)}
           onContextMenu={(ev) => { ev.preventDefault(); onMenu(entry, ev as unknown as MouseEvent); }}
           key={entry.name}
-          draggable={!entry.pinned}
+          draggable={!isNodeCol(listing.path)}
           onDragStart={(ev) =>
             ev.dataTransfer?.setData('text/jug-path', entryPath(listing, entry))
           }
@@ -852,7 +878,6 @@ const Column = ({
           {/* A locked root is readable and copyable like anything else; what
               it refuses is being changed. Marked so that is visible before
               you try. */}
-          {entry.pinned && <span class="fx-pin" title="A named root on this disk">◆</span>}
           {entry.locked && <span class="fx-lock" title="Read-only — copy from it, never change it">read-only</span>}
           {entry.dir && <Chevron size={13} class="fx-arrow" />}
         </button>
