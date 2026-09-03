@@ -658,6 +658,18 @@ hard-linked into place, and a hard link cannot cross a mount boundary — two
 mounts would mean copying every completed file, so a 40GB film would cost 80GB
 for as long as it kept seeding.
 
+**The image's default save path is `/downloads`, which is not mounted here.**
+Left alone, every download would land in the container's writable layer,
+disappear on the next restart, and fill the boot disk on the way. The installer
+seeds a config once, and only when one is absent — qBittorrent owns that file
+after its first start and a re-run must not stamp on settings changed since.
+
+Incomplete files stay on the 6TB beside the finished ones rather than staging
+on the SSD. Completing a download is then a rename inside one filesystem:
+instant, and no second copy. A fast staging area on the other disk would mean
+writing every byte twice and reading it once more, which on a spinning
+destination is slower than not staging at all.
+
 That wide mount is why **Vaultwarden's data moved to the SSD**. It belonged
 there anyway by the rule the rest of the layout uses — a few megabytes of
 SQLite read at random is the definition of what goes on the fast disk, and it

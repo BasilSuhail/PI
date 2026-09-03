@@ -92,6 +92,36 @@ echo "==> Folders"
 sudo mkdir -p "$APPS_DIR/qBittorrent" "$DATA_DIR/Downloads"
 sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR/qBittorrent" "$DATA_DIR/Downloads"
 
+# The image's own default save path is /downloads, which is not mounted here —
+# left alone, every download would land in the container's writable layer,
+# disappear on the next restart, and fill the boot disk on the way. Seeded once
+# so the first torrent added goes somewhere real.
+#
+# Only when absent. qBittorrent rewrites this file constantly and owns it after
+# the first start; re-running this script must not stamp on settings changed
+# since.
+QBT_CONF="$APPS_DIR/qBittorrent/qBittorrent/qBittorrent.conf"
+if [ ! -f "$QBT_CONF" ]; then
+  echo "==> Seeding qBittorrent's save paths"
+  sudo mkdir -p "$(dirname "$QBT_CONF")"
+  # Incomplete files stay on the 6TB rather than the SSD. Finishing a download
+  # is then a rename within one filesystem — instant, and no second copy —
+  # where a fast staging area on the other disk would mean writing every byte
+  # twice and reading it once more.
+  sudo tee "$QBT_CONF" >/dev/null <<CONF
+[BitTorrent]
+Session\\DefaultSavePath=/data/Downloads
+Session\\TempPathEnabled=true
+Session\\TempPath=/data/Downloads/.incomplete
+CONF
+  sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR/qBittorrent"
+  printf '  %-16s %s\n' "finished" "$DATA_DIR/Downloads"
+  printf '  %-16s %s\n' "in progress" "$DATA_DIR/Downloads/.incomplete"
+  echo "  Both on the 6TB, so finishing a download is a rename and not a copy."
+else
+  echo "==> qBittorrent already has settings — leaving them alone"
+fi
+
 echo "==> AirVPN credentials"
 if kube -n jug get secret "$SECRET" >/dev/null 2>&1; then
   echo "  already present — leaving them alone"
@@ -166,8 +196,18 @@ Before downloading anything, prove the tunnel is up. Start it, then:
 That address should be AirVPN's, not yours. If it is yours, stop immediately
 and check the secret.
 
-In qBittorrent, set the save path under /data — that is the whole 6TB. The
-port you reserved goes in Options > Connection > Listening Port.
+Downloads land in ${DATA_DIR}/Downloads, which is HDD-6TB/Downloads in Finder.
+The add-torrent form shows that path and lets you change it per torrent —
+anywhere under /data, which is the whole 6TB. Categories are worth setting up
+once (Options > Downloads, then a category per destination) so a film goes
+straight to ${DATA_DIR}/Jellyfin/Media/Movies without retyping it.
+
+The port you reserved goes in Options > Connection > Listening Port.
+
+First login: qBittorrent 5 generates a temporary password and prints it to its
+log rather than shipping a default one.
+
+  sudo k3s kubectl -n jug logs deploy/qbittorrent -c qbittorrent | grep -i password
 
 Rollback:  sudo k3s kubectl -n jug delete -f ${REPO_ROOT}/k8s/qbittorrent.yaml
 NEXT
