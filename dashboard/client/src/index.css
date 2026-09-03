@@ -181,7 +181,6 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .mrow.duo{gap:14px}
 .duo .half{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .duo .half>.lbl{flex:0 0 46px}
-.duo .half:last-child>.lbl{flex:0 0 40px}
 .duo .half>.fig{font-size:10px}
 /* Which disk these bytes are actually on. Small enough to read as an
    annotation on the figure rather than a value of its own. */
@@ -189,7 +188,13 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   color:var(--faint);border:1px solid var(--panel-line);border-radius:3px;
   padding:1px 3px;line-height:1.35}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
-@media (max-width:520px){.mrow.duo{flex-direction:column;align-items:stretch;gap:6px}}
+/* Stacked on a phone, where two meters side by side leave neither enough bar
+   to read. Once stacked they are ordinary rows and have to line up with the
+   ones above: same label column, same margins, nothing about them special. */
+@media (max-width:520px){
+  .mrow.duo{flex-direction:column;align-items:stretch;gap:0;margin:0}
+  .duo .half{margin:6px 0}
+}
 .meter{height:8px;flex:1;min-width:24px;overflow:hidden;
   border:1px solid var(--meter-edge);border-radius:2px;
   background:var(--groove);box-shadow:inset 0 1px 2px rgba(0,0,0,.18)}
@@ -215,7 +220,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* Named, because "9h 33m" is not guessable and the row had the room. */
 .c-meta>span:not(.chip){display:flex;align-items:baseline;gap:6px;min-width:0}
 .c-meta em{flex:none;font-style:normal;font-size:9px;letter-spacing:.09em;color:var(--faint)}
-.c-meta b{font-weight:400;font-size:13px;color:var(--ink)}
+.c-meta b{font-weight:400;font-size:13px;color:var(--ink);white-space:nowrap}
+/* A figure and its label are one thing and must break as one — never "2.3"
+   above "W". */
+.c-meta em{white-space:nowrap}
 .c-meta svg{flex:none;color:var(--muted);align-self:center}
 .chip{justify-self:end;display:inline-flex;align-items:center;gap:4px;
   padding:3px 9px;border-radius:10px;
@@ -288,6 +296,16 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   background:linear-gradient(var(--bar-2),var(--bar-edge));border-top:1px solid var(--bar-edge);
   font-family:var(--mono);font-size:9px}
 .statusbar span{display:flex;align-items:center;gap:5px}
+
+/* Four readings across a phone leaves each about eighty pixels, which is not
+   enough for "UPTIME 10h 44m" and was the reason it wrapped. Two rows of two
+   gives every one of them room, and the chip takes the corner. */
+@media (max-width:560px){
+  .c-meta{grid-template-columns:1fr 1fr;gap:9px 12px}
+  .c-meta b{font-size:12px}
+  .c-meta em{font-size:8.5px}
+  .chip{font-size:10px;padding:3px 8px}
+}
 
 @media (max-width:900px){
   body{padding:0;
