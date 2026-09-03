@@ -330,5 +330,10 @@ The disks already attached are browsable from the console and mountable in
 Finder — neither waits on the 8TB, which is still blocked on a 12V supply and
 still holds up the archive tier proper.
 
+The Waveshare PCIe SATA HAT now sits on jug2, which is where the bulk disks
+will go. Nothing is plugged into its spare ports, and it has not been checked
+since it moved: `make sata NODE=jug2` reports the port and the controller
+without changing anything.
+
 jug has not had the cgroup flag applied, so its `mem_limit`s are unenforced
 and container memory reads blank on the dashboard.
