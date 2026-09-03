@@ -1,0 +1,40 @@
+{
+  "version": "1.23.16",
+  "notificationList": [],
+  "monitorList": [
+    {
+      "id": 1,
+      "name": "HDD 6TB",
+      "description": null,
+      "type": "keyword",
+      "url": "http://100.65.6.116:9101/",
+      "keyword": "ST6000VX009",
+      "invertKeyword": false,
+      "hostname": null,
+      "port": null,
+      "interval": 60,
+      "retryInterval": 60,
+      "resendInterval": 0,
+      "maxretries": 2,
+      "expiryNotification": false,
+      "ignoreTls": false,
+      "upsideDown": false,
+      "packetSize": 56,
+      "maxredirects": 10,
+      "accepted_statuscodes": [
+        "200-299"
+      ],
+      "dns_resolve_type": "A",
+      "dns_resolve_server": "1.1.1.1",
+      "method": "GET",
+      "body": null,
+      "headers": null,
+      "authMethod": null,
+      "active": true,
+      "tags": [],
+      "notificationIDList": {
+        "1": true
+      }
+    }
+  ]
+}

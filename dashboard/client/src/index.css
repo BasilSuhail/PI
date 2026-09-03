@@ -164,24 +164,34 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .c-ram{font-family:var(--mono);font-size:11px;color:var(--muted);
   font-variant-numeric:tabular-nums}
 
-.mrow{display:flex;align-items:center;gap:8px;margin:6px 0;
+/* Every row shares a left edge and a right edge; the meter takes whatever is
+   left between them. So a row reading "27 GB / 917 GB" gets a shorter bar than
+   one reading "5%", and the ragged bar ends are the figures saying how much
+   they had to say. Fixed columns would have to be as wide as the longest
+   figure on any board, which spends that room on every row that does not need
+   it. */
+.mrow{display:flex;align-items:center;gap:9px;margin:6px 0;
   font-family:var(--mono);font-size:10px}
-/* The same row, carrying two. Each half keeps the label / meter / figure
-   shape of the rows above, in half the width. */
-.mrow.split{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
-.mhalf{display:flex;align-items:center;gap:10px;min-width:0}
-.mhalf>span{flex:0 0 40px;color:var(--faint);font-family:var(--mono);font-size:9px}
-/* Wider than the percentage columns above it: "2.59 GB" does not fit where
-   "5%" did, and a figure that wraps is worse than one that costs a little room.
-   Qualified by .split because ".mrow strong" is declared later in this file
-   and would otherwise win on source order and pull it back to 38px. */
-.mrow.split .mhalf>strong{width:auto;flex:0 0 58px;text-align:right;color:var(--ink-2);
-  font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+.mrow>.lbl{flex:0 0 46px;color:var(--muted);letter-spacing:.02em}
+.mrow>.lbl.dim{color:var(--faint);font-size:9px}
+.mrow>.fig{flex:none;text-align:right;color:var(--ink-2);font-weight:400;font-size:11px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Swap and the cache share one line: neither is a drive, and two halves cost
+   one row where two rows cost two. */
+.mrow.duo{gap:14px}
+.duo .half{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.duo .half>.lbl{flex:0 0 46px}
+.duo .half:last-child>.lbl{flex:0 0 40px}
+.duo .half>.fig{font-size:10px}
+/* Which disk these bytes are actually on. Small enough to read as an
+   annotation on the figure rather than a value of its own. */
+.on{flex:none;font-family:var(--mono);font-size:8px;letter-spacing:.04em;
+  color:var(--faint);border:1px solid var(--panel-line);border-radius:3px;
+  padding:1px 3px;line-height:1.35}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
-@media (max-width:520px){.mrow.split{grid-template-columns:1fr}}
-.mrow>span{width:26px;color:var(--muted)}
-.mrow strong{width:38px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
-.meter{height:8px;flex:1;overflow:hidden;border:1px solid var(--meter-edge);border-radius:2px;
+@media (max-width:520px){.mrow.duo{flex-direction:column;align-items:stretch;gap:6px}}
+.meter{height:8px;flex:1;min-width:24px;overflow:hidden;
+  border:1px solid var(--meter-edge);border-radius:2px;
   background:var(--groove);box-shadow:inset 0 1px 2px rgba(0,0,0,.18)}
 .mfill{display:block;height:100%;border-radius:1px;transition:width .35s ease;
   background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2));
@@ -190,14 +200,26 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .mfill.orange{background:linear-gradient(var(--warn-1),var(--warn))}
 .mfill.red{background:linear-gradient(var(--crit-1),var(--crit))}
 
-.c-meta{display:flex;align-items:center;justify-content:space-between;gap:6px;
-  margin:13px 0 11px;padding-top:11px;border-top:1px solid var(--panel-line);
-  font-family:var(--mono);font-size:10px;color:var(--ink-2);
+/* Fixed tracks, not space-between. With space-between each reading sits
+   wherever its own text width puts it, so "3.1 W" on one board and "2.4 W" on
+   the next land in different places and no two cards in the row agree. Equal
+   columns line the temperature, the power and the uptime up across the whole
+   fleet, whatever the card's width.
+   margin-top:auto pins the whole strip to the floor of the card, so a board
+   with one drive keeps its footer level with a board that has three — the
+   slack collects above the rule instead of leaving the readings mid-card. */
+.c-meta{display:grid;grid-template-columns:1fr 1fr 1fr auto;align-items:center;gap:8px;
+  margin:auto 0 11px;padding-top:12px;border-top:1px solid var(--panel-line);
+  font-family:var(--mono);color:var(--ink-2);
   font-variant-numeric:tabular-nums}
-.c-meta span{display:flex;align-items:center;gap:5px}
-.c-meta svg{color:var(--muted)}
-.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:9px;
-  font-family:var(--mono);font-size:9px;border:1px solid transparent}
+/* Named, because "9h 33m" is not guessable and the row had the room. */
+.c-meta>span:not(.chip){display:flex;align-items:baseline;gap:6px;min-width:0}
+.c-meta em{flex:none;font-style:normal;font-size:9px;letter-spacing:.09em;color:var(--faint)}
+.c-meta b{font-weight:400;font-size:13px;color:var(--ink)}
+.c-meta svg{flex:none;color:var(--muted);align-self:center}
+.chip{justify-self:end;display:inline-flex;align-items:center;gap:4px;
+  padding:3px 9px;border-radius:10px;
+  font-family:var(--mono);font-size:10.5px;border:1px solid transparent}
 .chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent);
   background:color-mix(in srgb,var(--ok) 10%,transparent)}
 .chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);
