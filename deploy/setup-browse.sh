@@ -47,11 +47,17 @@ disk_of() {
 # Size in bytes and the rotational flag for a disk, from the same sysfs files
 # the agent reads. Empty when the disk cannot be named.
 disk_facts() {
-  local base="/sys/block/$1" sectors rotational
+  local base="/sys/block/$1" sectors rotational device_path
   [ -r "$base/size" ] || return 0
   read -r sectors < "$base/size" || return 0
   rotational=1
   [ -r "$base/queue/rotational" ] && read -r rotational < "$base/queue/rotational" || true
+  # USB-SATA bridges don't pass through the rotational flag; the kernel
+  # defaults to 1 (spinning). If the device path walks through USB, assume SSD.
+  if [ "$rotational" = 1 ]; then
+    device_path=$(readlink -f "$base/device" 2>/dev/null || echo "")
+    [[ "$device_path" == *usb* ]] && rotational=0
+  fi
   echo "$((sectors * 512)) $rotational"
 }
 
@@ -162,6 +168,26 @@ for disk in "${!disk_root[@]}"; do
     echo "  ${name}${target}  <-  $target"
   done
 done
+
+# Pin /srv/archive as "archives" at the top level of the disk that holds it,
+# so Finder matches the console — the same path, one click instead of three.
+# Bind mount rather than symlink: Samba refuses to follow symlinks out of a
+# share without wide links = yes.
+ARCHIVE="/srv/archive"
+if [ -d "$ARCHIVE" ]; then
+  archive_source=$(findmnt -no SOURCE "$ARCHIVE" 2>/dev/null || findmnt -no SOURCE / 2>/dev/null || true)
+  if [ -n "$archive_source" ]; then
+    archive_disk=$(disk_of "$archive_source")
+    read -r asize arot < <(disk_facts "$archive_disk")
+    archive_folder=$(name_for "/$(kind_of "$arot" "$archive_disk") $(capacity_of "$asize")")
+    archive_point="$BROWSE/$archive_folder/archives"
+    if [ -d "$BROWSE/$archive_folder" ] && [ ! -e "$archive_point" ]; then
+      sudo mkdir -p "$archive_point"
+      bind "$ARCHIVE" "$archive_point"
+      echo "  archives  <-  $ARCHIVE  (pinned in $archive_folder)"
+    fi
+  fi
+fi
 
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
 sudo chmod 0755 "$BROWSE"
