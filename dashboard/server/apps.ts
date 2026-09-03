@@ -12,7 +12,7 @@ import type { LookupFunction } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppTile } from '../shared/fleet';
-import { tailnetIpFor } from './lib/tailnet';
+import { tailnetIpFor, warmTailnetIps } from './lib/tailnet';
 
 const CONFIG =
   process.env.APPS_CONFIG ?? join(dirname(fileURLToPath(import.meta.url)), 'apps.json');
@@ -90,6 +90,12 @@ export const fetchApps = async (): Promise<AppTile[]> => {
     return [];
   }
   if (!Array.isArray(config)) return [];
+
+  // The probes below resolve tailnet names from the discovery map. On a cold
+  // pod that map is empty until the first fleet poll lands, and the two
+  // requests start together — so without this the whole shelf could come back
+  // unreachable for the first fifteen seconds after every restart.
+  await warmTailnetIps();
 
   return Promise.all(
     config.map(async (app) => ({

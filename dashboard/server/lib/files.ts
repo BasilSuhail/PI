@@ -37,10 +37,31 @@ export const fetchRoots = (host: string) => get<DirRoots>(host, '');
 export const fetchListing = (host: string, path: string) =>
   get<DirListing>(host, `?path=${encodeURIComponent(path)}`);
 
+/**
+ * Cheap enough for the fleet poll to ask on every pass, so it gets the short
+ * timeout rather than the scanner's long one.
+ *
+ * It had no timeout at all, which mattered because fleet.ts calls it inside the
+ * Promise.all that builds a card: a board that accepted the connection and then
+ * stopped answering would hold that request open with no deadline, and
+ * /api/nodes would never return for any board. Every other call in this server
+ * had a deadline; this one was the hole.
+ */
+const CACHE_TIMEOUT_MS = 3000;
+
 export const fetchCache = async (host: string): Promise<ThumbCache> => {
-  const res = await fetch(`http://${host}:${SHIM_PORT}/cache`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return (await res.json()) as ThumbCache;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CACHE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`http://${host}:${SHIM_PORT}/cache`, {
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as ThumbCache;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 /**

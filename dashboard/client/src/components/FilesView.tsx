@@ -98,6 +98,13 @@ const TAGS: { name: string; hex: string }[] = [
 
 const tagHex = (name: string) => TAGS.find((t) => t.name === name)?.hex ?? '#9aa2ac';
 
+/** Whether a keystroke belongs to a text field rather than to the browser. */
+const isTyping = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  if (!el?.tagName) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+};
+
 export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
   const reachable = nodes.filter((n) => n.online && !n.error);
   const [trail, setTrail] = useState<string[]>([FLEET]);
@@ -221,7 +228,9 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
           .catch(failed);
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deliberately keyed on the trail and the reload counter alone. `cells` is
+    // read inside, but adding it would re-run the effect on the very state this
+    // sets and loop.
   }, [trail, reload]);
 
   // A new column arrives off the right edge; follow it, the way Finder does.
@@ -368,6 +377,11 @@ export const FilesView = ({ nodes }: { nodes: FleetNode[] }) => {
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
+      // The listener is on the window, so it also hears the search field. A
+      // space typed there was being swallowed and opening Quick Look instead
+      // of reaching the input, which made the field impossible to type a
+      // two-word filter into.
+      if (isTyping(ev.target)) return;
       if (ev.key === 'Escape') {
         setPreview(null);
         return;
@@ -840,6 +854,23 @@ const Grille = ({
   onOpen: (entry: DirEntry) => void;
   onPreview: (entry: DirEntry) => void;
 }) => {
+  // The same three states the column view renders. Grid is the default view,
+  // so without these a board that refused a path or was still sizing one drew
+  // an empty grid and said nothing at all about why.
+  if (cell.loading && !cell.listing) {
+    return (
+      <div class="fx-grid empty">
+        <div class="fx-note"><span class="fx-spinner" /> Sizing the tree…</div>
+      </div>
+    );
+  }
+  if (cell.error) {
+    return (
+      <div class="fx-grid empty">
+        <div class="fx-note bad"><Alert size={14} /> {cell.error}</div>
+      </div>
+    );
+  }
   const listing = cell.listing;
   if (!listing) return <div class="fx-grid" />;
 
@@ -857,7 +888,12 @@ const Grille = ({
               // Lazy on purpose: the board only makes a thumbnail for a tile
               // that is actually scrolled into view.
               <img
-                src={thumbUrl(node, `${listing.path.replace(/\/$/, '')}/${entry.name}`)}
+                // childKey, not a hand-rolled join: an entry carrying its own
+                // path does not sit where its name would put it, and the Quick
+                // Look this tile opens already resolves it that way. Two rules
+                // for one path is how the thumbnail and the preview end up
+                // showing different files.
+                src={thumbUrl(node, childKey(listing.path, entry))}
                 alt=""
                 loading="lazy"
                 onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
