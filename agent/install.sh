@@ -85,7 +85,7 @@ sudo mkdir -p /etc/systemd/system/pi-metrics.service.d
 sudo tee /etc/systemd/system/pi-metrics.service.d/user.conf >/dev/null <<UNIT
 [Service]
 User=${SERVICE_USER}
-Environment="BROWSE_ROOTS=system=/,home=${SERVICE_HOME},1) Archive=/srv/archive"
+Environment="BROWSE_ROOTS=system=/,home=${SERVICE_HOME},1) Archive=/1) Archive"
 UNIT
 
 sudo systemctl daemon-reload

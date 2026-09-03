@@ -249,6 +249,12 @@ fstab_escape() { printf '%s' "${1// /\\040}"; }
 
 bind() { # source, destination
   sudo mount --bind "$1" "$2"
+  # Cut propagation into the copy. systemd leaves / shared, so a bind of / joins
+  # the same peer group and EVERY mount made under / afterwards is copied inside
+  # it — which is why jug2 grew /srv/browse/SSD-1TB/srv/browse/HDD-6TB, and a
+  # second "1) Archive" and "2) Plugged in" beside it. A drive's folder should
+  # show that drive as it was when the tree was built, and nothing else.
+  sudo mount --make-rprivate "$2"
   printf '%s  %s  none  bind,nofail  0  0  %s\n' \
     "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
 }
@@ -284,55 +290,27 @@ for disk in "${!disk_root[@]}"; do
   done
 done
 
-# The archive, at the top of the disk that actually holds it — not a folder at
-# the top level. The top level is drives.
-#
-# "1)" is the whole sorting mechanism: digits sort before letters, so it lands
-# above bin/boot/etc in the disk's own listing without a pin, a shortcut, or
-# any special handling in the console. The bind's mount point is created inside
-# the disk folder, which for the boot disk means a directory at the root of the
-# filesystem — that is what makes it show up beside bin and boot rather than
-# three levels down under srv.
-#
-# It costs nothing in the sizes: the agent stops at mount points, so the disk
-# counts /srv/archive once, at its real path, and not again here.
-ARCHIVE="${ARCHIVE:-/srv/archive}"
-ARCHIVE_FOLDER="${ARCHIVE_FOLDER:-1) Archive}"
-if [ -d "$ARCHIVE" ]; then
-  archive_source=$(findmnt -no SOURCE -T "$ARCHIVE" 2>/dev/null | grep -m1 '^/dev/' || true)
-  archive_disk=$(disk_of "$archive_source")
-  archive_folder=${disk_folder[$archive_disk]:-}
-  if [ -n "$archive_folder" ]; then
-    archive_point="$BROWSE/$archive_folder/$ARCHIVE_FOLDER"
-    sudo mkdir -p "$archive_point"
-    bind "$ARCHIVE" "$archive_point"
-    echo "  $archive_folder/$ARCHIVE_FOLDER  <-  $ARCHIVE"
-  else
-    echo "  $ARCHIVE is on $archive_disk, which has no folder — skipping" >&2
-  fi
-fi
+# Nothing here binds the archive. It is a plain directory at the root of the
+# disk — "/1) Archive" — so it simply appears in the disk's own listing, first,
+# because digits sort before letters. deploy/setup-archive.sh puts it there.
+# A bind would mean the same files reachable by two paths inside one drive,
+# which is where every duplicate in these views came from.
 
-# An earlier version pinned the archive as "archives" by this same trick, and
-# that mount is still live on a board that has not been rebuilt since. It sits
-# at the root of the disk, OUTSIDE $BROWSE — the teardown above only walks
-# $BROWSE, so nothing has ever taken it down, and it shows up beside the new
-# "1) Archive" as a second copy of the same 18GB.
-#
-# Unmount it and remove the directory. Safe because it is only ever a bind:
-# the files live at $ARCHIVE and are not touched. Anything that is not a bind
-# of the archive is left exactly where it is.
+# Two mounts earlier versions left behind, both outside $BROWSE and so never
+# touched by the teardown above: the "archives" pin at the root of the disk,
+# and anything still bound under it. Unmounted only when findmnt confirms the
+# path is a bind — a real directory with files in it is never touched.
 for stale in "$BROWSE"/*/archives; do
   [ -e "$stale" ] || continue
   if mountpoint -q "$stale" 2>/dev/null; then
-    stale_src=$(findmnt -no SOURCE --target "$stale" 2>/dev/null | head -1 || true)
-    case "$stale_src" in
-      *"[/${ARCHIVE#/}]"|"$ARCHIVE")
-        sudo umount "$stale" 2>/dev/null || { echo "  old 'archives' pin is busy, leaving it" >&2; continue; }
-        echo "  unmounted the old 'archives' pin at ${stale#"$BROWSE"/}" ;;
-      *) echo "  ${stale#"$BROWSE"/} is not a bind of $ARCHIVE — leaving it alone" >&2; continue ;;
-    esac
+    if sudo umount -R "$stale" 2>/dev/null; then
+      echo "  unmounted the old 'archives' pin at ${stale#"$BROWSE"/}"
+    else
+      echo "  old 'archives' pin at ${stale#"$BROWSE"/} is busy, leaving it" >&2
+      continue
+    fi
   fi
-  sudo rmdir "$stale" 2>/dev/null && echo "  removed the old 'archives' directory at ${stale#"$BROWSE"/}"
+  sudo rmdir "$stale" 2>/dev/null && echo "  removed the old 'archives' directory"
 done
 
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"

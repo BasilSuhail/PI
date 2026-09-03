@@ -271,39 +271,61 @@ disk or the 12V supply, and both were fine. A reboot restored it;
 ### One folder per drive
 
 `deploy/setup-browse.sh`. The share opens on drives and only drives, the way
-"This PC" does on Windows and Locations does in Finder. A machine has drives,
-the drives are what you open, and anything that is not a drive has no business
-sitting beside them. Two disks in jug2 is two folders; plug in a third and
-there are three.
+"This PC" does on Windows. A machine has drives, the drives are what you open,
+and anything that is not a drive has no business sitting beside them. Two disks
+in jug2 is two folders; plug in a third and there are three.
 
 ```
 jug2/
-├── SSD-1TB/          <- /            1) Archive, bin, boot, etc, ...
+├── SSD-1TB/          <- /            "1) Archive", bin, boot, etc, ...
 ├── HDD-6TB/          <- /srv/storage
 └── MY STICK/         <- /media/MY STICK   (only while it is plugged in)
 ```
 
-The archive is **inside** the disk that holds it, first in that disk's own
-listing. `1)` is the entire sorting mechanism — digits sort before letters, so
-it lands above `bin` with no pin, no shortcut, and no special handling in the
-console. Two earlier passes put it at the top level instead, next to the
-drives, along with a "2) Plugged in" folder mirroring `/media`. Both were
-wrong: the top level is drives.
+**The archive is a directory, not a mount.** It lives at `/1) Archive`, at the
+root of the disk, named what it is called. It appears first in that disk's own
+listing because digits sort before letters — no pin, no bind, no shortcut, and
+no special case in the console. `deploy/setup-archive.sh` renames `/srv/archive`
+to it, which on one filesystem is instant and moves no data.
+
+Three earlier attempts put it somewhere else and each produced a duplicate: a
+pin bound inside the disk folder, then a folder at the top level beside the
+drives, then a bind named "1) Archive" inside the disk. Every one of them made
+the same files reachable by two paths within one drive. A directory cannot do
+that, which is the whole reason for the change.
+
+**Mount propagation was making copies of everything.** systemd leaves `/`
+shared, so `mount --bind / /srv/browse/SSD-1TB` joins the same peer group and
+every mount created under `/` afterwards is copied inside the bind. jug2 had
+grown a full set:
+
+```
+/srv/browse/SSD-1TB/srv/browse/HDD-6TB
+/srv/browse/SSD-1TB/srv/browse/1) Archive
+/srv/browse/SSD-1TB/srv/browse/2) Plugged in
+```
+
+Every disk folder is `--make-rprivate` immediately after it is bound now. A
+drive's folder shows that drive as it was when the tree was built, and nothing
+else.
 
 A drive found only under `/media` is one somebody plugged in, and it gets a
 folder like any other drive, named by its label — `PHOTOS` says more than
 `SSD-32GB`. A disk already seen elsewhere is skipped there, because that mount
-is the OS turning up twice rather than a new drive.
+is the OS, or an already-mounted disk, turning up twice.
 
-**The sizing bug this shape used to hide.** `subtree_bytes` stopped at a device
+**The console counts drives the same way.** `fetchDisks` deduplicated by device
+name, so `/dev/sda1` — the 512MB boot partition on the same physical disk as
+`/dev/sda2` — came through as a third drive: "SSD 1TB, HDD 6TB, SSD 1GB" for a
+board with two disks. It keys on the physical disk now, and the board's column
+lists drives and nothing else.
+
+**The sizing bug underneath all of it.** `subtree_bytes` stopped at a device
 boundary the way `du -x` does, and a bind mount of a filesystem onto itself
 keeps the same `st_dev`, so the guard never fired: `/srv/browse/SSD-1TB` is `/`
 bound at a path inside `/`, and walking the root walked the whole disk twice.
 `/srv` read 60.6GB on a disk holding 27.3GB. It reads `/proc/self/mountinfo`
-now and refuses to descend into a mount point below the one it started at,
-which is what `du -x` was always meant to mean. That is what makes the archive
-bind inside the disk free: the disk counts `/srv/archive` once, at its real
-path, and not again at `1) Archive`.
+now and refuses to descend into a mount point below the one it started at.
 
 ### Why `make browse` kept failing on jug2
 

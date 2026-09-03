@@ -47,7 +47,7 @@ help:
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
 	@echo "make logs            last 40 lines from the dashboard, systemd or k3s"
-	@echo "make archive               create /srv/archive on both boards, once"
+	@echo "make archive               create "/1) Archive" on both boards, once"
 	@echo "make automount             plugged-in drives mount themselves, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
 	@echo "make samba NODE=jug2       share that board's disks over SMB, asks for a password"
