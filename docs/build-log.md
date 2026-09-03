@@ -13,8 +13,8 @@ Convention: `jug1` is the 8GB board, `jug2` the 16GB board. Names follow the sto
 | RAM | 8GB | 16GB |
 | Boot | SD card, `/boot/firmware` only — must stay in the slot | its own SSD |
 | Root | its own 512GB SSD | 1TB SSD — apps, and the faster small backups |
-| Expansion | none | Waveshare PCIe SATA HAT — ASMedia ASM106x, both ports empty |
-| Bulk | — | 8TB HDD — **blocked on 12V** |
+| Expansion | none | Waveshare PCIe SATA HAT — ASMedia ASM106x, one port in use |
+| Bulk | — | 6TB HDD (ST6000VX009) on the HAT, 12V barrel fitted — blank, migration pending |
 | LAN | see `~/.ssh/config` on the Mac | same |
 | OS | Debian 13 trixie, aarch64, 4 cores | same |
 | Runs | OSINT stack (Docker Compose), `llama-server` | k3s server |
@@ -264,6 +264,15 @@ came off jug1 and went onto jug2, so the board that will hold the bulk disks is
 also the board with the cycles to serve them. Each board still boots and roots
 from a single SSD of its own; nothing is attached to the HAT's spare ports yet.
 
+The 6TB's first hot-plug left the controller disabled, and the symptom was
+misleading enough to be worth recording. Connecting a powered drive glitched
+the PCIe link; the kernel recovered it, and the controller came back with its
+COMMAND register at `0x0000` — memory decoding off, so every hardware register
+read `0xffffffff` and no disk could be detected while the drive spun happily
+and the HAT's activity LED showed green. Every visible symptom pointed at the
+disk or the 12V supply, and both were fine. A reboot restored it;
+`deploy/check-sata-hat.sh` reads that register now.
+
 ## Security posture
 
 | | |
@@ -282,9 +291,10 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 
 ## Open
 
-- [ ] **12V supply for the 8TB.** £15–25. On jug2 now, along with the SATA HAT the disk will hang off. No longer blocks the archive tier: `/srv/archive` lives on jug2's spare 873GB and the disk swaps in underneath later, per the migration `deploy/setup-archive.sh` prints. Still blocks the archive being an archive — one drive holding the only copy is a countdown.
-- [x] **Confirm the SATA HAT enumerates on jug2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`, and both report `sata_spd=<unknown>`, which is what an empty port says. jug2's own 1TB SSD is on `host0`, not on the HAT, so both of the HAT's ports are genuinely free.
-- [ ] **Verify the 12V barrel supply before trusting a disk to it.** Not answerable from software, and this is the one thing that could damage a drive. The ASMedia controller is powered from the PCIe connector, so it enumerates exactly as above whether or not the barrel jack is connected — the 12V only ever reaches the drive's power connector. Check with a multimeter: barrel tip positive against sleeve, then a SATA power connector with the black probe on a ground pin and the red on a 12V pin, expecting 11.4 to 12.6 V. A 12V 3A supply is 36 W, comfortable for one 3.5" drive whose spin-up peak is around 2 A, marginal for two.
+- [x] **12V supply.** A 12V 3A barrel is fitted and working: the drive spins up and the SATA link trains at 6.0 Gbps, which no dead or wrong-polarity supply would allow. Never metered — proven by the disk instead, which is the test that matters. Comfortable for one 3.5" drive, marginal for two.
+- [x] **Confirm the SATA HAT enumerates on jug2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`. jug2's own 1TB SSD is on `host0`, not on the HAT. Both ports were free at that check; `link1` now carries the 6TB at 6.0 Gbps.
+- [ ] **Bring the 6TB up as the archive disk.** Detected as `/dev/sdb`, an ST6000VX009 at 6.00 TB decimal — not the 8TB the plan assumed, and the records follow the disk. Factory blank. Partition and format it, then run the migration `deploy/setup-archive.sh` prints: mount it elsewhere, rsync `/srv/archive` across, verify, swap the fstab line in with `nofail`, and only then delete the copy on the root filesystem. One extra step the script does not mention: the existing `/srv/browse/archive` bind was made against the directory, so it must be re-bound after the new disk is mounted or Finder and the console keep showing the old contents.
+- [ ] **Run `make automount` after this merge.** The rule was mounting each board's own root and boot partitions under `/media` at every boot — writable, through the console's file browser. Fixed in the repo by excluding them by device and PARTUUID; both boards need the re-run to pick up the rule and to unmount the two self-mounts jug2 is carrying right now.
 - [ ] **cgroup flag on jug1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the Fritz!Box.
