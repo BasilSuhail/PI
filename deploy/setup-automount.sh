@@ -30,22 +30,42 @@ OWNER="${OWNER:-$(id -un)}"
 OWNER_UID="$(id -u "$OWNER")"
 OWNER_GID="$(id -g "$OWNER")"
 
+# The device behind a path, as exactly one line.
+#
+# findmnt answers with a row per mount, and a path can carry more than one: a
+# systemd automount unit and the real filesystem stack at the same target, the
+# former reporting its source as "systemd-1" rather than a device. Every use
+# here assumed a single line and a device. Neither held, and the failure was
+# quiet in both directions — the exclusion list below became a multi-line
+# string udev cannot parse, so it excluded nothing, and the cleanup further
+# down compared against it and matched nothing. The first row naming a device
+# is the answer to the question actually being asked.
+device_at() { findmnt -no SOURCE "$@" 2>/dev/null | grep -m1 '^/dev/' || true; }
+
 # Everything udev will ever see the boot partitions as, resolved from the live
-# mounts so the rule works on any board however it boots.
+# mounts so the rule works on any board however it boots. Deduplicated: the
+# same device can back more than one of these paths, and repeating an exclusion
+# makes the rule longer without making it stricter.
 self_excludes=""
 self_sources=""
 for mountpoint in / /boot/firmware; do
-  src=$(findmnt -no SOURCE "$mountpoint" 2>/dev/null) || continue
-  case "$src" in
-    /dev/*)
-      self_excludes="$self_excludes ENV{DEVNAME}!=\"$src\""
-      self_sources="$self_sources $src"
-      ;;
+  src=$(device_at "$mountpoint")
+  case " $self_sources " in
+    *" $src "*) src="" ;;   # already excluded by an earlier mount point
   esac
-  partuuid=$(findmnt -no PARTUUID "$mountpoint" 2>/dev/null) || true
+  if [ -n "$src" ]; then
+    self_excludes="$self_excludes ENV{DEVNAME}!=\"$src\""
+    self_sources="$self_sources $src"
+  fi
+  partuuid=$(findmnt -no PARTUUID "$mountpoint" 2>/dev/null | grep -m1 . || true)
   case "$partuuid" in
     ''|-) ;;  # not every filesystem has one; the DEVNAME match still guards
-    *) self_excludes="$self_excludes ENV{ID_PART_ENTRY_UUID}!=\"$partuuid\"" ;;
+    *)
+      case "$self_excludes" in
+        *"\"$partuuid\""*) ;;
+        *) self_excludes="$self_excludes ENV{ID_PART_ENTRY_UUID}!=\"$partuuid\"" ;;
+      esac
+      ;;
   esac
 done
 # A board whose root could not be named still gets a rule that parses, matching
@@ -199,16 +219,35 @@ sudo udevadm trigger --subsystem-match=block --action=add
 # re-run leaves the board as intended, without waiting for a reboot. Touching
 # the directory first trips systemd's automount into mounting the real
 # filesystem, which is the thing findmnt has to see to recognise it.
+#
+# Two things this got wrong, and both showed up on a real board:
+#
+#   -T answers for the filesystem CONTAINING a path, not the one mounted at
+#   it. An empty leftover directory under /media therefore reported the root
+#   filesystem, matched the exclusion list, and the script tried to unmount
+#   something that was never mounted — "umount: /media/bootfs: not mounted"
+#   under set -e, which ended the run. Whether the path is itself a mount
+#   point is the actual question, and mountpoint answers it.
+#
+#   The unmount was the last command of its branch, so a drive that would not
+#   come free killed the run too. This is opportunistic tidying of an old
+#   mistake; it should report what it could not do and carry on.
 if [ -n "$self_sources" ]; then
   for point in "$MEDIA"/*; do
     [ -d "$point" ] || continue
     ls "$point" >/dev/null 2>&1 || true
-    src=$(findmnt -no SOURCE -T "$point" 2>/dev/null) || continue
-    case "$self_sources" in
+    mountpoint -q "$point" 2>/dev/null || continue
+    src=$(device_at --mountpoint "$point")
+    [ -n "$src" ] || continue
+    case " $self_sources " in
       *" $src "*)
-        sudo systemd-umount "$point" 2>/dev/null || sudo umount "$point"
-        sudo rmdir "$point" 2>/dev/null || true
-        echo "==> Unmounted $point — it was $src, the operating system"
+        if sudo systemd-umount "$point" 2>/dev/null || sudo umount "$point" 2>/dev/null; then
+          sudo rmdir "$point" 2>/dev/null || true
+          echo "==> Unmounted $point — it was $src, the operating system"
+        else
+          echo "  $point is $src, the operating system, and will not unmount." >&2
+          echo "  It is excluded from now on; a reboot will clear it." >&2
+        fi
         ;;
     esac
   done
@@ -219,7 +258,8 @@ echo "==> Mounted under $MEDIA"
 if [ -n "$(ls -A "$MEDIA" 2>/dev/null)" ]; then
   for point in "$MEDIA"/*; do
     [ -d "$point" ] || continue
-    printf '  %-24s %s\n' "$(basename "$point")" "$(findmnt -no SOURCE,SIZE "$point" 2>/dev/null || echo 'not mounted')"
+    printf '  %-24s %s\n' "$(basename "$point")" \
+      "$(findmnt -no SOURCE,SIZE "$point" 2>/dev/null | grep -m1 '^/dev/' || echo 'not mounted')"
   done
 else
   echo "  nothing yet — plug a drive in and it appears here"
