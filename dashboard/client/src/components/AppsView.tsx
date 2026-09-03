@@ -130,7 +130,12 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               <small>{isInternal(app.url) ? 'in this console' : new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
             </div>
             <div class="app-health">
-              <StatusDot online={sw ? sw.on && !!app.healthy : !!app.healthy} size="sm" />
+              {/* A switchable tile is not probed — a stopped workload would
+                  fail a health check by design, and reporting that as
+                  "unreachable" would be describing the intent as a fault. Its
+                  light follows the cluster instead: green only once the pod is
+                  actually up, not merely asked for. */}
+              <StatusDot online={sw ? sw.text === 'running' : !!app.healthy} size="sm" />
               <span>
                 {sw ? sw.text : app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}
               </span>
