@@ -424,6 +424,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
   color:var(--ink-2);background:linear-gradient(var(--btn-1),var(--btn-2));
   border:1px solid var(--btn-edge);box-shadow:inset 0 1px var(--gloss)}
+/* The tile lifts on hover and the switch is its sibling, not its child, so
+   without this it stays behind while the card moves out from under it. */
+.app-slot:hover .app-power{transform:translateY(-3px)}
+.app-power{transition:transform .16s ease,filter .16s ease}
 .app-power:hover{filter:brightness(1.06)}
 .app-power:active{filter:brightness(.94)}
 .app-power:focus-visible{outline:2px solid var(--link);outline-offset:2px}

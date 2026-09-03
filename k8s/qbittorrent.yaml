@@ -65,7 +65,7 @@ spec:
         node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: gluetun
-          image: qmcgaw/gluetun:v3.40.0
+          image: qmcgaw/gluetun:v3.40.4
           env:
             - name: VPN_SERVICE_PROVIDER
               value: airvpn
@@ -137,7 +137,7 @@ spec:
             failureThreshold: 12
 
         - name: qbittorrent
-          image: lscr.io/linuxserver/qbittorrent:5.0.3
+          image: lscr.io/linuxserver/qbittorrent:5.2.3
           env:
             - name: PUID
               value: "__UID__"
@@ -165,8 +165,15 @@ spec:
               cpu: 50m
             limits:
               memory: 768Mi
+          # A TCP check, not an HTTP one. qBittorrent 5 puts its WebUI behind
+          # a login, and whether GET / answers 200 or 401 depends on settings
+          # this manifest does not own — a 401 fails readiness, the Service
+          # loses its endpoint, and the page is unreachable for a client that
+          # is running perfectly. That the port is listening is the honest
+          # claim to make here; whether the tunnel is up is gluetun's probe,
+          # and that is the one that matters.
           readinessProbe:
-            httpGet: { path: /, port: 8080 }
+            tcpSocket: { port: 8080 }
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 30

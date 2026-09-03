@@ -65,15 +65,18 @@ fi
 # service range has no API of its own, so it is taken from the width of the
 # kubernetes service's own address: that address is inside it by definition.
 echo "==> Cluster networks"
-POD_CIDRS=$(kube get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}' | grep . | paste -sd, -)
-SVC_IP=$(kube -n default get svc kubernetes -o jsonpath='{.spec.clusterIP}')
-SVC_CIDR=$(echo "$SVC_IP" | awk -F. '{print $1"."$2".0.0/16"}')
-CLUSTER_CIDRS="${POD_CIDRS},${SVC_CIDR}"
+# `|| true` on both, because the point of the check below is to explain the
+# failure. Without it set -e ends the run inside the pipeline and the
+# explanation never prints.
+POD_CIDRS=$(kube get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}' 2>/dev/null | grep . | paste -sd, - || true)
+SVC_IP=$(kube -n default get svc kubernetes -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 if [ -z "$POD_CIDRS" ] || [ -z "$SVC_IP" ]; then
   echo "Could not read the cluster's networks. Without them the web interface" >&2
   echo "would be unreachable behind the killswitch, so nothing was applied." >&2
   exit 1
 fi
+SVC_CIDR=$(echo "$SVC_IP" | awk -F. '{print $1"."$2".0.0/16"}')
+CLUSTER_CIDRS="${POD_CIDRS},${SVC_CIDR}"
 printf '  %-16s %s\n' "may bypass" "$CLUSTER_CIDRS"
 printf '  %-16s %s\n' "everything else" "goes through AirVPN or nowhere"
 echo
@@ -177,7 +180,15 @@ render() {
       -e "s|__UID__|${OWNER_UID}|g" -e "s|__GID__|${OWNER_GID}|g" \
       -e "s|__CLUSTER_CIDRS__|${CLUSTER_CIDRS}|g" "$1"
 }
+# The manifest says replicas: 0 because that is right on a first install. On a
+# re-run it would stop a download in progress, so whatever the deployment is
+# set to now is put back afterwards.
+WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || true)
 render "${REPO_ROOT}/k8s/qbittorrent.yaml" | kube apply -f -
+if [ -n "$WAS" ] && [ "$WAS" != "0" ]; then
+  kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
+  echo "  it was running, so it has been left running"
+fi
 
 cat <<NEXT
 
