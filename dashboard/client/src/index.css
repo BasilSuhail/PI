@@ -415,6 +415,15 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .app-power.on{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,transparent);
   background:color-mix(in srgb,var(--crit) 12%,transparent)}
 .app-power svg{flex:none}
+/* The tunnel, on the tile. Green only when there is an address to show:
+   "the pod is running" is not the claim being made here. */
+.app-vpn{display:flex;align-items:center;gap:5px;margin-top:6px;padding-top:6px;
+  border-top:1px solid var(--panel-line);
+  font-family:var(--mono);font-size:9px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-vpn.up{color:var(--ok)}
+.app-vpn svg{flex:none}
+
 .app-note.bad{border-color:color-mix(in srgb,var(--crit) 40%,transparent);
   background:color-mix(in srgb,var(--crit) 9%,transparent)}
 .app-note.bad strong{color:var(--crit)}

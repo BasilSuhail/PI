@@ -664,6 +664,33 @@ SQLite read at random is the definition of what goes on the fast disk, and it
 sat on the 6TB to be findable rather than because it was big. A torrent client
 with write access to a password vault is a bad trade for a convenience.
 
+### Seeing the tunnel, not trusting it
+
+The tile does not say "running". It says where the traffic is leaving from.
+
+`gluetun` is asked directly for `/v1/vpn/status` and `/v1/publicip/ip`, and the
+address it reports is what the console shows. A pod being up and a tunnel being
+up are different claims, and only the second one matters before a download
+starts — so the console makes the second one rather than the first.
+
+Two things had to be got right, and both were found by reading gluetun's
+documentation rather than assuming:
+
+**`/v1/openvpn/status` is the legacy OpenVPN path** and answers nothing on a
+WireGuard tunnel. As a readiness probe it would never have passed, and the pod
+would have sat un-ready forever with a tunnel that was working fine.
+
+**Every control route is private by default** in recent versions — there are no
+public routes at all. The probe would have been refused for the second reason
+as well. Exactly two GET routes are opened, in a config file mounted from a
+ConfigMap: the status, and the public IP. Neither is a secret; one is a boolean
+and the other is AirVPN's own address, which every peer already sees. Anything
+that could change the tunnel — `PUT /v1/vpn/status` in particular — stays
+denied, so nothing else in the cluster can quietly drop the VPN.
+
+The control port is on the Service and not on the Ingress, so it is reachable
+inside the cluster and never from the tailnet.
+
 ### The console's power switch, and what it costs
 
 The workload installs stopped and is meant to be off unless something is

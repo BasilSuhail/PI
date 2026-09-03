@@ -18,6 +18,32 @@
 #
 # Starts at zero replicas. This is the one workload meant to be off most of
 # the time — see the Role at the bottom, which lets the console turn it on.
+# gluetun's control server is private by default in recent versions — every
+# route requires authentication and there are no public ones. Two GET routes
+# are opened here and nothing else:
+#
+#   GET /v1/vpn/status     is the tunnel up. Also what the readiness probe
+#                          asks, which is why it cannot stay locked.
+#   GET /v1/publicip/ip    the address the traffic is leaving from, so the
+#                          console can show it and you never have to take the
+#                          tunnel on trust.
+#
+# Neither is a secret: one is a boolean and the other is AirVPN's own address,
+# which every peer already sees. Everything else stays denied, including
+# `PUT /v1/vpn/status`, which could otherwise stop the tunnel from anywhere in
+# the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qbittorrent-gluetun-auth
+  namespace: jug
+data:
+  config.toml: |
+    [[roles]]
+    name = "console"
+    routes = ["GET /v1/vpn/status", "GET /v1/publicip/ip"]
+    auth = "none"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,17 +111,27 @@ spec:
           volumeMounts:
             - name: tun
               mountPath: /dev/net/tun
+            - name: gluetun-auth
+              mountPath: /gluetun/auth/config.toml
+              subPath: config.toml
+              readOnly: true
           resources:
             requests:
               memory: 32Mi
               cpu: 20m
             limits:
               memory: 128Mi
-          # gluetun answers on 8000 with the tunnel's own health, which is a
-          # better readiness signal than anything qBittorrent could report:
-          # the client is useless until this passes.
+          ports:
+            - name: control
+              containerPort: 8000
+          # /v1/vpn/status, not /v1/openvpn/status — the latter is the legacy
+          # OpenVPN path and answers nothing on a WireGuard tunnel, so the
+          # probe would never pass and the pod would never go ready.
+          #
+          # The tunnel's own health is a better readiness signal than anything
+          # qBittorrent could report: the client is useless until this passes.
           readinessProbe:
-            httpGet: { path: /v1/openvpn/status, port: 8000 }
+            httpGet: { path: /v1/vpn/status, port: control }
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 12
@@ -139,6 +175,9 @@ spec:
           hostPath:
             path: /dev/net/tun
             type: CharDevice
+        - name: gluetun-auth
+          configMap:
+            name: qbittorrent-gluetun-auth
         - name: config
           hostPath:
             path: __APPS_DIR__/qBittorrent
@@ -160,6 +199,12 @@ spec:
     - name: http
       port: 80
       targetPort: 8080
+    # Read-only, and only the two routes the ConfigMap opens. The ingress
+    # below points at `http` alone, so this is reachable from inside the
+    # cluster and never from the tailnet.
+    - name: control
+      port: 8000
+      targetPort: control
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

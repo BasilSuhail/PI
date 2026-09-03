@@ -152,6 +152,20 @@ export interface TorrentState {
   ready: number;
   /** False when the cluster cannot be reached, which is not the same as off. */
   reachable: boolean;
+  /**
+   * The tunnel, read from gluetun itself rather than inferred from the pod
+   * being up. "running" is not the same as "protected", and the difference is
+   * the whole reason this workload exists in the shape it does.
+   *
+   * Null while it is stopped or still coming up.
+   */
+  vpn: {
+    /** gluetun's own word: "running", "stopped", "starting". */
+    status: string | null;
+    /** The address traffic is leaving from. AirVPN's, not yours. */
+    publicIp: string | null;
+    country: string | null;
+  } | null;
 }
 
 /**

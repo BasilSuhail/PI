@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { Chevron, Gauge, Power } from './icons';
+import { Chevron, Gauge, Power, Shield } from './icons';
 import type { AppTile, TorrentState } from '../../../shared/fleet';
 import { getTorrent, setTorrent } from '../lib/api';
 import { StatusDot } from './primitives';
@@ -135,6 +135,22 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
                 {sw ? sw.text : app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}
               </span>
             </div>
+            {/* Read from gluetun, not inferred from the pod being up. Running
+                and protected are different claims, and this is the one worth
+                seeing before a download starts — from a phone, with no
+                terminal anywhere near it. */}
+            {sw && torrent?.vpn && (
+              <div class={`app-vpn ${torrent.vpn.publicIp ? 'up' : ''}`}>
+                <Shield size={11} />
+                <span>
+                  {torrent.vpn.publicIp
+                    ? `via ${torrent.vpn.publicIp}${torrent.vpn.country ? ` · ${torrent.vpn.country}` : ''}`
+                    : torrent.vpn.status === 'running'
+                      ? 'tunnel up, address pending'
+                      : 'tunnel not up yet'}
+                </span>
+              </div>
+            )}
             <Chevron size={16} class="app-arrow" />
           </a>
           {sw && sw.action && (
