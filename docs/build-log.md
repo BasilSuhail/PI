@@ -533,6 +533,27 @@ failing at the only thing it is for. The installer asks each container directly
 after the rollout, with a `touch` in its own data folder, and prints the `id`
 and `chown` to run if any of them cannot.
 
+**A capability that was missing for as long as nothing was new.** Uptime Kuma's
+entrypoint runs `chown -R node:node /app/data` before handing off, and the
+manifest drops every capability except the three `setpriv` and ICMP need — so
+`CAP_CHOWN` was gone. That was invisible while it sat on its old volume,
+because `chown(1)` skips the syscall when ownership already matches and the
+directory had been correct since the day it was created. Pointed at a fresh
+directory it actually tries, and dies before Kuma's own code runs:
+
+```
+chown: changing ownership of '/app/data': Operation not permitted
+```
+
+`CHOWN` added. Its data also moved one level down, to `Uptime/data`, because
+Kuma takes ownership of everything inside its mount — including the note left
+beside it naming where the data went, which it then failed on by name.
+
+This is the third time this workload has taught the same lesson: read what the
+container says rather than reasoning about what it ought to need. The write
+test at the end of the install is what caught it, and readiness alone would
+not have.
+
 **Jellyfin on a Pi 5 direct-plays and does not transcode.** A client that needs
 the video re-encoded will stutter and 4K will not work. That is the hardware,
 not the configuration.

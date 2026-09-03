@@ -101,7 +101,18 @@ spec:
               # NET_RAW: without it Kuma cannot send ICMP, so ping monitors
               # fail while HTTP ones pass, which reads as a dead board rather
               # than a missing capability.
-              add: ["SETGID", "SETUID", "NET_RAW"]
+              #
+              # CHOWN: the entrypoint runs `chown -R node:node /app/data`
+              # before handing off. On the old local-path volume the directory
+              # was already owned correctly, and chown(1) skips the syscall
+              # when ownership already matches — so the missing capability was
+              # invisible for as long as the directory was never new. Pointed
+              # at a fresh directory it actually tries, and dies with
+              # "chown: changing ownership of '/app/data': Operation not
+              # permitted" before Kuma's own code runs. The same shape of
+              # failure as the setpriv one above, and found the same way:
+              # by reading what the container said, not by guessing.
+              add: ["SETGID", "SETUID", "NET_RAW", "CHOWN"]
       volumes:
   # A note on `type: Directory` below, which is doing real work.
   #
@@ -124,9 +135,13 @@ spec:
         # night — audible, warm, and wearing out for a database that would fit
         # on a floppy. It has no business on the big disk: it is not big, and
         # what it does is exactly what the big disk is worst at.
+        # One level down, not the app folder itself. Kuma chowns everything
+        # inside this mount to its own user, so anything else kept beside it —
+        # the note naming where the data went, for one — becomes a file the
+        # entrypoint tries to take ownership of and fails on.
         - name: data
           hostPath:
-            path: __APPS_DIR__/Uptime
+            path: __APPS_DIR__/Uptime/data
             type: Directory
 ---
 apiVersion: v1
