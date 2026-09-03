@@ -36,13 +36,14 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault agents deploy check logs bootstrap archive automount browse samba mounts sata
+.PHONY: help dashboard dashboard-k8s uptime vault media agents deploy check logs bootstrap archive automount browse samba mounts sata
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
 	@echo "make dashboard       the old systemd unit, kept as the way back. Not both."
 	@echo "make uptime          Uptime Kuma on its own tailnet name, asks for an OAuth client once"
 	@echo "make vault           Vaultwarden on its own tailnet name, needs make uptime first"
+	@echo "make media           Jellyfin and Kiwix, and moves all four apps' data onto the 6TB"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
@@ -74,6 +75,11 @@ uptime:
 # own: registration opens for the first account and is closed by hand after.
 vault:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-vaultwarden.sh'
+
+# Jellyfin and Kiwix, plus the storage move for Vaultwarden and Uptime Kuma.
+# Override where things land:  make media DATA_DIR=/somewhere/else
+media:
+	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-media.sh'
 
 agents:
 	@for node in $(AGENT_NODES); do \

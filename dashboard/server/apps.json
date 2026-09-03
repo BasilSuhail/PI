@@ -34,5 +34,17 @@
     "url": "#files",
     "nodeId": null,
     "icon": "/app-icons/files.png"
+  },
+  {
+    "name": "Jellyfin",
+    "url": "https://jellyfin.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/jellyfin.svg"
+  },
+  {
+    "name": "Kiwix",
+    "url": "https://kiwix.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/kiwix.svg"
   }
 ]
