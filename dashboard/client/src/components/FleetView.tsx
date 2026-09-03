@@ -14,6 +14,32 @@ export const SORT_COLUMNS: Array<{ key: SortKey; tab: string; head: string; fmt:
 
 const ROWS = 5;
 
+/**
+ * Short names for a board's drives: SSD1, HDD1, SD1.
+ *
+ * Numbered per kind rather than across the set, so the first SSD is SSD1 even
+ * on a board that also has a spinning disk — the number answers "which of
+ * these" and there is no useful ordering between an SSD and an HDD to encode.
+ *
+ * Deliberately shorter than the names the Files view uses. There the question
+ * is which drive you are opening, and "SSD 1TB" answers it; here the name sits
+ * in a 46px column beside a meter, and the capacity is already on the row.
+ */
+const diskLabels = (disks: FleetNode['disks']): string[] => {
+  const seen = new Map<string, number>();
+  return disks.map((d) => {
+    const dev = d.device.replace(/^\/dev\//, '');
+    const kind =
+      d.rotational === true ? 'HDD'
+      : d.rotational === false ? 'SSD'
+      : /^mmcblk/.test(dev) ? 'SD'
+      : 'DISK';
+    const n = (seen.get(kind) ?? 0) + 1;
+    seen.set(kind, n);
+    return `${kind}${n}`;
+  });
+};
+
 const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOpen: (id: string) => void }) => {
   const unreachable = node.online && !!node.error;
 
@@ -40,9 +66,21 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
   const cpu = node.cpu?.usagePct ?? 0;
   const mem = node.mem?.usedPct ?? 0;
   const thr = node.temp?.throttled;
-  // Root filesystem: the boot medium is the SD card on pi1, so the disk the
-  // system actually lives on is the one worth a bar.
-  const disk = node.disks.find((d) => d.mount === '/') ?? node.disks[0];
+  // Every drive gets a bar, not just the one the system boots from. A 6TB that
+  // fills up is exactly as interesting as a boot disk that does, and a board
+  // whose second drive is invisible cannot tell you it has gone.
+  //
+  // The boot disk leads, then the rest by mount point, so the order is stable
+  // between polls rather than following whatever the fleet poll happened to
+  // return first.
+  const disks = [...node.disks].sort((a, b) =>
+    (a.mount === '/' ? 0 : 1) - (b.mount === '/' ? 0 : 1) || a.mount.localeCompare(b.mount),
+  );
+  const labels = diskLabels(disks);
+  // Swap and the thumbnail cache are files on the boot disk, not drives. They
+  // are labelled with the disk they sit on so the card says where those bytes
+  // actually are, rather than leaving them floating.
+  const bootLabel = labels[disks.findIndex((d) => d.mount === '/')] ?? labels[0];
   // A board with swap configured but untouched still gets the row: nothing
   // there is the answer, and an absent row would read as unknown instead.
   const swap =
@@ -77,49 +115,59 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
       </p>
 
       <div class="mrow">
-        <span>CPU</span><Meter value={cpu} tone={cpuTone(cpu)} /><strong>{pct(cpu)}</strong>
+        <span class="lbl">CPU</span><Meter value={cpu} tone={cpuTone(cpu)} />
+        <strong class="fig">{pct(cpu)}</strong>
       </div>
       <div class="mrow">
-        <span>RAM</span><Meter value={mem} tone={memTone(mem)} /><strong>{pct(mem)}</strong>
+        <span class="lbl">RAM</span><Meter value={mem} tone={memTone(mem)} />
+        <strong class="fig">{pct(mem)}</strong>
       </div>
-      {disk && (
-        <div class="mrow" title={`${disk.device} on ${disk.mount} — ${bytes(disk.usedBytes)} of ${capacity(disk.totalBytes)}`}>
-          <span>DISK</span>
-          <Meter value={disk.usedPct} tone={diskTone(disk.usedPct)} />
-          <strong>{pct(disk.usedPct)}</strong>
+      {disks.map((d, i) => (
+        <div class="mrow" key={d.device} title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used`}>
+          <span class="lbl">{labels[i]}</span>
+          <Meter value={d.usedPct} tone={diskTone(d.usedPct)} />
+          {/* Used and total rather than a percentage: "27 GB / 917 GB" answers
+              both "how full" and "how big", and the meter still carries the
+              proportion on its own. */}
+          <strong class="fig">{bytes(d.usedBytes, 0)} / {bytes(d.totalBytes, 0)}</strong>
         </div>
-      )}
+      ))}
 
-      {/* A fourth row carrying two of them. The figure here is the amount, not
-          the proportion: 5% of a swap nobody has looked at says nothing, and
-          102 MB is the thing worth knowing. The meter still carries the
-          proportion, and the total is in the tooltip. */}
+      {/* One line carrying two, because neither is a drive and neither earns a
+          row of its own. The figure is the amount, not the proportion: 5% of a
+          swap nobody has looked at says nothing, and 102 MB is the thing worth
+          knowing. The meter still carries the proportion, the total is in the
+          tooltip, and the tag says which disk the bytes are on. */}
       {(swap || node.cache) && (
-        <div class="mrow split">
+        <div class="mrow duo">
           {swap && (
-            <div class="mhalf" title={`${bytes(swap.used)} of ${bytes(swap.total)} swap in use`}>
-              <span>SWAP</span>
+            <span class="half" title={`${bytes(swap.used)} of ${bytes(swap.total)} swap in use, on ${bootLabel}`}>
+              <span class="lbl dim">SWAP</span>
               <Meter value={swap.pct} tone={swapTone(swap.pct)} />
-              <strong>{bytes(swap.used)}</strong>
-            </div>
+              <strong class="fig">{bytes(swap.used)}</strong>
+              <span class="on">{bootLabel}</span>
+            </span>
           )}
           {node.cache && (
-            <div
-              class="mhalf"
-              title={`${node.cache.count} thumbnails, ${bytes(node.cache.bytes)} of a ${bytes(node.cache.capBytes)} cap`}
+            <span
+              class="half"
+              title={`${node.cache.count} thumbnails, ${bytes(node.cache.bytes)} of a ${bytes(node.cache.capBytes)} cap, on ${bootLabel}`}
             >
-              <span>CACHE</span>
+              <span class="lbl dim">CACHE</span>
               <Meter value={(node.cache.bytes / node.cache.capBytes) * 100} tone="aqua" />
-              <strong>{bytes(node.cache.bytes)}</strong>
-            </div>
+              <strong class="fig">{bytes(node.cache.bytes)}</strong>
+              <span class="on">{bootLabel}</span>
+            </span>
           )}
         </div>
       )}
 
       <div class="c-meta">
-        <span><Thermo size={13} />{celsius(node.temp?.cpuC)}</span>
-        {node.capabilities.includes('power') && <span><Power size={13} />{watts(node.power?.watts)}</span>}
-        <span><Cpu size={13} />{uptime(node.uptimeSec)}</span>
+        <span><Thermo size={13} /><em>TEMP</em><b>{celsius(node.temp?.cpuC)}</b></span>
+        {node.capabilities.includes('power') && (
+          <span><Power size={13} /><em>POWER</em><b>{watts(node.power?.watts)}</b></span>
+        )}
+        <span><Cpu size={13} /><em>UPTIME</em><b>{uptime(node.uptimeSec)}</b></span>
         <span class={`chip ${thr?.now || thr?.everSinceBoot ? 'warn' : 'ok'}`}>
           {thr?.now ? 'throttling now' : thr?.everSinceBoot ? 'throttled since boot' : '✓ nominal'}
         </span>
