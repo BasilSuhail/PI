@@ -7,6 +7,7 @@
  */
 
 import { createGzip } from 'node:zlib';
+import { fetchTorrentState, setTorrentRunning } from './lib/kube';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -90,6 +91,33 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
 
   if (url.pathname === '/api/apps') {
     sendJson(req, res, 200, await fetchApps());
+    return true;
+  }
+
+  // The download stack's power switch. GET reports what the cluster has, POST
+  // sets it — the only write this server can make against the cluster, and it
+  // is one integer on one deployment (see the Role in k8s/qbittorrent.yaml).
+  if (url.pathname === '/api/torrent') {
+    if (req.method === 'POST') {
+      const { running } = JSON.parse(await readBody(req)) as { running?: unknown };
+      if (typeof running !== 'boolean') {
+        sendJson(req, res, 400, { error: 'running must be true or false' });
+        return true;
+      }
+      const state = await setTorrentRunning(running);
+      // A refusal here is almost always RBAC: the console was deployed before
+      // the Role existed, or the Role was removed. Say so rather than leaving
+      // a button that silently does nothing.
+      if (!state) {
+        sendJson(req, res, 502, {
+          error: 'the cluster refused the change — run `make torrent` to install the permission',
+        });
+        return true;
+      }
+      sendJson(req, res, 200, state);
+      return true;
+    }
+    sendJson(req, res, 200, await fetchTorrentState());
     return true;
   }
 

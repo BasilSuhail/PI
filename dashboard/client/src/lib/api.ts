@@ -1,7 +1,7 @@
 /** Thin fetch layer plus the polling hook the views use. */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AppTile, ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
+import type { AppTile, TorrentState, ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
 
 const json = async <T>(path: string): Promise<T> => {
   const res = await fetch(path, { cache: 'no-store' });
@@ -137,4 +137,26 @@ export const upload = async (id: string, path: string, file: File): Promise<void
     const detail = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(detail?.error ?? `upload refused (${res.status})`);
   }
+};
+
+/**
+ * The download stack's power switch.
+ *
+ * Separate from the apps poll on purpose: the shelf refreshes on a timer and
+ * this changes only when somebody presses the button, so folding it into that
+ * poll would mean a cluster call every few seconds to learn nothing.
+ */
+export const getTorrent = () => json<TorrentState>('/api/torrent');
+
+export const setTorrent = async (running: boolean): Promise<TorrentState> => {
+  const res = await fetch('/api/torrent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ running }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as TorrentState;
 };
