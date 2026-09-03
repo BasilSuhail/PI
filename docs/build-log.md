@@ -14,7 +14,7 @@ Convention: `jug1` is the 8GB board, `jug2` the 16GB board. Names follow the sto
 | Boot | SD card, `/boot/firmware` only — must stay in the slot | its own SSD |
 | Root | its own 512GB SSD | 1TB SSD — apps, and the faster small backups |
 | Expansion | none | Waveshare PCIe SATA HAT — ASMedia ASM106x, one port in use |
-| Bulk | — | 6TB HDD (ST6000VX009) on the HAT, 12V barrel fitted — blank, migration pending |
+| Bulk | — | 6TB HDD (ST6000VX009) on the HAT, 12V barrel fitted — plain storage, not the archive |
 | LAN | see `~/.ssh/config` on the Mac | same |
 | OS | Debian 13 trixie, aarch64, 4 cores | same |
 | Runs | OSINT stack (Docker Compose), `llama-server` | k3s server |
@@ -293,7 +293,7 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 
 - [x] **12V supply.** A 12V 3A barrel is fitted and working: the drive spins up and the SATA link trains at 6.0 Gbps, which no dead or wrong-polarity supply would allow. Never metered — proven by the disk instead, which is the test that matters. Comfortable for one 3.5" drive, marginal for two.
 - [x] **Confirm the SATA HAT enumerates on jug2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`. jug2's own 1TB SSD is on `host0`, not on the HAT. Both ports were free at that check; `link1` now carries the 6TB at 6.0 Gbps.
-- [ ] **Bring the 6TB up as the archive disk.** Detected as `/dev/sdb`, an ST6000VX009 at 6.00 TB decimal — not the 8TB the plan assumed, and the records follow the disk. Factory blank. Partition and format it, then run the migration `deploy/setup-archive.sh` prints: mount it elsewhere, rsync `/srv/archive` across, verify, swap the fstab line in with `nofail`, and only then delete the copy on the root filesystem. One extra step the script does not mention: the existing `/srv/browse/archive` bind was made against the directory, so it must be re-bound after the new disk is mounted or Finder and the console keep showing the old contents.
+- [ ] **Mount the 6TB as plain storage.** By decision: it joins the system as a bulk disk and takes over nothing. `/srv/archive` stays on the SSD exactly where it is, and the migration `deploy/setup-archive.sh` prints remains available for later if the archive ever outgrows the SSD. Partition and format `/dev/sdb`, label it, and the automount rule mounts it under `/media` at boot and on plug; `make browse` then adds it to Finder alongside the others.
 - [ ] **Run `make automount` after this merge.** The rule was mounting each board's own root and boot partitions under `/media` at every boot — writable, through the console's file browser. Fixed in the repo by excluding them by device and PARTUUID; both boards need the re-run to pick up the rule and to unmount the two self-mounts jug2 is carrying right now.
 - [ ] **cgroup flag on jug1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.

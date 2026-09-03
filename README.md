@@ -331,7 +331,7 @@ Finder — neither waits on the 8TB, which is still blocked on a 12V supply and
 still holds up the archive tier proper.
 
 The Waveshare PCIe SATA HAT sits on jug2 and is confirmed working: an ASMedia
-SATA controller on the PCIe bus with a 6TB archive drive on one port, on its
+SATA controller on the PCIe bus with a 6TB storage drive on one port, on its
 own 12V supply. `make sata NODE=jug2` reports the port, the controller, and
 whether the controller is actually switched on — a hot-plugged drive once left
 it disabled while looking perfectly healthy — without changing anything.
