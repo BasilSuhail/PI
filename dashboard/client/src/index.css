@@ -659,11 +659,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    context for the number in front of it, not a second number to read. */
 .fx-cap{color:var(--faint)}
 .fx-row.on .fx-cap{color:rgba(255,255,255,.72)}
-/* A pinned shortcut sits above the disk's own contents, so it needs to read
-   as a different kind of row rather than a folder that sorts oddly. */
-.fx-row.pin .fx-name{font-weight:600}
-.fx-pin{flex:none;color:var(--link);font-family:var(--mono);font-size:8px}
-.fx-row.on .fx-pin{color:rgba(255,255,255,.85)}
+/* A read-only root says so on the row, before you try to change it. */
 .fx-lock{flex:none;padding:1px 5px;border:1px solid var(--panel-line);border-radius:99px;
   color:var(--faint);font-family:var(--mono);font-size:8px;letter-spacing:.02em}
 .fx-row.on .fx-lock{border-color:rgba(255,255,255,.45);color:rgba(255,255,255,.85)}

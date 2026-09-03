@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# Builds /srv/browse — one directory per disk, named by what the disk is.
+# Builds /srv/browse — "1) Archive" first, then one directory per disk.
 #
-# The tree answers "which drive, then where on it": SSD-1TB, HDD-6TB, and under
-# each the whole of that disk's own filesystem, system files included — a disk
-# that hides its own /etc is a brochure, not a view. The console's Files view
-# carries the same names from the same sysfs facts (read_disks in the agent,
-# withRotation in the dashboard server), so both doors into the files agree.
+# Two kinds of thing sit at the top, and the split is the point:
+#
+#   1) Archive   the data. Apps, databases, storage, backups, keys — the one
+#                folder worth copying somewhere else, because copying it takes
+#                everything that matters and nothing that does not.
+#   SSD-1TB      a disk, whole. The OS, /etc, and every random directory a
+#                Linux install accumulates. A disk that hides its own /etc is
+#                a brochure, not a view, so none of it is hidden — it is just
+#                not mixed in with the data.
+#   HDD-6TB      another disk, and every disk added later joins on the same
+#                terms: its own folder at the top, nothing implied about what
+#                goes in it.
+#
+# The console's Files view carries the same names from the same sysfs facts
+# (read_disks in the agent, withRotation in the dashboard server), so both
+# doors into the files agree.
 #
 # Bind mounts, not symlinks: Samba refuses to follow a symlink out of a share
 # unless `wide links = yes`, and that option turns off a protection worth
@@ -25,6 +36,7 @@
 set -euo pipefail
 
 BROWSE="${BROWSE:-/srv/browse}"
+MEDIA="${MEDIA:-/media}"
 OWNER="${OWNER:-$(id -un)}"
 FSTAB=/etc/fstab
 MARK="# jug-browse"
@@ -94,13 +106,18 @@ name_for() { basename "$1" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g;s/^-//;s/
 echo "==> Reading mounted filesystems"
 # -n no headings, -l list form. SOURCE is the device; anything not under /dev
 # is a pseudo-filesystem or a bind of a directory, and is not a disk.
-mapfile -t rows < <(findmnt -nlo TARGET,SOURCE | sort -u)
+#
+# SOURCE first, TARGET second, because `read` splits on whitespace and a mount
+# point may now contain a space ("1) Archive"). A device name never does, so
+# reading the device into its own word and letting the target take the rest of
+# the line is the ordering that cannot mis-split.
+mapfile -t rows < <(findmnt -nlo SOURCE,TARGET | sort -u)
 
 declare -A disk_root=()   # disk -> its shallowest mount, the folder's contents
 declare -A disk_depth=()  # depth of that mount, "/" being the shallowest
 mounts=()
 for row in "${rows[@]}"; do
-  read -r target source <<<"$row"
+  read -r source target <<<"$row"
   [[ "$source" == /dev/* ]] || continue
   [[ "$target" =~ $skip_re ]] && continue
   [[ "$target" == "$BROWSE"/* ]] && continue
@@ -129,19 +146,59 @@ sudo mkdir -p "$BROWSE"
 for point in "$BROWSE"/*; do
   [ -e "$point" ] || continue
   if mountpoint -q "$point"; then
+    # Cut propagation first. The removable mirror is a slave of /media, but a
+    # mirror re-created from fstab at boot is a shared peer of it, and
+    # unmounting a peer unmounts the original — every plugged-in drive, ejected
+    # by a script that only meant to rebuild a folder. Making it slave again is
+    # a no-op when it already is.
+    sudo mount --make-rslave "$point" 2>/dev/null || true
     sudo umount -R "$point" || {
       echo "  $point is busy. Close Finder windows and shells on it, then re-run." >&2
       exit 1
     }
   fi
 done
+
+# Belt and braces before a recursive delete. If anything under here is still a
+# mount, the delete would walk into the filesystem behind it — /media, and the
+# drive someone has plugged into it. Nothing about rebuilding a folder tree is
+# worth that risk, so stop instead.
+if findmnt -rno TARGET | grep -q "^$BROWSE/"; then
+  echo "  Something under $BROWSE is still mounted. Refusing to delete around it." >&2
+  findmnt -rno TARGET | grep "^$BROWSE/" | sed 's/^/    /' >&2
+  exit 1
+fi
 sudo find "$BROWSE" -mindepth 1 -delete
 
 echo "==> Binding one folder per disk"
 declare -A used_names=()
+# fstab splits its fields on whitespace, so a path containing a space has to
+# carry it as \040 or the line silently describes a different mount. "1)
+# Archive" is exactly that case, and mount reads the escape back on boot.
+fstab_escape() { printf '%s' "${1// /\\040}"; }
+
 bind() { # source, destination
   sudo mount --bind "$1" "$2"
-  printf '%s  %s  none  bind,nofail  0  0  %s\n' "$1" "$2" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
+  printf '%s  %s  none  bind,nofail  0  0  %s\n' \
+    "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
+}
+
+# A live mirror rather than a snapshot. --bind copies the directory as it is
+# now, and a filesystem mounted under the source afterwards stays invisible
+# through it — which for /media means a stick plugged in after this ran would
+# not appear until it ran again. --rbind carries the mounts that exist, and
+# because systemd leaves / shared the copy joins the same propagation group,
+# so mounts that appear later propagate into the mirror on their own.
+#
+# --make-rslave then makes the propagation one-way. Left shared, unmounting
+# the mirror would travel back along the same path and unmount the drive
+# itself: re-running this script would quietly eject every plugged-in stick.
+# Slave receives, never sends.
+rbind() { # source, destination
+  sudo mount --rbind "$1" "$2"
+  sudo mount --make-rslave "$2"
+  printf '%s  %s  none  rbind,nofail  0  0  %s\n' \
+    "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
 }
 
 for disk in "${!disk_root[@]}"; do
@@ -169,25 +226,42 @@ for disk in "${!disk_root[@]}"; do
   done
 done
 
-# Pin /srv/archive as "archives" at the top level of the disk that holds it,
-# so Finder matches the console — the same path, one click instead of three.
-# Bind mount rather than symlink: Samba refuses to follow symlinks out of a
-# share without wide links = yes.
-ARCHIVE="/srv/archive"
+# The archive is a folder of its own at the top, beside the disks — not a pin
+# inside one. It is the one place data lives: apps, databases, storage,
+# backups, keys. Everything a disk holds that is not that — the OS, /etc, the
+# random directories a Linux install accumulates — stays outside it, reachable
+# under the disk's own folder. The rule is simple enough to hold in your head:
+# copy this one folder and you have everything that matters.
+#
+# The leading "1)" is the whole sorting mechanism. Digits sort before letters,
+# so Finder puts it first with no pinning, no shortcut and no second copy of
+# the same bytes appearing further down the same disk — which is what the pin
+# this replaces actually did, and what made /srv read 60.6GB on a disk holding
+# 27.3GB.
+ARCHIVE="${ARCHIVE:-/srv/archive}"
+ARCHIVE_FOLDER="${ARCHIVE_FOLDER:-1) Archive}"
 if [ -d "$ARCHIVE" ]; then
-  archive_source=$(findmnt -no SOURCE "$ARCHIVE" 2>/dev/null || findmnt -no SOURCE / 2>/dev/null || true)
-  if [ -n "$archive_source" ]; then
-    archive_disk=$(disk_of "$archive_source")
-    read -r asize arot < <(disk_facts "$archive_disk")
-    archive_folder=$(name_for "/$(kind_of "$arot" "$archive_disk") $(capacity_of "$asize")")
-    archive_point="$BROWSE/$archive_folder/archives"
-    if [ -d "$BROWSE/$archive_folder" ] && [ ! -e "$archive_point" ]; then
-      sudo mkdir -p "$archive_point"
-      bind "$ARCHIVE" "$archive_point"
-      echo "  archives  <-  $ARCHIVE  (pinned in $archive_folder)"
-    fi
-  fi
+  archive_point="$BROWSE/$ARCHIVE_FOLDER"
+  sudo mkdir -p "$archive_point"
+  bind "$ARCHIVE" "$archive_point"
+  echo "  $ARCHIVE_FOLDER  <-  $ARCHIVE"
+else
+  echo "  no $ARCHIVE yet — run deploy/setup-archive.sh to create it" >&2
 fi
+
+# Anything plugged in, mirrored live from /media, where the udev rule in
+# deploy/setup-automount.sh mounts it. A folder rather than a per-disk entry
+# because the whole point is that nothing has to be configured first: plug a
+# stick in and it is in Finder, unplug it and it is gone, with this script
+# never run again.
+#
+# /media stays in skip_re above, so a stick does not also become a disk folder
+# of its own at the top. One place to look, and it is this one.
+REMOVABLE_FOLDER="${REMOVABLE_FOLDER:-2) Plugged in}"
+removable_point="$BROWSE/$REMOVABLE_FOLDER"
+sudo mkdir -p "$MEDIA" "$removable_point"
+rbind "$MEDIA" "$removable_point"
+echo "  $REMOVABLE_FOLDER  <-  $MEDIA  (live: mounts appear and vanish on their own)"
 
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
 sudo chmod 0755 "$BROWSE"

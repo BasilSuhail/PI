@@ -43,7 +43,7 @@ def _parse_roots(raw):
 
 
 BROWSE_ROOTS = _parse_roots(
-    os.environ.get("BROWSE_ROOTS", "system=/,archives=/srv/archive")
+    os.environ.get("BROWSE_ROOTS", "system=/,1) Archive=/srv/archive")
 )
 
 # Only these may ever be modified, and only once write endpoints exist. Every
@@ -338,16 +338,75 @@ def resolve_under_root(path):
     return None
 
 
+# The kernel escapes space, tab, newline and backslash in mountinfo paths as
+# octal. A mount point called "1) Archive" arrives as "1)\040Archive", so the
+# set below would never match the path scandir reports unless it is undone.
+_MOUNTINFO_ESCAPES = (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\"))
+
+_mounts_cache = {"ts": 0.0, "paths": frozenset()}
+_mounts_lock = threading.Lock()
+# Mounts change when a disk is plugged in, which is rare, and a scan asks for
+# this once per directory it sizes. Short enough to notice a new disk within a
+# listing or two, long enough that sizing 2000 entries is not 2000 file reads.
+MOUNTS_TTL_SEC = 5
+
+
+def mount_points():
+    """Every mount point on the board, as absolute paths.
+
+    Read from /proc/self/mountinfo rather than inferred, because the thing this
+    has to catch cannot be inferred: a bind mount of a filesystem onto a path
+    inside itself keeps the same st_dev as its parent. /srv/browse/SSD-1TB is
+    exactly that — `/` bound under `/` — and a device check waves it straight
+    through. Field 5 is the mount point.
+    """
+    now = time.monotonic()
+    with _mounts_lock:
+        if now - _mounts_cache["ts"] < MOUNTS_TTL_SEC:
+            return _mounts_cache["paths"]
+    paths = set()
+    try:
+        with open("/proc/self/mountinfo") as f:
+            for line in f:
+                fields = line.split(" ")
+                if len(fields) > 4:
+                    point = fields[4]
+                    for escape, char in _MOUNTINFO_ESCAPES:
+                        point = point.replace(escape, char)
+                    paths.add(point)
+    except OSError:
+        # No mountinfo means no way to tell a bind from a directory. Sizes stay
+        # honest for a normal tree; only a self-bind would over-count, and an
+        # empty set leaves the st_dev check below as the last line of defence.
+        pass
+    frozen = frozenset(paths)
+    with _mounts_lock:
+        _mounts_cache["ts"] = now
+        _mounts_cache["paths"] = frozen
+    return frozen
+
+
 def subtree_bytes(path, dev, deadline):
     """Apparent bytes under a directory, the number a file manager shows.
 
-    Stays on one device, the way `du -x` does — without that, the bind mounts
-    under /srv/browse would each count every other disk mounted beneath them.
+    Stops at every mount point below the starting one, the way `du -x` is meant
+    to — so a disk is counted once, under itself, and a folder that merely has
+    another filesystem mounted inside it does not inherit that disk's bytes.
+
+    The device check alone used to do this and was not enough. A bind mount is
+    invisible to st_dev when it binds a filesystem onto itself: `/` bound at
+    /srv/browse/SSD-1TB, and /srv/archive bound again beside it, both kept the
+    root's device, so sizing / walked the whole disk twice and the archive
+    three times. /srv read 60.6GB on a disk holding 27.3GB. Mount points are
+    the fact that catches it; the device check stays as a cheap second net for
+    anything mounted after the set was last read.
+
     Symlinks are measured as links, never followed, so a loop cannot hang this
     and a link to a huge tree cannot inflate its parent.
     """
     total = 0
     stack = [path]
+    mounts = mount_points()
     while stack:
         if time.monotonic() > deadline:
             return total, False
@@ -361,6 +420,8 @@ def subtree_bytes(path, dev, deadline):
                     if st.st_dev != dev:
                         continue
                     if stat.S_ISDIR(st.st_mode):
+                        if entry.path in mounts:
+                            continue
                         stack.append(entry.path)
                     else:
                         total += st.st_size

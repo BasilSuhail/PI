@@ -21,7 +21,11 @@ SupplementaryGroups=video
 # Named tops of the tree, as label=path. Everything under them is readable —
 # a browser that cannot show your own code or a config under /etc is a folder,
 # not a file manager. install.sh adds a home= shortcut for the login user.
-Environment=BROWSE_ROOTS=system=/,archives=/srv/archive
+#
+# Quoted because systemd splits an unquoted Environment= on whitespace, and
+# the archive's label has a space in it: unquoted, "1)" would end the value
+# and "Archive=/srv/archive" would become a second variable of its own.
+Environment="BROWSE_ROOTS=system=/,1) Archive=/srv/archive"
 
 # The only paths that may ever be modified. Everything else is permanently
 # read-only whatever the interface offers. /media is where a plugged-in drive
