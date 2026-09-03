@@ -59,6 +59,35 @@ else
   fi
 fi
 
+section "Is the controller actually switched on"
+# The check that would have saved an hour. A PCIe device can sit on the bus
+# with its config space answering perfectly — right vendor, right class, link
+# trained, power state D0 — while its COMMAND register reads 0x0000, meaning
+# memory decoding and bus mastering are both off. Every MMIO register then
+# reads back 0xffffffff, so the AHCI driver sees nothing, no port can detect a
+# disk, and a drive that is plainly spinning stays invisible.
+#
+# That is what a hot-plug transient did here: connecting a powered drive
+# glitched the PCIe link, the kernel recovered it, and the controller came back
+# unconfigured. Bit 1 is the one that matters. A healthy device reads 0x0406.
+for dev in /sys/bus/pci/devices/*; do
+  [ -r "$dev/class" ] || continue
+  case "$(cat "$dev/class" 2>/dev/null)" in
+    0x0106*) ;;
+    *) continue ;;
+  esac
+  cmd=$(od -An -tx2 -j4 -N2 "$dev/config" 2>/dev/null | tr -d ' ')
+  say "  $(basename "$dev")  COMMAND=0x${cmd:-????}"
+  if [ -n "$cmd" ] && [ $(( 0x$cmd & 2 )) -eq 0 ]; then
+    say "    memory decoding is OFF — the driver cannot reach this controller."
+    say "    Nothing plugged into it can ever be detected in this state."
+    say "    Reboot the board, or as root:"
+    say "      echo 1 > $dev/remove && echo 1 > /sys/bus/pci/rescan"
+  else
+    say "    memory decoding on — the driver can reach it"
+  fi
+done
+
 section "SATA ports"
 # The controller creates one ata_link per port whether or not anything is
 # plugged into it, and an empty port reports its speed as <unknown>. So this is
