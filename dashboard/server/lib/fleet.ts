@@ -85,6 +85,42 @@ const PROCESS_TTL_MS = 15_000;
 const cardProcesses = new Map<string, { at: number; rows: ProcessRow[] }>();
 
 /**
+ * Holds a value per host for a while, so a field that barely moves is not
+ * refetched three times a second.
+ *
+ * Every one of these is a request to Glances, and on jug1 a request is not
+ * free: that board runs `llama-server` at roughly 3.5 of its 4 cores during an
+ * ingest burst, and everything else — Docker, the agents, sshd — queues for
+ * what is left. The cheapest CPU to give it back is the work never asked for.
+ *
+ * A failed fetch is not cached. The board is asked again on the next poll
+ * rather than being written off for the length of the window.
+ */
+const held = new Map<string, { at: number; value: unknown }>();
+
+const cached = async <T>(key: string, ttlMs: number, fetcher: () => Promise<T>, usable: (v: T) => boolean): Promise<T> => {
+  const hit = held.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value as T;
+  const value = await fetcher();
+  if (usable(value)) held.set(key, { at: Date.now(), value });
+  return value;
+};
+
+/**
+ * The machine's name for itself. os, arch and kernel cannot change while the
+ * board is up, and uptime is only ever rendered to the minute, so asking twice
+ * a minute is already more often than the answer can differ. This was two of
+ * the eleven requests each poll made, every three seconds, forever.
+ */
+const SYSTEM_TTL_MS = 60_000;
+
+/**
+ * Disk usage, which on these boards moves in hours. The card draws it as a
+ * percentage bar; nothing about it is legible at three second resolution.
+ */
+const DISKS_TTL_MS = 30_000;
+
+/**
  * The process list for a card, refetched at most every PROCESS_TTL_MS.
  *
  * A failed fetch returns an empty list rather than throwing, and an empty list
@@ -144,9 +180,16 @@ const buildNode = async (
   const [cpu, mem, disks, net, system, shim, topProcesses, cache] = await Promise.all([
     fetchCpu(host),
     fetchMem(host),
-    fetchDisks(host),
+    // Both held between polls. See SYSTEM_TTL_MS and DISKS_TTL_MS — the point
+    // is the requests jug1 never has to answer.
+    cached(`disks:${device.id}`, DISKS_TTL_MS, () => fetchDisks(host), (d) => d.length > 0),
     fetchNet(host),
-    fetchSystem(host),
+    cached(
+      `system:${device.id}`,
+      SYSTEM_TTL_MS,
+      () => fetchSystem(host),
+      (s) => s.os != null || s.uptimeSec != null,
+    ),
     fetchShim(host),
     cardProcessesFor(host, device.id),
     // Null on a board running an older agent, which is an ordinary state:
@@ -232,7 +275,50 @@ type NodeRoleValue = FleetNode['role'];
 const roleFor = (device: TailnetDevice, roles: Map<string, NodeRoleValue>): NodeRoleValue =>
   roles.get(device.name) ?? 'standalone';
 
-export const fetchFleet = async (): Promise<FleetNode[]> => {
+const probeFleet = async (): Promise<FleetNode[]> => {
   const [devices, roles] = await Promise.all([fetchTailnetDevices(), fetchClusterRoles()]);
   return Promise.all(devices.map((d) => buildNode(d, roles)));
+};
+
+/**
+ * Just under the client's own three second poll, so one viewer never sees the
+ * same frame twice and every extra viewer is free.
+ */
+const FLEET_TTL_MS = 2500;
+
+let fleetHeld: { at: number; nodes: FleetNode[] } | null = null;
+let fleetInFlight: Promise<FleetNode[]> | null = null;
+
+/**
+ * One probe of the fleet, shared by everyone who asks inside the window.
+ *
+ * Nothing coalesced the polls before this. Each browser tab drove its own
+ * /api/nodes every three seconds and each of those ran a full fresh probe, so
+ * a phone and a laptop watching at once meant jug1 answered every Glances
+ * request twice over, a third tab three times. The board paid per viewer for a
+ * number that is identical for all of them, and it is the board with no spare
+ * CPU to pay with.
+ *
+ * The in-flight promise matters as much as the window. A probe of a saturated
+ * jug1 can take seconds, which is precisely when the next request arrives; the
+ * shared promise makes that one wait for the answer already coming rather than
+ * asking the board again while it is still busy with the first.
+ *
+ * A failed probe is not held. The error propagates and the next caller tries
+ * again, so a lapsed API key still surfaces within one poll.
+ */
+export const fetchFleet = async (): Promise<FleetNode[]> => {
+  if (fleetHeld && Date.now() - fleetHeld.at < FLEET_TTL_MS) return fleetHeld.nodes;
+  if (fleetInFlight) return fleetInFlight;
+
+  fleetInFlight = probeFleet()
+    .then((nodes) => {
+      fleetHeld = { at: Date.now(), nodes };
+      return nodes;
+    })
+    .finally(() => {
+      fleetInFlight = null;
+    });
+
+  return fleetInFlight;
 };
