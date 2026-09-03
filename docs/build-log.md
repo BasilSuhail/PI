@@ -559,6 +559,41 @@ the video re-encoded will stutter and 4K will not work. That is the hardware,
 not the configuration.
 
 
+### Monitors, and how to notice a disk falling off
+
+`deploy/uptime-monitors.json`, imported through Settings > Backup > Import.
+Nine monitors, and two of them are the interesting ones.
+
+**The services are checked on their in-cluster names, not their tailnet ones.**
+MagicDNS does not resolve inside a pod — `k8s/uptime-kuma.yaml` carries
+`hostAliases` for exactly that reason, and they cover the two boards only.
+A monitor pointed at `https://vault.<tailnet>.ts.net` would fail with a DNS
+error that reads like a dead service. `http://vaultwarden.jug.svc.cluster.local`
+resolves, and checks the application rather than the tailnet round trip to it.
+
+**The 6TB is checked twice, because it can fail in two different places.**
+
+| | endpoint | keyword |
+|---|---|---|
+| attached | the agent, which reads `/sys/block` | `ST6000VX009` |
+| mounted | Glances' filesystem list | `/srv/storage` |
+
+A disk can fall off the bus, and a disk can be perfectly healthy and simply not
+mounted — and the second is the more dangerous of the two, because everything
+that writes to it then writes to the boot SSD instead. Nothing else on the
+board notices that; a mount point vanishing from the filesystem list does.
+
+Both were verified against the live boards before being written down, in both
+directions: the real keyword matches, and a keyword for a disk that does not
+exist does not. A monitor that cannot go down is decoration.
+
+The Discord notification is deliberately not in that file. It is a webhook URL,
+which is a credential, and the import assumes it is notification id 1 — the
+first one set up, which it will be on a fresh install. If a monitor comes in
+without it attached, that assumption was wrong and one monitor needs opening to
+find the right one.
+
+
 ## Security posture
 
 | | |
