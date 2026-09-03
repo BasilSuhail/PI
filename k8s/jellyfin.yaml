@@ -4,15 +4,20 @@
 # one place. An app has two halves with completely different sizes and
 # completely different reasons to be looked at:
 #
-#   the app     its settings, on the SSD, under the archive's Apps/ folder.
-#               Small, precious, the thing you would carry to another machine.
-#   the data    its library database, artwork, transcode cache and the media
-#               itself, on the 6TB. Large, replaceable, the thing that fills a
-#               disk.
+#   the SSD     settings, the library database, artwork and the cache. Around
+#               a gigabyte. Small, and read at random — which is the part that
+#               matters. Every library browse and every scan is thousands of
+#               tiny reads scattered across the file, and a seek costs a
+#               spinning disk about 5ms against an SSD's 0.1. Putting a
+#               database on the big disk buys nothing and makes the whole UI
+#               feel slow.
+#   the 6TB     the films. Hundreds of gigabytes, read start to finish, which
+#               is the one thing a spinning disk is genuinely good at.
 #
-# Jellyfin can be told to split those, which is what the JELLYFIN_*_DIR
-# variables below do. Left to itself it puts the database inside the config
-# directory and the split would be a lie.
+# The split is by how a file is read, not by whether it is called data. Jellyfin
+# has to be told, because left to itself it puts the database inside the config
+# directory — the JELLYFIN_*_DIR variables below are what make the split real
+# rather than a name.
 #
 # hostPath rather than a PersistentVolumeClaim on purpose. local-path volumes
 # land in /var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>, which is
@@ -114,20 +119,25 @@ spec:
   # mounted, so an unmounted disk means the pod stops at ContainerCreating with
   # the missing path named in its events. Loud and harmless, instead of quiet and
   # not.
-        # SSD, under the archive: what the app is.
+        # SSD, under the archive: settings.
         - name: config
           hostPath:
             path: __APPS_DIR__/Jellyfin
             type: Directory
-        # 6TB: what the app holds.
+        # SSD: the library database and artwork. Read at random, so it lives
+        # with the app rather than with the films.
         - name: data
           hostPath:
-            path: __DATA_DIR__/Jellyfin/data
+            path: __APPS_DIR__/Jellyfin/data
             type: Directory
+        # SSD: transcode scratch and the image cache. Rewritten constantly and
+        # thrown away without consequence, which is the worst possible thing to
+        # ask of a spinning disk and the least useful place for its capacity.
         - name: cache
           hostPath:
-            path: __DATA_DIR__/Jellyfin/cache
+            path: __APPS_DIR__/Jellyfin/cache
             type: Directory
+        # 6TB: the films. The only part of Jellyfin that is actually big.
         - name: media
           hostPath:
             path: __DATA_DIR__/Jellyfin/Media

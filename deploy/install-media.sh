@@ -5,12 +5,18 @@
 # One idea, applied four times: an app has two halves, and they belong on
 # different drives for different reasons.
 #
-#   APPS_DIR   the SSD, inside the archive. Settings — small, precious, the
-#              thing you would carry to another machine. Open this folder to
-#              answer "what is installed here".
-#   DATA_DIR   the 6TB. Databases, artwork, caches, media, .zim files — large,
-#              replaceable, the thing that fills a disk. One folder per app,
-#              named after the app, so the drive answers "what is this holding".
+#   APPS_DIR   the SSD. Everything the computer reads at random: settings,
+#              databases, caches, artwork, indexes. Small, and the part where
+#              speed is felt — a seek costs a spinning disk about 5ms against
+#              an SSD's 0.1, and a database is thousands of seeks.
+#   DATA_DIR   the 6TB. Everything you would recognise as a file: films, .zim
+#              archives, the vault. Large, read start to finish, which is what
+#              a spinning disk is actually good at.
+#
+# The cut is by how a file is read, not by whether it is called data. Calling a
+# database "data" and putting it on the big disk is the mistake this layout was
+# one revision away from making: Jellyfin's library index is 50MB and would
+# have made the whole interface feel slow from the far side of a seek.
 #
 # Both are overridable, which is the point:
 #
@@ -43,6 +49,9 @@ APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 DATA_DIR="${DATA_DIR:-/srv/storage}"
 
 APPS=(Jellyfin Kiwix Vaultwarden Uptime)
+# Uptime Kuma is entirely on the SSD: a few megabytes of heartbeats, written
+# constantly, which would keep the 6TB awake for nothing.
+DATA_APPS=(Jellyfin Kiwix Vaultwarden)
 
 if ! sudo systemctl is-active --quiet k3s; then
   echo "k3s is not running on this board. This installs into the cluster." >&2
@@ -67,7 +76,10 @@ printf '  %-14s %s\n' "data  (6TB)" "$DATA_DIR"
 echo
 for app in "${APPS[@]}"; do
   printf '  %-12s %s\n' "$app" "$APPS_DIR/$app"
-  printf '  %-12s %s\n' "" "$DATA_DIR/$app"
+  case " ${DATA_APPS[*]} " in
+    *" $app "*) printf '  %-12s %s\n' "" "$DATA_DIR/$app" ;;
+    *)          printf '  %-12s %s\n' "" "(nothing on the 6TB — it is small)" ;;
+  esac
 done
 echo
 
@@ -99,11 +111,10 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
 fi
 
 echo "==> Creating the folders"
-for app in "${APPS[@]}"; do
-  sudo mkdir -p "$APPS_DIR/$app" "$DATA_DIR/$app"
-done
-# Jellyfin's three halves, spelled out so the folder reads as an explanation.
-sudo mkdir -p "$DATA_DIR/Jellyfin/data" "$DATA_DIR/Jellyfin/cache" \
+for app in "${APPS[@]}"; do sudo mkdir -p "$APPS_DIR/$app"; done
+for app in "${DATA_APPS[@]}"; do sudo mkdir -p "$DATA_DIR/$app"; done
+# Jellyfin's brain on the SSD, its films on the 6TB.
+sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
               "$DATA_DIR/Jellyfin/Media/Movies" "$DATA_DIR/Jellyfin/Media/Shows"
 # Ownership, and the one non-obvious case.
 #
@@ -119,13 +130,14 @@ sudo mkdir -p "$DATA_DIR/Jellyfin/data" "$DATA_DIR/Jellyfin/cache" \
 # image — the same number as the login user here, but by coincidence rather
 # than agreement. It used to sit on a local-path volume, and that provisioner
 # creates its directories world-writable, which is the only reason this was
-# never a problem before. Chowned to the same uid, and the write test after the
-# rollout is what proves the coincidence held.
+# never a problem before. Its folder is under APPS_DIR and so is covered by the
+# chown below; the write test after the rollout is what proves the coincidence
+# held.
 #
 # Vaultwarden still runs as root and can write to anything, so its folder is
 # deliberately left alone rather than given away to a user it does not use.
 sudo chown -R "$OWNER_UID:$OWNER_GID" \
-  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix" "$DATA_DIR/Uptime"
+  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix"
 
 # A note in each app's SSD folder, because a folder holding only a config file
 # does not explain itself six months later.
@@ -134,10 +146,11 @@ for app in "${APPS[@]}"; do
 $app
 
   This folder      $APPS_DIR/$app
-                   settings and configuration. Small. Back this up.
+                   settings, database, cache. Small, fast, and the part
+                   worth backing up.
 
-  Its data         $DATA_DIR/$app
-                   database, cache, and content. Large.
+  Its content      $DATA_DIR/$app
+                   the big files. Films, .zim archives, attachments.
 
 Written by deploy/install-media.sh. Change the split by re-running it with
 APPS_DIR= or DATA_DIR= set.

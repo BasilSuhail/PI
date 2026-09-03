@@ -117,13 +117,16 @@ spec:
   # mounted, so an unmounted disk means the pod stops at ContainerCreating with
   # the missing path named in its events. Loud and harmless, instead of quiet and
   # not.
-        # Kuma keeps its config and its heartbeat database in one directory
-        # and cannot be told to split them, so the whole of /app/data is the
-        # data half. What lands on the SSD is a marker naming where it went,
-        # so the Apps folder still answers "is this installed, and where".
+        # All of it on the SSD, and it is the size of a photograph.
+        #
+        # Kuma writes a heartbeat row per monitor every sixty seconds, forever.
+        # Tiny, constant, and enough on its own to keep a 6TB disk awake day and
+        # night — audible, warm, and wearing out for a database that would fit
+        # on a floppy. It has no business on the big disk: it is not big, and
+        # what it does is exactly what the big disk is worst at.
         - name: data
           hostPath:
-            path: __DATA_DIR__/Uptime
+            path: __APPS_DIR__/Uptime
             type: Directory
 ---
 apiVersion: v1

@@ -449,29 +449,43 @@ remove.
 `deploy/install-media.sh`. Two new services, and the same storage layout
 applied to the two that were already running.
 
-**An app has two halves, and they belong on different drives.**
+**The split is by how a file is read, not by what it is called.**
 
 ```
-SSD-1TB/1) Archive/Apps/        the app        settings. small. back this up.
+SSD-1TB/1) Archive/Apps/     read at random — settings, databases, caches
 ├── Jellyfin/
-├── Kiwix/
-├── Vaultwarden/
-└── Uptime/
+│   ├── data/    library database, artwork
+│   └── cache/   transcode scratch, image cache
+├── Kiwix/       the library index
+├── Vaultwarden/ settings
+└── Uptime/      all of it. a few megabytes.
 
-HDD-6TB/                        the data       databases, caches, content.
-├── Jellyfin/                                  large. replaceable.
-│   ├── data/     library database, artwork
-│   ├── cache/    transcodes and image cache
-│   └── Media/    Movies/ and Shows/
-├── Kiwix/        the .zim files
-├── Vaultwarden/  the vault database
-└── Uptime/       heartbeat history
+HDD-6TB/                     read start to finish — things you would call files
+├── Jellyfin/
+│   └── Media/   Movies/ and Shows/
+├── Kiwix/       the .zim archives
+└── Vaultwarden/ the vault database and attachments
 ```
 
-Same name on both drives, so the two halves of one app are obviously related.
-Open `Apps/` to answer "what is installed here"; open the 6TB to answer "what
-is it holding". Both are `APPS_DIR` and `DATA_DIR` on the installer, so the
-split is a decision rather than a fact of the code.
+The obvious cut — "app on the fast disk, data on the big disk" — is right in
+spirit and wrong on one word. A database is called data and behaves like an
+app: thousands of tiny reads scattered across a file, where a seek costs a
+spinning disk around 5ms against an SSD's 0.1. Jellyfin's library index is
+50MB. Putting it on the 6TB buys nothing and makes every library browse and
+every scan feel slow from the far side of a seek. Its cache is worse in
+principle: rewritten constantly, thrown away without consequence, and the least
+useful possible tenant for six terabytes.
+
+Uptime Kuma moved to the SSD entirely for the other half of the same argument.
+It writes a heartbeat row per monitor every sixty seconds, forever — tiny,
+constant, and enough on its own to keep a 6TB disk awake day and night for a
+database that would fit on a floppy.
+
+What is left on the 6TB is what the rule was always reaching for: films, `.zim`
+archives, attachments. Things you would recognise as files, read start to
+finish, which is the one thing a spinning disk is genuinely good at. Both paths
+are `APPS_DIR` and `DATA_DIR` on the installer, so the cut is a decision rather
+than a fact of the code.
 
 **No PersistentVolumeClaims.** k3s' local-path provisioner puts a volume in
 `/var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>`. Vaultwarden's vault was
