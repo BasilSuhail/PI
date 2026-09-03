@@ -239,7 +239,7 @@ const buildNode = async (
     mem: probe.mem,
     temp: { cpuC: probe.shim?.tempC ?? null, throttled: probe.shim?.throttled ?? null },
     power: probe.shim?.power ?? null,
-    disks: probe.disks,
+    disks: withRotation(probe.disks, probe.shim),
     cache,
     net: probe.net,
     capabilities,
@@ -270,7 +270,27 @@ const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
   return [...keep.values()];
 };
 
+/**
+ * Names a disk by what it is.
+ *
+ * The shim reports whether each block device spins; Glances reports where each
+ * filesystem is mounted. Joined on the device basename ("/dev/sda" -> "sda"),
+ * a mount point can carry the fact that its disk is an HDD — which is what
+ * lets the card and the Finder tree both say "HDD 6TB" about a disk Glances
+ * only knows as /dev/sdb1 mounted at /srv/storage.
+ */
+const withRotation = (
+  disks: DiskStatsValue[],
+  shim: Awaited<ReturnType<typeof fetchShim>>,
+): DiskStatsValue[] => {
+  const spins = new Map((shim?.disks ?? []).map((d) => [d.device, d.rotational]));
+  return disks.map((d) => ({ ...d, rotational: spins.get(d.device.replace(/^\/dev\//, '')) ?? null }));
+};
+
+type DiskStatsValue = FleetNode['disks'][number];
+
 type NodeRoleValue = FleetNode['role'];
+
 
 const roleFor = (device: TailnetDevice, roles: Map<string, NodeRoleValue>): NodeRoleValue =>
   roles.get(device.name) ?? 'standalone';

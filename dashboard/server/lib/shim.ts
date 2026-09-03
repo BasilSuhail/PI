@@ -13,6 +13,8 @@ interface ShimResponse {
   power: PowerStats | null;
   throttled: ThrottleState | null;
   capabilities: string[];
+  /** Absent on an agent older than the disk-naming change. */
+  disks?: Array<{ device: string; sizeBytes: number; rotational: boolean; model: string | null }> | null;
 }
 
 /**
