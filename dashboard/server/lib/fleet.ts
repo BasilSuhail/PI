@@ -63,6 +63,44 @@ interface Probe {
 const lastGood = new Map<string, { at: number; probe: Probe }>();
 
 /**
+ * How often the card's process list is actually refetched.
+ *
+ * The fleet polls every three seconds, and a poll of jug is 111 KB of which
+ * 106 KB is the process list: Glances serialising 194 processes so the card
+ * can show six rows. At that rate it is 128 MB an hour from a board that is
+ * already at 100% CPU, and Glances itself was burning most of a core to
+ * produce it.
+ *
+ * The meters people watch — CPU, memory, temperature — stay on the three
+ * second poll, because those are cheap and the movement is the point. The
+ * process list refreshes on this interval instead, which is plenty for six
+ * rows that mostly say the same thing, and cuts the traffic by roughly three
+ * quarters.
+ *
+ * The node detail view is unaffected. It calls fetchProcesses directly and
+ * still gets a fresh list every time it asks.
+ */
+const PROCESS_TTL_MS = 15_000;
+
+const cardProcesses = new Map<string, { at: number; rows: ProcessRow[] }>();
+
+/**
+ * The process list for a card, refetched at most every PROCESS_TTL_MS.
+ *
+ * A failed fetch returns an empty list rather than throwing, and an empty list
+ * is not cached: a board that answered nothing should be asked again on the
+ * next poll rather than showing nothing for fifteen seconds.
+ */
+const cardProcessesFor = async (host: string, id: string): Promise<ProcessRow[]> => {
+  const held = cardProcesses.get(id);
+  if (held && Date.now() - held.at < PROCESS_TTL_MS) return held.rows;
+
+  const rows = await fetchProcesses(host, 250);
+  if (rows.length) cardProcesses.set(id, { at: Date.now(), rows });
+  return rows;
+};
+
+/**
  * Fills gaps in this poll from the last good one, and says whether it had to.
  *
  * An empty list means the fetch failed rather than that the board has no disks
@@ -110,7 +148,7 @@ const buildNode = async (
     fetchNet(host),
     fetchSystem(host),
     fetchShim(host),
-    fetchProcesses(host, 250),
+    cardProcessesFor(host, device.id),
     // Null on a board running an older agent, which is an ordinary state:
     // the card simply leaves that half of the row out.
     fetchCache(host).catch(() => null),
