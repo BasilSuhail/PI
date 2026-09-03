@@ -13,7 +13,7 @@ Convention: `jug1` is the 8GB board, `jug2` the 16GB board. Names follow the sto
 | RAM | 8GB | 16GB |
 | Boot | SD card, `/boot/firmware` only — must stay in the slot | its own SSD |
 | Root | its own 512GB SSD | 1TB SSD — apps, and the faster small backups |
-| Expansion | none | Waveshare PCIe SATA HAT, spare ports empty |
+| Expansion | none | Waveshare PCIe SATA HAT — ASMedia ASM106x, both ports empty |
 | Bulk | — | 8TB HDD — **blocked on 12V** |
 | LAN | see `~/.ssh/config` on the Mac | same |
 | OS | Debian 13 trixie, aarch64, 4 cores | same |
@@ -283,7 +283,8 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 ## Open
 
 - [ ] **12V supply for the 8TB.** £15–25. On jug2 now, along with the SATA HAT the disk will hang off. No longer blocks the archive tier: `/srv/archive` lives on jug2's spare 873GB and the disk swaps in underneath later, per the migration `deploy/setup-archive.sh` prints. Still blocks the archive being an archive — one drive holding the only copy is a countdown.
-- [ ] **Confirm the SATA HAT enumerates on jug2.** It moved from jug1 and has never been checked in its new slot. `make sata` reports whether the PCIe port is on and what is behind it. Nothing is plugged into it, so the answer expected today is a controller with no disks.
+- [x] **Confirm the SATA HAT enumerates on jug2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`, and both report `sata_spd=<unknown>`, which is what an empty port says. jug2's own 1TB SSD is on `host0`, not on the HAT, so both of the HAT's ports are genuinely free.
+- [ ] **Verify the 12V barrel supply before trusting a disk to it.** Not answerable from software, and this is the one thing that could damage a drive. The ASMedia controller is powered from the PCIe connector, so it enumerates exactly as above whether or not the barrel jack is connected — the 12V only ever reaches the drive's power connector. Check with a multimeter: barrel tip positive against sleeve, then a SATA power connector with the black probe on a ground pin and the red on a 12V pin, expecting 11.4 to 12.6 V. A 12V 3A supply is 36 W, comfortable for one 3.5" drive whose spin-up peak is around 2 A, marginal for two.
 - [ ] **cgroup flag on jug1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the Fritz!Box.

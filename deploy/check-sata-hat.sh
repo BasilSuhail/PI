@@ -59,6 +59,24 @@ else
   fi
 fi
 
+section "SATA ports"
+# The controller creates one ata_link per port whether or not anything is
+# plugged into it, and an empty port reports its speed as <unknown>. So this is
+# the line that answers "did the drive come up" — it changes to 3.0 or 6.0 Gbps
+# the moment a disk is seen, without anything having to be mounted.
+if [ -d /sys/class/ata_link ]; then
+  for link in /sys/class/ata_link/link*; do
+    [ -e "$link" ] || continue
+    spd=$(cat "$link/sata_spd" 2>/dev/null || echo '?')
+    case "$spd" in
+      "<unknown>"|"") say "  $(basename "$link")  empty" ;;
+      *)             say "  $(basename "$link")  $spd" ;;
+    esac
+  done
+else
+  say "  no ata_link nodes — the AHCI driver has not bound to anything"
+fi
+
 section "Disks"
 # -d lists whole devices without their partitions, which is the level a "what
 # is attached" question is asked at.
@@ -80,7 +98,13 @@ case "$PORT" in
   on)
     say "  Port is on. If a SATA controller is listed above, the HAT is seated"
     say "  and working, and a disk plugged into it will appear under Disks."
-    say "  A 3.5\" drive needs its own 12V — the HAT's barrel jack, not the Pi."
+    say
+    say "  None of this says anything about the 12V supply. The controller is"
+    say "  powered from the PCIe connector, so it enumerates perfectly with the"
+    say "  barrel jack unplugged. The 12V only ever reaches the drive."
+    say "  Test it with a multimeter on a SATA power connector before trusting"
+    say "  a disk to it: black probe on a ground pin, red on a 12V pin, expect"
+    say "  11.4 to 12.6 V. Check the barrel is centre-positive first."
     ;;
   *)
     say "  Could not determine the port state, so nothing is recommended."
