@@ -86,7 +86,27 @@ done
 # Jellyfin's three halves, spelled out so the folder reads as an explanation.
 sudo mkdir -p "$DATA_DIR/Jellyfin/data" "$DATA_DIR/Jellyfin/cache" \
               "$DATA_DIR/Jellyfin/Media/Movies" "$DATA_DIR/Jellyfin/Media/Shows"
-sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix"
+# Ownership, and the one non-obvious case.
+#
+# hostPath volumes are NOT chowned by Kubernetes. fsGroup is honoured for
+# volume types that support ownership management and a raw hostPath is not one
+# of them, so whatever these directories are created as is what the container
+# gets. A directory left owned by root is a container that cannot write.
+#
+# Jellyfin and Kiwix run as the login user, so their folders are its own.
+#
+# Uptime Kuma is the case that would have broken. Its entrypoint drops to the
+# image's `node` account through setpriv, which is uid 1000 in the node base
+# image — the same number as the login user here, but by coincidence rather
+# than agreement. It used to sit on a local-path volume, and that provisioner
+# creates its directories world-writable, which is the only reason this was
+# never a problem before. Chowned to the same uid, and the write test after the
+# rollout is what proves the coincidence held.
+#
+# Vaultwarden still runs as root and can write to anything, so its folder is
+# deliberately left alone rather than given away to a user it does not use.
+sudo chown -R "$OWNER_UID:$OWNER_GID" \
+  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix" "$DATA_DIR/Uptime"
 
 # A note in each app's SSD folder, because a folder holding only a config file
 # does not explain itself six months later.
@@ -138,6 +158,39 @@ for app in jellyfin kiwix vaultwarden uptime-kuma; do
     kube -n jug logs "deployment/$app" --tail=30 2>&1 | sed 's/^/    /' >&2
   }
 done
+
+# Readiness proves the process answers, not that it can write where it was
+# pointed — and a media server that cannot write its database will happily
+# serve a login page while failing at the only thing it is for. Ask each
+# container directly.
+echo
+echo "==> Can each app write to its data folder?"
+write_test() { # deployment, path inside the container
+  kube -n jug exec "deployment/$1" -- sh -c \
+    'd=$1; t="$d/.write-test.$$"; touch "$t" 2>/dev/null && rm -f "$t"' sh "$2" >/dev/null 2>&1
+}
+failed=0
+for pair in "jellyfin /data" "kiwix /config" "vaultwarden /data" "uptime-kuma /app/data"; do
+  set -- $pair
+  if write_test "$1" "$2"; then
+    printf '  ok    %-14s %s\n' "$1" "$2"
+  else
+    printf '  FAIL  %-14s %s  <- cannot write\n' "$1" "$2"
+    failed=1
+  fi
+done
+if [ "$failed" = 1 ]; then
+  cat >&2 <<'FIXIT'
+
+  A container that cannot write to its folder is an ownership mismatch: the
+  directory on the board belongs to a different uid than the one inside the
+  container. Find the uid it actually runs as, and hand it the folder:
+
+    sudo k3s kubectl -n jug exec deployment/<app> -- id
+    sudo chown -R <uid>:<gid> <the folder printed above>
+
+FIXIT
+fi
 
 echo
 echo "==> Addresses"

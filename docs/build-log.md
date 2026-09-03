@@ -504,6 +504,21 @@ files stay manageable from Finder. The cost of the caution is that
 Vaultwarden's `db.sqlite3` is still written `0600 root` — findable and
 visible now, which it was not before, but copying it out is a `sudo` job.
 
+**hostPath volumes are not chowned by Kubernetes.** `fsGroup` is honoured for
+volume types that support ownership management and a raw `hostPath` is not one
+of them, so whatever a directory is created as is what the container gets.
+Uptime Kuma is the case that nearly broke: its entrypoint drops to the image's
+`node` account through `setpriv`, and it had been sitting on a local-path
+volume — whose provisioner creates directories world-writable, which is the
+only reason ownership was never a question before. Moving it to a plain
+directory made it one.
+
+Readiness proves a process answers, not that it can write where it was pointed,
+and a media server that cannot write its database will serve a login page while
+failing at the only thing it is for. The installer asks each container directly
+after the rollout, with a `touch` in its own data folder, and prints the `id`
+and `chown` to run if any of them cannot.
+
 **Jellyfin on a Pi 5 direct-plays and does not transcode.** A client that needs
 the video re-encoded will stutter and 4K will not work. That is the hardware,
 not the configuration.
