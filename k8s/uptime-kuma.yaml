@@ -54,11 +54,6 @@ spec:
           ports:
             - name: http
               containerPort: 3001
-          env:
-            # Kuma checks for its own updates and shows a banner. The board
-            # deploys from this repo, so the banner is noise.
-            - name: UPTIME_KUMA_DISABLE_FRAME_SAMEORIGIN
-              value: "false"
           volumeMounts:
             - name: data
               mountPath: /app/data
@@ -82,11 +77,20 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
-              # NET_RAW is kept deliberately. Without it Kuma cannot send ICMP,
-              # so ping monitors fail while HTTP ones work, which reads as a
-              # dead board rather than a missing capability.
               drop: ["ALL"]
-              add: ["NET_RAW"]
+              # Three, each for a reason.
+              #
+              # SETGID and SETUID: the image's entrypoint hands off to the app
+              # through `setpriv`, which calls setgroups(2), and that syscall
+              # needs CAP_SETGID whatever user it is switching to. Without them
+              # the container dies on its first line with
+              # "setpriv: setgroups failed: Operation not permitted",
+              # before any of Kuma's own code runs.
+              #
+              # NET_RAW: without it Kuma cannot send ICMP, so ping monitors
+              # fail while HTTP ones pass, which reads as a dead board rather
+              # than a missing capability.
+              add: ["SETGID", "SETUID", "NET_RAW"]
       volumes:
         - name: data
           persistentVolumeClaim:
