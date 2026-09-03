@@ -21,7 +21,14 @@
 set -euo pipefail
 
 RULE=/etc/udev/rules.d/99-pi-automount.rules
+HELPER=/usr/local/lib/pi/mount-media
 MEDIA=/media
+
+# Who owns a filesystem that cannot say. Resolved here, at install time, and
+# baked into the helper: udev runs it as root with no login and no way to ask.
+OWNER="${OWNER:-$(id -un)}"
+OWNER_UID="$(id -u "$OWNER")"
+OWNER_GID="$(id -g "$OWNER")"
 
 # Everything udev will ever see the boot partitions as, resolved from the live
 # mounts so the rule works on any board however it boots.
@@ -48,25 +55,139 @@ done
 echo "==> Ensuring $MEDIA exists"
 sudo mkdir -p "$MEDIA"
 
+# A USB stick is usually not ext4. exFAT is what anything over 32GB is sold
+# formatted as, NTFS is what a drive that has seen Windows carries, and a board
+# without those drivers mounts neither — the rule fires, the mount fails, and
+# nothing says why. Installed here so "plug it in and read it" holds for the
+# filesystems people actually turn up with. Best-effort: a board with no
+# network keeps the drivers it already has rather than failing the whole run.
+echo "==> Filesystem drivers for the disks people actually plug in"
+missing=""
+for pkg in exfatprogs ntfs-3g; do
+  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing="$missing $pkg"
+done
+if [ -n "$missing" ]; then
+  echo "  installing:$missing"
+  sudo apt-get update -qq && sudo apt-get install -y -qq $missing || \
+    echo "  could not install$missing — exFAT or NTFS sticks may not mount" >&2
+else
+  echo "  exfatprogs, ntfs-3g: already installed"
+fi
+
+echo "==> Writing $HELPER"
+# The rule used to build the mount point inline, as /media/$env{ID_FS_LABEL},
+# and that expression is wrong in three ways that all end in a drive you
+# plugged in and cannot read:
+#
+#   no label      the path becomes "/media/" — the directory itself, not a
+#                 mount point under it. The note this script prints claimed a
+#                 device-name fallback that the rule never had.
+#   a space       udev splits RUN arguments on whitespace, so "MY STICK"
+#                 hands systemd-mount two arguments and mounts neither.
+#   vfat/exfat    no Unix ownership of their own, so they mount root-owned and
+#   /ntfs         read-only to everyone else. Readable at the console, not
+#                 through Samba, and never writable — which is exactly the
+#                 case "copy from the stick" runs into.
+#
+# A helper reads the device itself rather than being handed a guess, so the
+# label never has to survive a round trip through udev's argument splitting.
+sudo mkdir -p "$(dirname "$HELPER")"
+sudo tee "$HELPER" >/dev/null <<HELPER_BODY
+#!/usr/bin/env bash
+# Managed by deploy/setup-automount.sh in the PI repo. Edit the repo, not this.
+#
+# Mount one just-plugged partition under /media, named and owned so that the
+# console, Samba and a shell all see the same readable, writable drive.
+set -eu
+
+# udev runs this with a minimal environment. Naming the tools by absolute path
+# would mean guessing between /sbin and /usr/sbin, which differ across images;
+# setting PATH once covers both and keeps the calls below readable.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+[ \$# -eq 1 ] || { echo "usage: \$(basename "\$0") /dev/sdXN" >&2; exit 2; }
+dev="\$1"
+[ -b "\$dev" ] || exit 0
+
+# One value at a time, quoted into a variable. blkid can emit the lot as shell
+# assignments with -o export, and eval'ing that is the obvious shortcut — but a
+# label is text written on a disk somebody handed you, and eval would run it.
+fstype=\$(blkid -o value -s TYPE "\$dev" 2>/dev/null || true)
+label=\$(blkid -o value -s LABEL "\$dev" 2>/dev/null || true)
+uuid=\$(blkid -o value -s UUID "\$dev" 2>/dev/null || true)
+
+# A mount point is one path segment. Slashes, control characters and a leading
+# dot are the ways a label breaks that — a dot because Finder and ls would then
+# hide the drive. Spaces come off first so " .photos" reduces the same as
+# ".photos", and a label that is nothing but punctuation reduces to nothing at
+# all, which is where the device name takes over: the fallback the note under
+# this script has always promised and the rule never had.
+name=\$(printf '%s' "\$label" | tr -d '[:cntrl:]' | tr '/' '-' |
+  sed 's/^ *//; s/ *\$//; s/^[.-]*//; s/ *\$//')
+[ -n "\$name" ] || name=\$(basename "\$dev")
+
+# Two sticks both labelled "USB" would otherwise fight over one directory. The
+# second one takes its UUID's first block, which is stable across replugs.
+point="${MEDIA}/\$name"
+if [ -e "\$point" ] && ! findmnt -no SOURCE "\$point" 2>/dev/null | grep -qx "\$dev"; then
+  if mountpoint -q "\$point" 2>/dev/null; then
+    name="\$name-\${uuid%%-*}"
+    point="${MEDIA}/\$name"
+  fi
+fi
+
+# Filesystems with no ownership of their own are given it at mount time. Every
+# other filesystem carries its own and must not be overridden — forcing uid on
+# ext4 would hide the real owners of every file on the disk.
+opts="noatime"
+case "\$fstype" in
+  vfat|msdos)  opts="\$opts,uid=${OWNER_UID},gid=${OWNER_GID},umask=0002,flush,iocharset=utf8,shortname=mixed" ;;
+  exfat)       opts="\$opts,uid=${OWNER_UID},gid=${OWNER_GID},umask=0002" ;;
+  ntfs|ntfs3)  opts="\$opts,uid=${OWNER_UID},gid=${OWNER_GID},umask=0002,windows_names" ;;
+esac
+
+# Removable media mounts for real, at once. --automount=yes would defer it to
+# first access, and a deferred mount is invisible to everything that looks
+# without opening: the Finder share's mirror of /media, a df, a directory
+# listing. A stick you have to poke twice before it appears is the problem
+# this script exists to remove.
+#
+# Fixed disks keep the deferred mount. They are the case --automount was for:
+# a sleeping 6TB should not spin up because something indexed a directory.
+removable=0
+parent=\$(lsblk -no pkname "\$dev" 2>/dev/null | head -1)
+[ -n "\$parent" ] && [ -r "/sys/block/\$parent/removable" ] && \\
+  read -r removable < "/sys/block/\$parent/removable" || true
+if [ "\${ID_BUS:-}" = usb ]; then removable=1; fi
+
+mkdir -p "\$point"
+if [ "\$removable" = 1 ]; then
+  exec systemd-mount --no-block --collect -o "\$opts" "\$dev" "\$point"
+else
+  exec systemd-mount --no-block --automount=yes --collect -o "\$opts" "\$dev" "\$point"
+fi
+HELPER_BODY
+sudo chmod 0755 "$HELPER"
+
 echo "==> Writing $RULE (excluding$self_sources from automount)"
 # ENV{ID_FS_USAGE}=="filesystem" skips swap, raid members and empty devices.
-# The systemd-mount --automount=yes means the mount happens on first access
-# rather than at plug time, so a sleeping drive is not spun up to be indexed.
 sudo tee "$RULE" >/dev/null <<RULE_BODY
 # Managed by deploy/setup-automount.sh in the PI repo. Edit the repo, not this.
 #
-# Mount any newly attached filesystem under /media/<label or device>, and take
-# it away again on removal. The partitions this board boots from are excluded
-# by device and by PARTUUID — see setup-automount.sh for why trusting fstab to
-# keep them out did not work.
+# Hand any newly attached filesystem to ${HELPER}, which names it, gives it an
+# owner and mounts it under /media. Removal is by device node rather than by
+# path, so a drive still unmounts cleanly when its label is one the helper had
+# to change. The partitions this board boots from are excluded by device and
+# by PARTUUID — see setup-automount.sh for why trusting fstab did not work.
 
 ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", \\
   ENV{DEVTYPE}=="partition", ENV{ID_BUS}!="", ${self_excludes} \\
-  RUN{program}+="/usr/bin/systemd-mount --no-block --automount=yes --collect \$devnode /media/\$env{ID_FS_LABEL}"
+  RUN{program}+="${HELPER} \$devnode"
 
 ACTION=="remove", SUBSYSTEM=="block", ENV{ID_FS_USAGE}=="filesystem", \\
   ENV{DEVTYPE}=="partition", ENV{ID_BUS}!="", \\
-  RUN{program}+="/usr/bin/systemd-umount /media/\$env{ID_FS_LABEL}"
+  RUN{program}+="/usr/bin/systemd-umount \$devnode"
 RULE_BODY
 
 echo "==> Reloading udev"
@@ -106,10 +227,18 @@ fi
 
 cat <<'NOTE'
 
-  A drive without a filesystem label mounts under its device name instead, so
-  label them if you want the console to show something readable:
+  A drive without a filesystem label mounts under its device name instead —
+  "sda1" rather than "photos" — so label one if you would rather read the name
+  than decode it:
 
-      sudo e2label /dev/sdX1 photos
+      sudo e2label /dev/sdX1 photos          ext4
+      sudo exfatlabel /dev/sdX1 photos       exFAT
+      sudo fatlabel /dev/sdX1 PHOTOS         FAT32
+
+  Removable drives mount the moment they are plugged in and appear under
+  "2) Plugged in" in the share, and as a disk of their own in the console.
+  Fixed disks still mount on first access, so a sleeping drive is not spun up
+  just because something listed a directory.
 
   This does not touch the disks the board already had. Those stay in fstab and
   stay where they are.

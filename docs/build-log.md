@@ -223,7 +223,7 @@ https://pi2.<tailnet>.ts.net   →  200
 
 ## 9. Archive tree on pi2
 
-`deploy/setup-archive.sh`. Creates `/srv/archive` and seven directories under it.
+`deploy/setup-archive.sh`. Creates `/srv/archive` and nothing inside it.
 
 The 8TB is still blocked on 12V, and the archive did not need to wait for it.
 pi2 holds 873GB free, which covers Wikipedia at ~100GB, the book library and a
@@ -231,16 +231,11 @@ first laptop backup with room left. The tier that issue #1 describes — Samba,
 Kiwix, Jellyfin, Calibre-Web — can be built now and moved later, because every
 service is pointed at the path and never at a device.
 
-```
-/srv/archive/
-├── backups/      laptops, Time Machine target
-├── documents/
-├── photos/
-├── movies/
-├── books/
-├── wikipedia/    kiwix .zim files
-└── repos/        git mirrors
-```
+The tree used to be seeded with `backups/`, `documents/`, `photos/` and four
+more. That was someone else deciding how you file things, so the script now
+creates the root and stops; it also clears the seeded folders on boards that
+still carry them, but only the ones it made and only while they are empty —
+`rmdir` refusing a non-empty directory is the whole safety mechanism.
 
 Directories are `2775`: group-writable with the setgid bit, so anything written
 later inherits the group rather than depending on which daemon created it.
@@ -273,6 +268,107 @@ and the HAT's activity LED showed green. Every visible symptom pointed at the
 disk or the 12V supply, and both were fine. A reboot restored it;
 `deploy/check-sata-hat.sh` reads that register now.
 
+### One folder for data, disks for everything else
+
+`deploy/setup-browse.sh`. The share and the console both open on the same two
+kinds of thing, and the split is the whole rule:
+
+```
+/srv/browse/
+├── 1) Archive      → bind of /srv/archive. Apps, databases, storage,
+│                     backups, keys. The one folder worth copying somewhere
+│                     else, because copying it takes everything that matters.
+├── SSD-1TB         → bind of /. The OS and the random directories a Linux
+│                     install accumulates. Nothing hidden, just not mixed in.
+└── HDD-6TB         → the 6TB. Every disk added later joins on the same
+                      terms: its own folder at the top.
+```
+
+The leading `1)` is the entire sorting mechanism — digits sort before letters,
+so Finder puts the archive first with no pin, no shortcut and no second copy.
+The console reads the same name from `BROWSE_ROOTS` in the unit file, quoted
+there because systemd splits an unquoted `Environment=` on whitespace and the
+label contains a space. `fstab` carries the space as `\040` for the same
+reason.
+
+**The bug this replaced.** The previous pass bind-mounted `/srv/archive` a
+second time *inside* the disk folder that already contained it, as a pin. That
+made the same bytes reachable by two paths in one listing, and the sizer
+counted both. `/srv` read **60.6GB on a disk holding 27.3GB**:
+
+```
+srv 60.6GB  =  archive 18.3  +  browse 42.3
+browse 42.3 =  archives-pin 18.3  +  real srv/archive 18.3  +  ~5.7 OS
+```
+
+The root cause was in `subtree_bytes` in the agent, and it outlived the pin.
+It stopped at a device boundary the way `du -x` does — but **a bind mount of a
+filesystem onto itself keeps the same `st_dev`**. `/srv/browse/SSD-1TB` is `/`
+bound at a path inside `/`, so walking the root walked the whole disk a second
+time and the device check never fired. It now reads `/proc/self/mountinfo` and
+refuses to descend into any mount point below the one it started at, which is
+what `du -x` was always meant to mean. The device check stays as a second net
+for anything mounted since the set was last read.
+
+Consequences worth knowing: a disk is counted once, under its own folder, so
+`SSD-1TB` no longer inherits the 6TB's bytes through `/srv/storage`, and the
+archive's size in the console is fetched off the critical path — the board's
+column paints immediately with the disks sized, and the archive's number
+arrives when the walk finishes.
+
+
+### Plug something in and read it
+
+`deploy/setup-automount.sh`, and a folder in the share that mirrors it.
+
+The goal is that a USB stick needs no commands: plug it in, it is in Finder and
+in the console, unplug it and it is gone. Four things stood between that and
+what the rule actually did.
+
+**The mount point was built inline as `/media/$env{ID_FS_LABEL}`.** With no
+label that expands to `/media/` — the directory itself, not a mount under it.
+With a space in the label, udev splits `RUN` arguments on whitespace and hands
+`systemd-mount` two arguments, so `MY STICK` mounted nowhere. The note this
+script printed promised a device-name fallback the rule never had. Naming now
+happens in a helper that reads the device itself, so a label never has to
+survive udev's argument splitting: control characters and slashes come out, a
+leading dot comes off (or Finder hides the drive), and a label left with
+nothing falls back to `sda1`. Two sticks with the same label are told apart by
+the first block of the UUID.
+
+**FAT, exFAT and NTFS have no ownership of their own**, so they mounted
+root-owned and read-only to everyone else — visible in the console, unreadable
+through Samba, never writable. They now get `uid`/`gid`/`umask` at mount time.
+Filesystems that *do* carry ownership are left alone: forcing a uid onto ext4
+would hide the real owner of every file on the disk.
+
+**exFAT and NTFS drivers were not installed.** The rule fired, the mount
+failed, nothing said why. `exfatprogs` and `ntfs-3g` are installed as part of
+the run, best-effort so a board with no network keeps what it has.
+
+**`--automount=yes` deferred the mount to first access.** A deferred mount is
+invisible to anything that looks without opening — a `df`, a directory
+listing, the share's mirror of `/media`. Removable media now mounts for real,
+at once. Fixed disks keep the deferred mount, which is the case it was for: a
+sleeping 6TB should not spin up because something indexed a directory.
+
+Then the share has to show it, and a plain bind mount cannot — a filesystem
+mounted under the source after the bind was made stays invisible through it.
+`2) Plugged in` is an **`--rbind`** of `/media` instead, which joins the same
+propagation group, so mounts appearing later show up on their own with the
+script never run again. `--make-rslave` makes that one-way: left shared,
+unmounting the mirror would travel back and unmount the drive itself, so
+rebuilding the folder tree would quietly eject every stick someone had plugged
+in. The cleanup re-asserts slave before unmounting for the same reason, and
+refuses to run its recursive delete at all while anything under `/srv/browse`
+is still mounted.
+
+The console needs nothing new: Glances already reports the mount, `/media` is
+already a writable root, and adding it as a named root would put the same
+drive in two rows of the same column — the duplication this PR exists to
+remove.
+
+
 ## Security posture
 
 | | |
@@ -294,7 +390,8 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 - [x] **12V supply.** A 12V 3A barrel is fitted and working: the drive spins up and the SATA link trains at 6.0 Gbps, which no dead or wrong-polarity supply would allow. Never metered — proven by the disk instead, which is the test that matters. Comfortable for one 3.5" drive, marginal for two.
 - [x] **Confirm the SATA HAT enumerates on pi2.** Done, read out of `/sys` over the shim's file endpoint without a shell on the board. `0001:01:00.0` is an ASMedia `1b21:0612` SATA controller in AHCI mode, linked at 5.0 GT/s x1 — Gen 2, which is that part's maximum — in power state D0 with the `ahci` driver bound. It creates `ata1` and `ata2`. pi2's own 1TB SSD is on `host0`, not on the HAT. Both ports were free at that check; `link1` now carries the 6TB at 6.0 Gbps.
 - [x] **Mount the 6TB as plain storage.** Done, live: formatted ext4 and mounted at `/srv/storage` on a `nofail` fstab line of its own — the documented "mount it anywhere, by UUID" route, fixed rather than plug-in. `/srv/archive` never moved in the end: a half-run migration was undone folder by folder, and the SSD's original is the copy in place. The copy the detour left on the 6TB is just files, deletable whenever. Disk naming — `SSD 1TB` / `HDD 6TB` in the console and Finder alike — lands with this PR: the agent reports whether a disk spins, and both the Files view and `setup-browse.sh` name from that plus the sold-as size.
-- [ ] **Run `make automount` after this merge.** The rule was mounting each board's own root and boot partitions under `/media` at every boot — writable, through the console's file browser. Fixed in the repo by excluding them by device and PARTUUID; both boards need the re-run to pick up the rule and to unmount the two self-mounts pi2 is carrying right now.
+- [ ] **Run `make agents` and `make browse` on both boards.** The archive becomes `1) Archive` at the top of the share, the duplicate pin inside the disk folder goes, and the sizer stops counting a self-bind twice. Until the re-run, the console keeps reporting `/srv` at 60.6GB on a disk holding 27.3GB.
+- [ ] **Run `make automount` on both boards.** Two reasons now. The rule was mounting each board's own root and boot partitions under `/media` at every boot — writable, through the console's file browser — fixed by excluding them by device and PARTUUID, and both boards still carry the self-mounts. It also installs the helper that makes a plugged-in stick mount immediately, with a usable name and an owner. Until it runs, a USB does nothing on either board.
 - [ ] **cgroup flag on pi1.** Its `mem_limit`s are unenforced today, and container memory reads `—` on the dashboard until it is applied. Needs a reboot, which drops OSINT for about a minute.
 - [ ] Point `dashboard/server/apps.json` at the real services. It carries two placeholder entries.
 - [ ] DHCP reservations for both boards in the home router.
