@@ -559,40 +559,34 @@ the video re-encoded will stutter and 4K will not work. That is the hardware,
 not the configuration.
 
 
-### Monitors, and how to notice a disk falling off
+### Noticing the 6TB fall off
 
-`deploy/uptime-monitors.json`, imported through Settings > Backup > Import.
-Nine monitors, and two of them are the interesting ones.
+`deploy/uptime-monitors.json`, imported through Uptime Kuma's Settings >
+Backup > Import. One monitor, and it exists because the 6TB is the only disk on
+either board whose failure is not already obvious.
 
-**The services are checked on their in-cluster names, not their tailnet ones.**
-MagicDNS does not resolve inside a pod — `k8s/uptime-kuma.yaml` carries
-`hostAliases` for exactly that reason, and they cover the two boards only.
-A monitor pointed at `https://vault.<tailnet>.ts.net` would fail with a DNS
-error that reads like a dead service. `http://vaultwarden.jug.svc.cluster.local`
-resolves, and checks the application rather than the tailnet round trip to it.
+Both boards boot from their SSD. If that disk goes, the board goes, and the
+ping monitor already says so — a second monitor for it would only repeat what
+is being said. The 6TB is separate: it can disappear without the board noticing
+at all, and nothing else would tell you.
 
-**The 6TB is checked twice, because it can fail in two different places.**
+| endpoint | keyword |
+|---|---|
+| the agent on jug2, which reads `/sys/block` | `ST6000VX009` |
 
-| | endpoint | keyword |
-|---|---|---|
-| attached | the agent, which reads `/sys/block` | `ST6000VX009` |
-| mounted | Glances' filesystem list | `/srv/storage` |
+Sysfs rather than the mount table, because a disconnected disk leaves its mount
+entry behind in `/proc/mounts` and only stops answering when something tries to
+read it — so a mount-based check can sit green over a drive that is physically
+gone. The device node vanishes the moment the disk leaves the bus. The model
+string is the keyword because nothing else on the board can be confused for it.
 
-A disk can fall off the bus, and a disk can be perfectly healthy and simply not
-mounted — and the second is the more dangerous of the two, because everything
-that writes to it then writes to the boot SSD instead. Nothing else on the
-board notices that; a mount point vanishing from the filesystem list does.
-
-Both were verified against the live boards before being written down, in both
-directions: the real keyword matches, and a keyword for a disk that does not
+Verified against the live board in both directions before being written down:
+the real model string matches, and a model string for a disk that does not
 exist does not. A monitor that cannot go down is decoration.
 
 The Discord notification is deliberately not in that file. It is a webhook URL,
 which is a credential, and the import assumes it is notification id 1 — the
-first one set up, which it will be on a fresh install. If a monitor comes in
-without it attached, that assumption was wrong and one monitor needs opening to
-find the right one.
-
+first one set up, which it will be on a fresh install.
 
 ## Security posture
 

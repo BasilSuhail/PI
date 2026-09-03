@@ -105,8 +105,9 @@ First visit asks you to create an admin account. Then, in this order:
      and retrofitting it means opening every monitor one at a time.
 
   2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
-     this repo. Nine monitors: both boards, the four services, OSINT, and the
-     6TB checked both for being attached and for being mounted.
+     this repo. One monitor: the 6TB. Both boards boot from their SSD, so a
+     dead SSD is a dead board and the ping already says so — the 6TB is the
+     only disk that can vanish without anything else noticing.
 
 One trap that file exists to avoid: monitors must NOT point at the services'
 .ts.net names. MagicDNS does not resolve inside a pod — that is what the
