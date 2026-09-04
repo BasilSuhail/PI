@@ -562,8 +562,8 @@ not the configuration.
 ### Noticing the 6TB fall off
 
 `deploy/uptime-monitors.json`, imported through Uptime Kuma's Settings >
-Backup > Import. One monitor, and it exists because the 6TB is the only disk on
-either board whose failure is not already obvious.
+Backup > Import. The 6TB monitor exists because it is the only disk on either
+board whose failure is not already obvious.
 
 Both boards boot from their SSD. If that disk goes, the board goes, and the
 ping monitor already says so — a second monitor for it would only repeat what
@@ -588,14 +588,33 @@ The Discord notification is deliberately not in that file. It is a webhook URL,
 which is a credential, and the import assumes it is notification id 1 — the
 first one set up, which it will be on a fresh install.
 
-### Three more monitors, and one that had to be invented
+### Three more monitors, and a file that described a board that did not exist
 
-The 6TB was the only thing being watched. Jellyfin, the tunnel and the
-download client were not, which is how the client spent a day connected to
-nothing while every signal anyone looked at was green.
+The boards, the console, both Glances agents, both file shims and the three
+OSINT endpoints were being watched. Jellyfin, the tunnel and the download
+client were not, which is how the client spent a day connected to nothing
+while every signal anyone looked at was green.
+
+**And the 6TB was not being watched either**, despite this document saying it
+was. `uptime-monitors.json` held exactly one monitor, that one, and it had
+never been imported. The live Kuma held eight monitors, none of which were in
+the file — not one name overlapped. The file was a proposal that had been
+written up as a fact.
+
+That is worse than a stale file. The install instructions say to import it,
+and the import offers "Overwrite", which deletes every existing monitor and
+its history. Following this repo's own instructions with the wrong radio
+button would have wiped a working setup and replaced it with a single disk
+check.
+
+Fixed by exporting the running Kuma and merging: the file now carries all
+twelve, the eight that exist plus the four added here, so importing it with
+"Skip existing" adds only what is missing. The rule it now follows is that
+this file is a mirror of the board, not a wishlist for it.
 
 | monitor | endpoint | keyword |
 |---|---|---|
+| HDD 6TB | the agent on jug2, reading `/sys/block` | `ST6000VX009` |
 | Jellyfin | `/health` on its in-cluster name | `Healthy` |
 | Torrent VPN tunnel | gluetun's control server, `/v1/vpn/status` | `"status":"running"` |
 | Torrent swarm | qBittorrent's API, `/api/v2/transfer/info` | `"connection_status":"connected"` |
@@ -630,7 +649,9 @@ them. The same exemption is why the tailnet proxy reaches it without one.
 
 Matched with Uptime Kuma's own algorithm — axios parses the body, Kuma
 `JSON.stringify`s anything that is not a string, then does `includes` — run
-against the live endpoints rather than against what they ought to return.
+against the live endpoints rather than against what they ought to return. The
+6TB keyword included, which had been written down as verified and was checked
+again here because the rest of that section turned out not to be true.
 
 ### The node card, one row per drive
 

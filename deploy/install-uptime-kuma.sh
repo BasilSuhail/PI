@@ -105,12 +105,18 @@ First visit asks you to create an admin account. Then, in this order:
      and retrofitting it means opening every monitor one at a time.
 
   2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
-     this repo. Four monitors:
+     this repo. Pick "Skip existing" first — "Overwrite" deletes every monitor
+     already there, along with its history.
 
-       HDD 6TB             Both boards boot from their SSD, so a dead SSD is a
-                           dead board and the ping already says so. The 6TB is
-                           the only disk that can vanish without anything else
-                           noticing.
+     Twelve monitors. Eight are the boards and the apps on them, exported from
+     a running Kuma so this file describes what is actually there rather than
+     what was once intended: the console, the three OSINT endpoints, both
+     Glances agents and both file shims. The other four:
+
+       HDD 6TB             The agent on jug2, reading /sys. Both boards boot
+                           from their SSD, so a dead SSD is a dead board and
+                           the ping already says so. The 6TB is the only disk
+                           that can vanish without anything else noticing.
 
        Jellyfin            Its own /health endpoint, which answers "Healthy"
                            only once the server has finished starting.
@@ -133,11 +139,12 @@ First visit asks you to create an admin account. Then, in this order:
      can tell "switched off" apart from "broken" — only the console knows the
      replica count, and it does not run in the cluster yet.
 
-One trap that file exists to avoid: monitors must NOT point at the services'
-.ts.net names. MagicDNS does not resolve inside a pod — that is what the
-hostAliases in k8s/uptime-kuma.yaml work around, and they cover the two boards
-only. The services are checked on their in-cluster names instead, which also
-tests the app rather than the tailnet round trip to it.
+One trap that file exists to avoid. MagicDNS does not resolve inside a pod, so
+a monitor cannot simply be given a service's .ts.net name. The hostAliases in
+k8s/uptime-kuma.yaml work around it for jug and jug2 and for nothing else,
+which is why the board-level monitors can use those two names and the
+cluster's own services cannot. Those are checked on their in-cluster names
+instead, which also tests the app rather than the tailnet round trip to it.
 
 The two torrent monitors reach qBittorrent's own API without a password. The
 web interface exempts the cluster's subnets from its login (installed by
