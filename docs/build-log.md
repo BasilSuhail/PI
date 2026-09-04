@@ -561,9 +561,9 @@ not the configuration.
 
 ### Noticing the 6TB fall off
 
-`deploy/uptime-monitors.json`, imported through Uptime Kuma's Settings >
-Backup > Import. One monitor, and it exists because the 6TB is the only disk on
-either board whose failure is not already obvious.
+Set up through Uptime Kuma's Settings > Backup > Import. The 6TB monitor
+exists because it is the only disk on either board whose failure is not
+already obvious.
 
 Both boards boot from their SSD. If that disk goes, the board goes, and the
 ping monitor already says so — a second monitor for it would only repeat what
@@ -587,6 +587,74 @@ exist does not. A monitor that cannot go down is decoration.
 The Discord notification is deliberately not in that file. It is a webhook URL,
 which is a credential, and the import assumes it is notification id 1 — the
 first one set up, which it will be on a fresh install.
+
+### Three more monitors, and a file that described a board that did not exist
+
+The boards, the console, both Glances agents, both file shims and the three
+OSINT endpoints were being watched. Jellyfin, the tunnel and the download
+client were not, which is how the client spent a day connected to nothing
+while every signal anyone looked at was green.
+
+**And the 6TB was not being watched either**, despite this document saying it
+was. The tracked `uptime-monitors.json` held exactly one monitor, that one,
+and it had never been imported. The live Kuma held eight, none of which were
+in the file — not one name overlapped. The file was a proposal that had been
+written up as a fact, and it had been wrong for months without anyone noticing,
+because nothing ever compares the two.
+
+That is worse than a stale file. The install instructions said to import it,
+and the import offers "Overwrite", which deletes every existing monitor and
+its history. Following this repo's own instructions with the wrong radio
+button would have wiped a working setup and replaced it with a single disk
+check.
+
+**The file is gone rather than fixed.** Kuma is the record of what is being
+watched. A copy in git is a second record with no mechanism keeping it honest,
+which is exactly how this one drifted, and the export also carries notification
+tokens. Export from Kuma when a copy is wanted and keep it out of the repo. The
+monitors themselves are described here instead, which is a document that does
+not pretend to be executable.
+
+| monitor | endpoint | keyword |
+|---|---|---|
+| HDD 6TB | the agent on pi2, reading `/sys/block` | `ST6000VX009` |
+| Jellyfin | `/health` on its in-cluster name | `Healthy` |
+| Torrent VPN tunnel | gluetun's control server, `/v1/vpn/status` | `"status":"running"` |
+| Torrent swarm | qBittorrent's API, `/api/v2/transfer/info` | `"connection_status":"connected"` |
+
+**The keyword is the check, not the status code.** gluetun's status route
+answers `200` from the moment its control server binds a socket, with
+`{"status":"stopped"}` in the body while WireGuard is still handshaking. A
+plain HTTP monitor on it would be green before the tunnel existed — which is
+not hypothetical, it is precisely what the pod's own `startupProbe` was doing,
+and what let qBittorrent start into a pod with no `tun0`.
+
+**The swarm monitor is the one that was missing.** "The tunnel is up" and "the
+pod is ready" were both true throughout that failure and neither was the
+question. Whether the client has a connection to the swarm is a third claim,
+it is the one that matters, and qBittorrent answers it in one field. This
+monitor goes down for that fault and the other two do not.
+
+**Down is not always a fault.** The torrent stack is meant to be off most of
+the time, so both torrent monitors sit red whenever it is switched off. That
+is deliberate rather than tolerated: it makes the pair a session signal, and
+Discord says when a download session comes up properly connected and when it
+goes away. Nothing inside the cluster can tell "switched off" apart from
+"broken" — the replica count is the difference and only the console reads it.
+The console is not in the cluster yet (`make dashboard-k8s`, still unrun), and
+its API is reachable only through `tailscale serve` on pi2, which a pod is
+not a tailnet peer of. A monitor built on that would have been shipped untested,
+which is the habit that caused the fault it is meant to catch.
+
+**No password on the two torrent monitors.** qBittorrent's web interface
+exempts the cluster's own subnets from its login, and Kuma's pod is in one of
+them. The same exemption is why the tailnet proxy reaches it without one.
+
+Matched with Uptime Kuma's own algorithm — axios parses the body, Kuma
+`JSON.stringify`s anything that is not a string, then does `includes` — run
+against the live endpoints rather than against what they ought to return. The
+6TB keyword included, which had been written down as verified and was checked
+again here because the rest of that section turned out not to be true.
 
 ### The node card, one row per drive
 
