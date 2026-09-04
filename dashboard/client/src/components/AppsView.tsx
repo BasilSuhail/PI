@@ -82,6 +82,14 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
     return () => { live = false; clearInterval(timer); };
   }, [hasSwitch, torrent?.wanted, torrent?.ready, torrent?.reachable]);
 
+  /** What pressing a tile does. Shared by the click and the keyboard. */
+  const open = (app: AppTile) => {
+    if (isInternal(app.url)) return onOpenView(app.url.slice(1));
+    if (app.healthy === false) return;
+    if (app.switchable && !(torrent && torrent.wanted > 0 && torrent.ready > 0)) return;
+    if (!openAsApp(app.name, app.url)) window.open(app.url, '_blank', 'noreferrer');
+  };
+
   const flip = (running: boolean) => {
     setBusy(true);
     setProblem(null);
@@ -130,36 +138,34 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
           const shut = app.healthy === false || (sw ? !sw.on : false);
           return (
           <div class="app-slot" key={app.name}>
-          <a
+          {/* A div, not an anchor. The browser link has to sit inside the tile:
+              floated over a corner it collides with whatever the last row
+              happens to be — on the torrent tile that is the VPN line — and
+              reserving space for it truncates the status word beside it. In
+              normal flow it does neither. A link inside a link is invalid, so
+              the tile gives up being one. What that costs is cmd-click on the
+              tile body, which was opening a pop-up window rather than a tab
+              anyway; the browser link inside is a real anchor and keeps every
+              gesture that mattered. */}
+          <div
             class="app-tile"
+            role="link"
             // healthy === null means the tile asked not to be probed, which is
             // not the same as failing one. Only a tile that actually answered
             // false is held shut; an unprobed one opens like any other, since
             // nothing here knows whether it is up.
-            // The href stays real so the browser's own gestures keep working:
-            // cmd-click, middle-click, right-click and Open in New Tab all do
-            // what they have always done. Only a plain left click is taken
-            // over, and only to give it a better window.
-            href={shut ? undefined : app.url}
-            target={isInternal(app.url) ? undefined : '_blank'}
-            rel="noreferrer"
-            onClick={(e) => {
-              if (isInternal(app.url)) {
-                e.preventDefault();
-                onOpenView(app.url.slice(1));
-                return;
-              }
-              if (shut) {
-                e.preventDefault();
-                return;
-              }
-              // A modified click is the user asking for the browser's
-              // behaviour by name. Leave it alone.
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            tabIndex={shut ? -1 : 0}
+            aria-disabled={shut}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return;
               e.preventDefault();
-              // Falling through to the href on a blocked pop-up is deliberate:
-              // preventDefault has already run, so open a tab explicitly.
-              if (!openAsApp(app.name, app.url)) window.open(app.url, '_blank', 'noreferrer');
+              open(app);
+            }}
+            onClick={(e) => {
+              // The browser link is inside this tile. A click that started
+              // there is not a click on the tile.
+              if ((e.target as HTMLElement).closest('.app-browser')) return;
+              open(app);
             }}
           >
             <div class={`app-icon ${isArt(app.icon) ? 'art' : ACCENTS[i % ACCENTS.length]}`}>
@@ -184,6 +190,21 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               <span>
                 {sw ? sw.text : app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}
               </span>
+              {/* The other half of the choice: the tile gives you the app, this
+                  gives you a browser tab. On the status row rather than in a
+                  corner, so it takes no height of its own and cannot land on
+                  top of anything. */}
+              {!isInternal(app.url) && !shut && (
+                <a
+                  class="app-browser"
+                  href={app.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={`Open ${app.name} in a browser tab instead of its own window`}
+                >
+                  ( Open in Browser )
+                </a>
+              )}
             </div>
             {/* Read from gluetun, not inferred from the pod being up. Running
                 and protected are different claims, and this is the one worth
@@ -201,22 +222,7 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
                 </span>
               </div>
             )}
-          </a>
-          {/* The other half of the choice, and a real link rather than the
-              decorative chevron it replaces: the tile gives you the app, this
-              corner gives you a browser tab. A sibling of the tile, not a
-              child — a link inside a link is invalid and swallows the click. */}
-          {!isInternal(app.url) && !shut && (
-            <a
-              class="app-browser"
-              href={app.url}
-              target="_blank"
-              rel="noreferrer"
-              title={`Open ${app.name} in a browser tab instead of its own window`}
-            >
-              ( Open in Browser )
-            </a>
-          )}
+          </div>
           {sw && sw.action && (
             <button
               class={`app-power ${sw.on ? 'on' : ''}`}
