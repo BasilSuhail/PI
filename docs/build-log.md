@@ -823,6 +823,26 @@ header is accepted. The fix that followed from it, `WebUI\ServerDomains=*`,
 would have turned off a real defence against DNS rebinding to solve a problem
 that did not exist. Dropped before it shipped.
 
+### Where the tunnel comes out
+
+An exit in Singapore, from a config generated for Europe.
+
+Not a mistake in the config. **AirVPN's WireGuard keys are account-wide** — any
+of their servers accepts them — so the file the keys came from says nothing
+about where the connection lands. gluetun picks from the whole list, and
+without being told otherwise the whole list is the whole world.
+
+`SERVER_COUNTRIES` pins it, defaulting to the Netherlands, Germany and Belgium,
+and overridable per run:
+
+```
+make torrent VPN_COUNTRIES="Netherlands"
+```
+
+Several countries rather than one so a server going out of service is a
+different exit rather than no tunnel. Distance is the whole point: a link to
+the far side of the world is slow however good it is, and every byte of a
+download crosses it twice.
 ### Zero DHT nodes, and a tunnel that looked perfect
 
 A magnet sat on "retrieving metadata" forever. The same magnet on a laptop

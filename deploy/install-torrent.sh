@@ -27,6 +27,11 @@ if [ -z "${APPS_DIR:-}" ]; then
 fi
 APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 DATA_DIR="${DATA_DIR:-/srv/storage}"
+# Where the tunnel comes out. gluetun chooses a server from AirVPN's whole list
+# unless told otherwise — the keys are account-wide and every server takes them
+# — so without this an exit anywhere on earth is a fair draw. Nearby is faster
+# for the same reason a shorter cable is.
+VPN_COUNTRIES="${VPN_COUNTRIES:-Netherlands,Germany,Belgium}"
 
 if ! sudo systemctl is-active --quiet k3s; then
   echo "k3s is not running on this board. This installs into the cluster." >&2
@@ -77,6 +82,7 @@ if [ -z "$POD_CIDRS" ] || [ -z "$SVC_IP" ]; then
 fi
 SVC_CIDR=$(echo "$SVC_IP" | awk -F. '{print $1"."$2".0.0/16"}')
 CLUSTER_CIDRS="${POD_CIDRS},${SVC_CIDR}"
+printf '  %-16s %s\n' "exit through" "$VPN_COUNTRIES"
 printf '  %-16s %s\n' "may bypass" "$CLUSTER_CIDRS"
 printf '  %-16s %s\n' "everything else" "goes through AirVPN or nowhere"
 echo
@@ -267,7 +273,8 @@ echo "==> Applying manifests"
 render() {
   sed -e "s|__APPS_DIR__|${APPS_DIR}|g" -e "s|__DATA_DIR__|${DATA_DIR}|g" \
       -e "s|__UID__|${OWNER_UID}|g" -e "s|__GID__|${OWNER_GID}|g" \
-      -e "s|__CLUSTER_CIDRS__|${CLUSTER_CIDRS}|g" "$1"
+      -e "s|__CLUSTER_CIDRS__|${CLUSTER_CIDRS}|g" \
+      -e "s|__VPN_COUNTRIES__|${VPN_COUNTRIES}|g" "$1"
 }
 # The manifest says replicas: 0 because that is right on a first install. On a
 # re-run it would stop a download in progress, so whatever the deployment is

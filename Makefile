@@ -45,6 +45,7 @@ help:
 	@echo "make vault           Vaultwarden on its own tailnet name, needs make uptime first"
 	@echo "make media           Jellyfin and Kiwix, and moves all four apps' data onto the 6TB"
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
+	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          dashboard-k8s and agents together"
@@ -85,7 +86,7 @@ media:
 
 # Interactive: asks for the WireGuard keys on the first run.
 torrent:
-	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-torrent.sh'
+	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)$(if $(VPN_COUNTRIES),VPN_COUNTRIES="$(VPN_COUNTRIES)" ,)bash ~/$(REPO_DIR)/deploy/install-torrent.sh'
 
 # The same switch the console's button throws, from here instead. Kept so the
 # button is optional: delete the RoleBinding in k8s/qbittorrent.yaml and the

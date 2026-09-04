@@ -114,10 +114,14 @@ spec:
             # interface that never loads and a tunnel that looks fine.
             - name: FIREWALL_OUTBOUND_SUBNETS
               value: "__CLUSTER_CIDRS__"
-            # Which of AirVPN's servers to land on. Not implied by the config
-            # the keys came from: AirVPN's WireGuard keys are account-wide, so
-            # any server accepts them and gluetun picks from the whole list. A
-            # European config landing in Singapore is that, not a mistake.
+            # Which of AirVPN's servers to land on.
+            #
+            # Not implied by the config file the keys came from: AirVPN's
+            # WireGuard keys are account-wide, so any server accepts them and
+            # gluetun picks from the whole list. Generating a European config
+            # and getting an exit in Singapore is that, not a mistake in the
+            # config — and a tunnel to the other side of the world is a slow
+            # tunnel however good the link is.
             - name: SERVER_COUNTRIES
               value: "__VPN_COUNTRIES__"
             - name: TZ
