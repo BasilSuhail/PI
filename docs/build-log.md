@@ -776,6 +776,53 @@ Open in New Tab keep working exactly as the browser defines them. Only an
 unmodified left click is taken over, and only to give it a better window. A
 pop-up blocker turns the click into a plain tab rather than into nothing.
 
+### No password on the download client
+
+qBittorrent asked for one and nobody could answer it. Version 5 ships no
+default: it generates a password at every start, prints it to its log once, and
+voids it the moment the process restarts — so a password noted after one deploy
+is wrong after the next, and the failure reads `Invalid Username or Password.
+Server response: Unauthorized`, which sounds like a permissions problem rather
+than an expired secret.
+
+The right answer was not a better way to find the password. It was to stop
+asking for one, for the same reason the console does not:
+
+**Reaching this at all means being on the tailnet.** No port is open, the name
+resolves nowhere else, and the certificate is issued to a machine only an
+authenticated device can route to. Tailscale has already answered "who is
+this". A second password on top of that is not a second lock — it is the same
+lock, and one nobody holds a key to.
+
+`WebUI\AuthSubnetWhitelist` is set to the cluster's own networks, which is
+where the ingress proxy sits and the only place a request can arrive from.
+Nothing outside the cluster can present those addresses. Applied whether or not
+the installer wrote the config, since a board set up before this is holding a
+generated password nobody knows.
+
+**Two things this took to get right.**
+
+qBittorrent rewrites its config when it exits, so an edit made while it is
+running is discarded on the way out. The client is stopped, edited, and put
+back the way it was found.
+
+And the edit is done in python, not sed. The key contains a backslash, the
+value contains slashes, and the whole thing passes through a heredoc: nested
+sed escaping produced `WebUI\\AuthSubnetWhitelistEnabled`, a doubled
+backslash and a key qBittorrent does not recognise. The first python attempt
+then died on `bad escape \A`, because a backslash in a `re.sub` *replacement*
+is an escape sequence too. It is line-based now, with no regular expression
+anywhere near the value.
+
+**A wrong turn worth recording.** The first diagnosis was `Host` header
+validation: qBittorrent 5 checks it, recognises only localhost, and refuses
+anything else with a page reading `Unauthorized` served as HTTP 200 — which
+matched the symptom exactly, including every probe reporting the service
+healthy. It was wrong. The login page renders on the tailnet name, so the
+header is accepted. The fix that followed from it, `WebUI\ServerDomains=*`,
+would have turned off a real defence against DNS rebinding to solve a problem
+that did not exist. Dropped before it shipped.
+
 ## Security posture
 
 | | |
