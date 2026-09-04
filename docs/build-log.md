@@ -907,9 +907,52 @@ passed, the pod was 2/2, the web interface served. Every signal available said
 the stack was fine, and every one of them was telling the truth. One DNS answer
 was wrong.
 
-`BLOCK_MALICIOUS=off`. Turned off rather than worked around: the client's whole
-job is to talk to trackers, and a resolver that refuses to resolve them is not
-protecting anything here.
+`BLOCK_MALICIOUS=off`, and then the rest of gluetun's DNS with it.
+
+There are two ways that resolver can fail and only one of them is the
+blocklist. The other is the TLS half: gluetun resolves upstream over DNS-over-
+TLS by default, which means a connection to port 853 has to succeed through the
+tunnel before any name resolves at all, and gluetun's own issue tracker carries
+reports of it timing out with precisely this symptom — magnets stuck
+downloading metadata while everything else works. Neither cause is provable
+from outside the pod and both are the same component, so the component goes:
+
+```
+DNS_UPSTREAM_RESOLVER_TYPE=plain
+DNS_UPSTREAM_PLAIN_ADDRESSES=1.1.1.1:53,1.0.0.1:53
+```
+
+No TLS handshake to fail, no blocklist to consult, just a query sent through
+the tunnel like any other packet. The tunnel is what keeps this private and it
+does that job either way — encrypting a DNS query inside an already-encrypted
+tunnel was buying nothing and cost everything.
+
+**And then the actual difference.** Every working gluetun + qBittorrent setup
+published anywhere is docker-compose. This one is Kubernetes, and Kubernetes
+writes a different `/etc/resolv.conf`:
+
+```
+nameserver 127.0.0.1
+search pi.svc.cluster.local svc.cluster.local cluster.local ...
+options ndots:5
+```
+
+`ndots:5` means a name with fewer than five dots has the search list tried
+**first**. `tracker.opentrackr.org` has two. So the first query actually sent
+is for `tracker.opentrackr.org.pi.svc.cluster.local`, which does not exist,
+and the answer is an authoritative NXDOMAIN — the exact string qBittorrent
+reported against every tracker.
+
+Docker sets no search domains and `ndots:1`. Same image, same gluetun, same
+magnet, different resolver behaviour. `dnsPolicy: None` takes the search list
+away; nothing in this pod resolves a cluster service by short name, so there is
+nothing to lose.
+
+Two public write-ups of the same symptom were read on the way
+(qdm12/gluetun#2735, and a linuxserver.io thread on the identical tracker
+error). Neither carries a fix — both are docker-compose users, where this
+particular cause cannot occur, which is why the answer was not going to be
+found by reading them.
 
 **What this cost, and what caused the cost.** The route to it ran through three
 wrong diagnoses — a pop-up blocker, `Host` header validation, and an interface
