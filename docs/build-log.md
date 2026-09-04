@@ -997,6 +997,107 @@ was reserved by hand. Left on, it retries forever against a gateway that will
 never answer.
 
 
+### The same failure again, and the probe that never held anything back
+
+A magnet stuck on "retrieving metadata". `connection: firewalled`,
+`dht_nodes: 0`, `last_external_address_v4` empty. The identical symptom to the
+one two sections above says was fixed, on a stack carrying every fix since.
+
+qBittorrent's own log, read first this time:
+
+```
+04:48:34  Trying to listen on the following list of IP addresses: "0.0.0.0:32250"
+04:48:34  Successfully listening on IP. IP: "127.0.0.1"
+04:48:34  Successfully listening on IP. IP: "<the pod's own eth0 address>"
+04:48:34  Successfully listening on IP. IP: "::1"
+04:48:34  Successfully listening on IP. IP: "fe80::...%eth0"
+```
+
+Loopback and `eth0`. No `tun0`. Exactly the race the native sidecar was
+introduced to close.
+
+But `tun0` existed. qBittorrent will list the pod's interfaces over its own
+API, which is a shell inside the pod that needs no shell:
+
+```
+GET /api/v2/app/networkInterfaceList          lo, eth0, tun0
+GET /api/v2/app/networkInterfaceAddressList   tun0 -> the WireGuard address
+```
+
+The tunnel was up. It was up before the check and it had been up for minutes.
+It simply was not up at `04:48:34`, when qBittorrent enumerated interfaces
+once and never looked again.
+
+**The startupProbe was passing before the tunnel came up.** It was an
+`httpGet` on gluetun's `/v1/vpn/status`, and an `httpGet` probe only sees the
+status code. That route answers `200` from the moment gluetun's control server
+binds a socket — with a body of `{"status":"stopped"}` while WireGuard is still
+handshaking. So the probe passed in the first second or two, the init container
+was declared started, qBittorrent launched into a pod with no `tun0`, and the
+ordering guarantee that the whole native-sidecar shape exists to provide
+guaranteed nothing at all.
+
+An `exec` probe reads the body, which is where the answer actually is:
+
+```yaml
+startupProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -c
+      - wget -qO- http://127.0.0.1:8000/v1/vpn/status | grep -q '"status":"running"'
+```
+
+**And the binding comes back, correctly this time.** The section above records
+it being tried and removed, on the grounds that gluetun's routing and firewall
+already send everything through the tunnel. That reasoning was wrong, and the
+recurrence is what shows why: the killswitch is not a backstop for a socket
+bound to `eth0`, it is the thing that silently drops its traffic. Names still
+resolve, because the resolver is not bound to anything. Nothing errors. The
+client just sits there.
+
+The earlier attempt also failed for a reason worth separating from the idea.
+Binding by *device name* does not work here — set `tun0` and libtorrent logs
+`Trying to listen on "tun0:32250"` and then no success line at all, and the
+client drops from `firewalled` to `disconnected`. Binding by *address* works
+first time:
+
+```
+04:55:19  Trying to listen on the following list of IP addresses: "<tunnel address>:32250"
+04:55:19  Successfully listening on IP. IP: "<tunnel address>". Port: "TCP/32250"
+```
+
+That is `current_interface_address` through the API, and the installer now
+reads the address out of the same secret the WireGuard key came from — AirVPN
+issues it per key, so it is stable across reconnects and never lands in this
+repository.
+
+Measured, in that order, from `dht_nodes: 0`:
+
+| after | connection | DHT nodes | exit address |
+|---|---|---|---|
+| bound to eth0 | firewalled | 0 | none |
+| bound to `tun0` by name | disconnected | 0 | none |
+| bound to the tunnel address | connected | 324 | AirVPN's, as it should be |
+
+Then a 1.6 GB magnet, from a standing start: metadata in seconds, 12 MB/s
+sustained, complete in a little over two minutes.
+
+**What this cost, and what caused it.** One line of a previous write-up said
+the sidecar ordering was "a guarantee rather than a race that usually goes the
+right way". It was neither — it was a race with an extra step in it. The claim
+was written from the shape of the configuration rather than from evidence that
+the shape did what it looked like it did, and no probe response body was ever
+read to check. A probe that cannot fail is not a probe, and this one could not
+fail while gluetun was running at all.
+
+**Still open.** `listen_port` is `32250`, which is not the port AirVPN
+forwards. Downloads are unaffected and the client reports `connected`, but it
+accepts no incoming connection, so it seeds to far fewer peers than it could.
+Re-running `deploy/install-torrent.sh` on the board sets it from the secret,
+along with the binding above.
+
+
 ## Security posture
 
 | | |

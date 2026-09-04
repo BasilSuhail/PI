@@ -90,8 +90,7 @@ spec:
             value: "1"
       # gluetun is an init container with restartPolicy Always — a native
       # sidecar. That is not a style choice: init containers start in order and
-      # the next one waits for this one's startupProbe, which is the only way
-      # to guarantee the tunnel exists before qBittorrent looks for it.
+      # the next one waits for this one's startupProbe.
       #
       # As an ordinary container it started in parallel and qBittorrent won the
       # race, binding to the interfaces that existed at that moment — eth0 and
@@ -99,6 +98,18 @@ spec:
       # which the killswitch drops. The symptom was zero DHT nodes and a magnet
       # stuck on "retrieving metadata" forever, with a tunnel that was up and
       # reporting a healthy exit address the whole time.
+      #
+      # The sidecar alone did not fix that, and this comment used to claim it
+      # did. Ordering is only worth as much as the probe it waits on, and the
+      # probe was passing before the tunnel existed — see the startupProbe
+      # below. The client came back up bound to eth0 and loopback again, with
+      # exactly the same symptom, which is how the gap was found.
+      #
+      # Two things close it, and both are needed. The probe now reads the
+      # tunnel's actual state, so the ordering means something. And the client
+      # binds to the tunnel address rather than to whatever it finds at
+      # startup, so it cannot end up on eth0 even if it does start early — see
+      # deploy/install-torrent.sh.
       initContainers:
         - name: gluetun
           restartPolicy: Always
@@ -216,9 +227,25 @@ spec:
           # qBittorrent could report: the client is useless until this passes.
           # A startupProbe, not just a readiness one: on a native sidecar this
           # is what holds the next container back. qBittorrent does not start
-          # until the tunnel answers.
+          # until this passes.
+          #
+          # An exec probe rather than an httpGet, because httpGet only sees the
+          # status code. This route answers 200 from the moment gluetun's
+          # control server binds, with a body of {"status":"stopped"} while
+          # WireGuard is still coming up — so an httpGet passed in the first
+          # second or two and held nothing back. The race it was added to close
+          # was still open, and the symptom came back exactly as described
+          # above: qBittorrent listening on eth0 and loopback, no tun0, DHT at
+          # zero, magnets stuck on metadata forever.
+          #
+          # Reading the body is the difference. "running" is gluetun's own word
+          # for the tunnel being up, and nothing else passes.
           startupProbe:
-            httpGet: { path: /v1/vpn/status, port: control }
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - wget -qO- http://127.0.0.1:8000/v1/vpn/status | grep -q '"status":"running"'
             initialDelaySeconds: 5
             periodSeconds: 3
             failureThreshold: 40
