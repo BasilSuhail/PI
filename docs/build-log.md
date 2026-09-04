@@ -729,6 +729,53 @@ They exist so the button stays optional: delete the RoleBinding and the console
 loses its only cluster write while both targets keep working.
 
 
+### A class name that ate the toolbar
+
+The selected toolbar button rendered at 8px in a monospace face with a pixel of
+padding, while the unselected one beside it looked normal. Clicking either made
+the other one shrink.
+
+The tag naming which disk swap and the cache live on was given the class `on`.
+A bare `.on`, in a stylesheet where `on` already means "selected" — on the
+toolbar buttons, the segmented sort control, a selected file row. Every other
+use is scoped to its component; that one was not, and being declared later in
+the file it beat `.tbtn`'s own `font-size` on source order.
+
+It is `on-disk` now. Worth remembering that a class name is a global, and that
+a two-letter one describing a relationship ("on which disk") will collide with
+the same two letters describing a state.
+
+### Opening a service as an application
+
+The Apps shelf gives every tile two ways in.
+
+**The tile opens the app.** A window of its own with no tab strip, no address
+bar and no bookmarks — `window.open` with `popup=yes`, sized to the screen and
+named after the service so pressing the same tile twice raises the window that
+is already open rather than stacking a second one behind it.
+
+**The corner opens a browser tab**, and says so: `( Open in Browser )` where
+the chevron used to be. The words replace the glyph and nothing else moves —
+same corner, same tile. Padding for the thumb is cancelled by an equal negative
+margin, so the hit area is bigger than the text without the text leaving the
+corner. The health line stops short of it rather than running underneath, and
+only tiles that lead somewhere else get one, since a tile that opens a view
+inside the console has no browser to open it in.
+
+**What this is not, and cannot be.** A web page cannot hand a link to an
+installed PWA. There is no API for it, and whether one is installed is a
+property of the machine someone happens to be holding rather than of this
+console. What a page *can* ask for is a window with no browser furniture, which
+on every platform this is used from looks and behaves like the application. The
+genuine article — a Dock icon, its own login, surviving a browser restart — is
+still Safari's File > Add to Dock, once per service, and nothing on the server
+side can do it for you.
+
+The `href` stays real and stays on the anchor, so cmd-click, middle-click and
+Open in New Tab keep working exactly as the browser defines them. Only an
+unmodified left click is taken over, and only to give it a better window. A
+pop-up blocker turns the click into a plain tab rather than into nothing.
+
 ## Security posture
 
 | | |
