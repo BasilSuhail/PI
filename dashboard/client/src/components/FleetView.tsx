@@ -145,7 +145,7 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
               <span class="lbl dim">SWAP</span>
               <Meter value={swap.pct} tone={swapTone(swap.pct)} />
               <strong class="fig">{bytes(swap.used)}</strong>
-              <span class="on">{bootLabel}</span>
+              <span class="on-disk">{bootLabel}</span>
             </span>
           )}
           {node.cache && (
@@ -156,7 +156,7 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
               <span class="lbl dim">CACHE</span>
               <Meter value={(node.cache.bytes / node.cache.capBytes) * 100} tone="aqua" />
               <strong class="fig">{bytes(node.cache.bytes)}</strong>
-              <span class="on">{bootLabel}</span>
+              <span class="on-disk">{bootLabel}</span>
             </span>
           )}
         </div>
