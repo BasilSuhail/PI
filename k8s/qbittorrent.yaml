@@ -63,8 +63,20 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
-      containers:
+      # gluetun is an init container with restartPolicy Always — a native
+      # sidecar. That is not a style choice: init containers start in order and
+      # the next one waits for this one's startupProbe, which is the only way
+      # to guarantee the tunnel exists before qBittorrent looks for it.
+      #
+      # As an ordinary container it started in parallel and qBittorrent won the
+      # race, binding to the interfaces that existed at that moment — eth0 and
+      # loopback, no tun0 — and then tried to reach the swarm through eth0,
+      # which the killswitch drops. The symptom was zero DHT nodes and a magnet
+      # stuck on "retrieving metadata" forever, with a tunnel that was up and
+      # reporting a healthy exit address the whole time.
+      initContainers:
         - name: gluetun
+          restartPolicy: Always
           image: qmcgaw/gluetun:v3.40.4
           env:
             - name: VPN_SERVICE_PROVIDER
@@ -140,12 +152,19 @@ spec:
           #
           # The tunnel's own health is a better readiness signal than anything
           # qBittorrent could report: the client is useless until this passes.
+          # A startupProbe, not just a readiness one: on a native sidecar this
+          # is what holds the next container back. qBittorrent does not start
+          # until the tunnel answers.
+          startupProbe:
+            httpGet: { path: /v1/vpn/status, port: control }
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            failureThreshold: 40
           readinessProbe:
             httpGet: { path: /v1/vpn/status, port: control }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            failureThreshold: 12
+            periodSeconds: 15
 
+      containers:
         - name: qbittorrent
           image: lscr.io/linuxserver/qbittorrent:5.2.3
           env:

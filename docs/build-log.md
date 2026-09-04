@@ -843,6 +843,42 @@ Several countries rather than one so a server going out of service is a
 different exit rather than no tunnel. Distance is the whole point: a link to
 the far side of the world is slow however good it is, and every byte of a
 download crosses it twice.
+### Zero DHT nodes, and a tunnel that looked perfect
+
+A magnet sat on "retrieving metadata" forever. The same magnet on a laptop
+resolved instantly. The tunnel was up, reporting a healthy exit address, and
+every probe said the service was fine.
+
+qBittorrent's own log had it:
+
+It was listening on loopback, and on the pod's own address on `eth0`, and on
+no `tun0` at all.
+
+Both containers start at once in an ordinary pod, and qBittorrent won the race
+— it bound the interfaces that existed at that moment, then tried to reach the
+swarm through `eth0`. The killswitch dropped every packet. `connection: firewalled`,
+`dht_nodes: 0`, and a magnet that can never find a peer to ask for its
+metadata.
+
+The tunnel being healthy is what made it hard to see. Everything that could be
+checked from outside said the VPN was working, because it was — nothing was
+using it.
+
+Three things, one cause:
+
+**gluetun is a native sidecar now** — an init container with
+`restartPolicy: Always` and a `startupProbe`. Init containers start in order,
+and that probe is what holds qBittorrent back until the tunnel answers. The
+ordering is a guarantee rather than a race that usually goes the right way.
+
+**`Session\InterfaceName=tun0`** binds qBittorrent to the tunnel explicitly, so
+even if the ordering were ever wrong again it has nowhere else to send. It is
+also a second killswitch, at the application rather than the firewall.
+
+**`Session\Port`** is set to the port reserved with AirVPN. It had been
+choosing a random one, so the forwarded port pointed at nothing and the client
+reported itself firewalled even once traffic could flow.
+
 
 ## Security posture
 
