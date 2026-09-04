@@ -63,6 +63,31 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # The one difference between this and every working gluetun + qBittorrent
+      # setup published on the internet, all of which are docker-compose.
+      #
+      # Kubernetes writes a resolv.conf with five search domains and ndots:5.
+      # A name with fewer dots than that has the search list tried first, and
+      # "tracker.opentrackr.org" has two — so the first query actually sent is
+      # for tracker.opentrackr.org.jug.svc.cluster.local, which does not exist,
+      # and the answer is an authoritative NXDOMAIN. That is the exact string
+      # qBittorrent reported against every tracker in the magnet:
+      # "Host not found (authoritative)".
+      #
+      # Docker sets no search domains and ndots:1, which is why the same
+      # container image, the same gluetun and the same magnet work there.
+      #
+      # dnsPolicy None takes the search list away. Nothing in this pod resolves
+      # a cluster service by short name — it talks to trackers and peers, whose
+      # names are already fully qualified — so there is nothing to lose.
+      # gluetun still puts its own resolver in front of this; these are the
+      # upstreams behind it.
+      dnsPolicy: "None"
+      dnsConfig:
+        nameservers: ["1.1.1.1", "1.0.0.1"]
+        options:
+          - name: ndots
+            value: "1"
       # gluetun is an init container with restartPolicy Always — a native
       # sidecar. That is not a style choice: init containers start in order and
       # the next one waits for this one's startupProbe, which is the only way
@@ -144,6 +169,23 @@ spec:
             # is not protecting anything here.
             - name: BLOCK_MALICIOUS
               value: "off"
+            # And no DNS-over-TLS either. gluetun resolves upstream over TLS by
+            # default, and that is the second way its DNS can fail: the
+            # connection to the upstream resolver on port 853 has to succeed
+            # through the tunnel before any name resolves at all, and gluetun's
+            # own issue tracker carries reports of it timing out with exactly
+            # this symptom — magnets stuck downloading metadata, everything
+            # else working.
+            #
+            # Neither cause is provable from outside the pod, and both are the
+            # same component. Plain forwarding removes the component: no TLS
+            # handshake to fail, no blocklist to consult, just a query sent
+            # through the tunnel like any other packet. The tunnel is the thing
+            # keeping this private, and it is doing that job either way.
+            - name: DNS_UPSTREAM_RESOLVER_TYPE
+              value: "plain"
+            - name: DNS_UPSTREAM_PLAIN_ADDRESSES
+              value: "1.1.1.1:53,1.0.0.1:53"
             - name: TZ
               value: Europe/London
           securityContext:
