@@ -970,6 +970,33 @@ from `firewalled` to `disconnected`. gluetun's default route already sends
 everything through the tunnel and its firewall drops anything that is not, so
 the binding was belt to an existing pair of braces and it did not fit. Gone.
 
+### Firewalled, and a port nobody forwards
+
+With DNS fixed the client downloads — a Debian ISO at 17 MiB/s through the
+tunnel, which is what finally proved the stack end to end. Two things were
+still wrong, and they are the same thing.
+
+`connection_status: firewalled` and `listen_port: 32250`. AirVPN forwards the
+port reserved by hand in its control panel; qBittorrent had picked a random one
+and was listening there, so the forwarded port pointed at nothing and no peer
+could open a connection inbound. A firewalled client can still download from
+peers that accept incoming — which is why Debian worked — but it reaches far
+fewer of them, and a magnet with a thin swarm may reach none.
+
+**The port is set through qBittorrent's API now, not its config file.** The
+file route failed silently twice: the value is read at startup and rewritten on
+exit, so an edit made at the wrong moment vanishes, and a key with a backslash
+in it that the client does not recognise looks identical on disk to one it
+does. The API is what the settings page itself uses, applies immediately, and
+says whether it worked. It is called from inside the pod against localhost,
+which is exempt from the web interface's own authentication.
+
+UPnP is turned off with it. UPnP negotiates a port with a router on the local
+network; this client's only route out is a tunnel and the port at the far end
+was reserved by hand. Left on, it retries forever against a gateway that will
+never answer.
+
+
 ## Security posture
 
 | | |
