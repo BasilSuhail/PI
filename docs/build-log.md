@@ -776,6 +776,34 @@ Open in New Tab keep working exactly as the browser defines them. Only an
 unmodified left click is taken over, and only to give it a better window. A
 pop-up blocker turns the click into a plain tab rather than into nothing.
 
+### "Unauthorized", served as HTTP 200
+
+qBittorrent's web interface answered every request with a page reading
+`Unauthorized` and nothing else. Not a login screen — one word, no form.
+
+qBittorrent 5 validates the `Host` header on every request and recognises only
+localhost and its own address. Reached on a tailnet name through an ingress,
+which is the only way anyone reaches it here, every request fails that check.
+
+What made it hard to see is that the refusal is **HTTP 200**. Every probe,
+every readiness check and every `curl -o /dev/null -w '%{http_code}'` reported
+the service perfectly healthy, because as far as the status line was concerned
+it was. Only a browser, rendering the body, showed the problem — and the first
+guess from a working status code is that the click is broken rather than the
+response.
+
+`WebUI\ServerDomains=*` turns the check off. What it defends against is DNS
+rebinding, and what replaces it is stronger: no open port, published only on
+the tailnet, reachable only from a device already authenticated to it. The
+alternative is compiling a tailnet name into a repository that should not know
+one.
+
+The installer applies it whether or not it wrote the config, because a board
+set up before this existed carries the broken value and cannot be fixed from a
+web interface it will not serve. It stops the client first: qBittorrent
+rewrites that file when it exits, so an edit made while it is running is
+discarded on the way out.
+
 ## Security posture
 
 | | |
