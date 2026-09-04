@@ -776,31 +776,52 @@ Open in New Tab keep working exactly as the browser defines them. Only an
 unmodified left click is taken over, and only to give it a better window. A
 pop-up blocker turns the click into a plain tab rather than into nothing.
 
-### The password is generated, and it does not survive a restart
+### No password on the download client
 
-qBittorrent 5 ships no default password. It generates one at every start,
-prints it to its log once, and voids it the moment the process restarts — so a
-password noted down after one deploy is wrong after the next, and the failure
-reads as `Invalid Username or Password. Server response: Unauthorized`, which
-sounds like a permissions problem rather than an expired secret.
+qBittorrent asked for one and nobody could answer it. Version 5 ships no
+default: it generates a password at every start, prints it to its log once, and
+voids it the moment the process restarts — so a password noted after one deploy
+is wrong after the next, and the failure reads `Invalid Username or Password.
+Server response: Unauthorized`, which sounds like a permissions problem rather
+than an expired secret.
 
-The installer reads it out of the log and prints it at the end of a run, with
-the username and with the fact that a restart replaces it. Only when the client
-is running: a stopped one has no log to read.
+The right answer was not a better way to find the password. It was to stop
+asking for one, for the same reason the console does not:
 
-Set a permanent password in Options > Web UI once in, or every restart repeats
-the exercise.
+**Reaching this at all means being on the tailnet.** No port is open, the name
+resolves nowhere else, and the certificate is issued to a machine only an
+authenticated device can route to. Tailscale has already answered "who is
+this". A second password on top of that is not a second lock — it is the same
+lock, and one nobody holds a key to.
+
+`WebUI\AuthSubnetWhitelist` is set to the cluster's own networks, which is
+where the ingress proxy sits and the only place a request can arrive from.
+Nothing outside the cluster can present those addresses. Applied whether or not
+the installer wrote the config, since a board set up before this is holding a
+generated password nobody knows.
+
+**Two things this took to get right.**
+
+qBittorrent rewrites its config when it exits, so an edit made while it is
+running is discarded on the way out. The client is stopped, edited, and put
+back the way it was found.
+
+And the edit is done in python, not sed. The key contains a backslash, the
+value contains slashes, and the whole thing passes through a heredoc: nested
+sed escaping produced `WebUI\\AuthSubnetWhitelistEnabled`, a doubled
+backslash and a key qBittorrent does not recognise. The first python attempt
+then died on `bad escape \A`, because a backslash in a `re.sub` *replacement*
+is an escape sequence too. It is line-based now, with no regular expression
+anywhere near the value.
 
 **A wrong turn worth recording.** The first diagnosis was `Host` header
-validation: qBittorrent 5 checks it, only recognises localhost, and refuses
-anything else with a page reading `Unauthorized` served as HTTP 200. That
-matched the symptom exactly — a bare "Unauthorized", and a status code that
-told every probe the service was healthy. It was wrong. The login page renders
-on the tailnet name, which means the header is accepted, and the `Unauthorized`
-seen earlier was a failed login rather than a refused request. The fix that
-followed from it — `WebUI\ServerDomains=*` — would have turned off a real
-defence to solve a problem that did not exist, and was dropped before it
-shipped.
+validation: qBittorrent 5 checks it, recognises only localhost, and refuses
+anything else with a page reading `Unauthorized` served as HTTP 200 — which
+matched the symptom exactly, including every probe reporting the service
+healthy. It was wrong. The login page renders on the tailnet name, so the
+header is accepted. The fix that followed from it, `WebUI\ServerDomains=*`,
+would have turned off a real defence against DNS rebinding to solve a problem
+that did not exist. Dropped before it shipped.
 
 ## Security posture
 
