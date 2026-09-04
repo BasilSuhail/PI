@@ -144,6 +144,23 @@ spec:
             # is not protecting anything here.
             - name: BLOCK_MALICIOUS
               value: "off"
+            # And no DNS-over-TLS either. gluetun resolves upstream over TLS by
+            # default, and that is the second way its DNS can fail: the
+            # connection to the upstream resolver on port 853 has to succeed
+            # through the tunnel before any name resolves at all, and gluetun's
+            # own issue tracker carries reports of it timing out with exactly
+            # this symptom — magnets stuck downloading metadata, everything
+            # else working.
+            #
+            # Neither cause is provable from outside the pod, and both are the
+            # same component. Plain forwarding removes the component: no TLS
+            # handshake to fail, no blocklist to consult, just a query sent
+            # through the tunnel like any other packet. The tunnel is the thing
+            # keeping this private, and it is doing that job either way.
+            - name: DNS_UPSTREAM_RESOLVER_TYPE
+              value: "plain"
+            - name: DNS_UPSTREAM_PLAIN_ADDRESSES
+              value: "1.1.1.1:53,1.0.0.1:53"
             - name: TZ
               value: Europe/London
           securityContext:

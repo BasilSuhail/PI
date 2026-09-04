@@ -907,9 +907,31 @@ passed, the pod was 2/2, the web interface served. Every signal available said
 the stack was fine, and every one of them was telling the truth. One DNS answer
 was wrong.
 
-`BLOCK_MALICIOUS=off`. Turned off rather than worked around: the client's whole
-job is to talk to trackers, and a resolver that refuses to resolve them is not
-protecting anything here.
+`BLOCK_MALICIOUS=off`, and then the rest of gluetun's DNS with it.
+
+There are two ways that resolver can fail and only one of them is the
+blocklist. The other is the TLS half: gluetun resolves upstream over DNS-over-
+TLS by default, which means a connection to port 853 has to succeed through the
+tunnel before any name resolves at all, and gluetun's own issue tracker carries
+reports of it timing out with precisely this symptom — magnets stuck
+downloading metadata while everything else works. Neither cause is provable
+from outside the pod and both are the same component, so the component goes:
+
+```
+DNS_UPSTREAM_RESOLVER_TYPE=plain
+DNS_UPSTREAM_PLAIN_ADDRESSES=1.1.1.1:53,1.0.0.1:53
+```
+
+No TLS handshake to fail, no blocklist to consult, just a query sent through
+the tunnel like any other packet. The tunnel is what keeps this private and it
+does that job either way — encrypting a DNS query inside an already-encrypted
+tunnel was buying nothing and cost everything.
+
+Two public write-ups of the same symptom were read before choosing this
+(qdm12/gluetun#2735, and a linuxserver.io thread on the identical tracker
+error). Neither carries a confirmed fix, which is itself the finding: guessing
+between two failure modes of one component is worse than deleting the
+component.
 
 **What this cost, and what caused the cost.** The route to it ran through three
 wrong diagnoses — a pop-up blocker, `Host` header validation, and an interface
