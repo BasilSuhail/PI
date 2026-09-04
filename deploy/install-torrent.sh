@@ -164,6 +164,14 @@ echo "==> qBittorrent settings"
 # a client listening on a port nobody forwards is a client no peer can reach.
 FWD_PORT=$(kube -n jug get secret "$SECRET" -o jsonpath='{.data.forwardedPort}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
+# The address WireGuard gives this client, which is the address tun0 will have
+# once gluetun is up. AirVPN issues it per key, so it is stable across
+# reconnects and belongs in the same secret the key came from. Stored as a
+# comma-separated list of an IPv4 and an IPv6 address, each with its prefix
+# length. Only the IPv4 part is wanted, without the mask.
+TUN_ADDR=$(kube -n jug get secret "$SECRET" -o jsonpath='{.data.addresses}' 2>/dev/null |
+  base64 -d 2>/dev/null | tr ',' '\n' | sed -n 's#^ *\([0-9][0-9.]*\)/.*#\1#p' | head -1 || true)
+
 # qBittorrent rewrites this file when it exits, so an edit made while it runs is
 # discarded on the way out. Stopped, edited, then put back the way it was found.
 WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
@@ -312,11 +320,35 @@ if [ "$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev
   # tunnel, and the port on the far end of it was reserved by hand in AirVPN's
   # control panel. Left on, it retries forever against a gateway that will
   # never answer.
-  PREFS="{\"upnp\":false${FWD_PORT:+,\"listen_port\":$FWD_PORT},\"random_port\":false}"
+  # Bind to the tunnel address rather than to every interface.
+  #
+  # "every interface" is what qBittorrent does by default, and it enumerates
+  # them once, at startup. Anything that delays tun0 past that moment — a slow
+  # WireGuard handshake, a probe that passed early, a gluetun reconnect — leaves
+  # the client bound to eth0 and loopback and nothing else. It then sends every
+  # tracker announce, DHT query and peer connection out of eth0, where the
+  # killswitch drops them. Names still resolve, so nothing reports an error: the
+  # client just sits there, firewalled, DHT at zero, magnets on "retrieving
+  # metadata" until you give up.
+  #
+  # Named by address and not by device. libtorrent accepted "tun0" and then
+  # never finished binding to it — it logged the attempt and no success, and the
+  # client went from firewalled to disconnected. The address binds first time.
+  #
+  # This is also the stricter setting of the two. A socket on the tunnel address
+  # cannot send a packet down eth0 whatever the routing table says, so the
+  # killswitch stops being the only thing standing between this client and the
+  # board's own connection.
+  if [ -z "$TUN_ADDR" ]; then
+    echo "  No WireGuard address stored in the secret, so the client is left" >&2
+    echo "  bound to every interface. It works while the tunnel wins the race" >&2
+    echo "  at startup and stops dead when it does not." >&2
+  fi
+  PREFS="{\"upnp\":false${FWD_PORT:+,\"listen_port\":$FWD_PORT},\"random_port\":false${TUN_ADDR:+,\"current_network_interface\":\"tun0\",\"current_interface_address\":\"$TUN_ADDR\"}}"
   if kube -n jug exec deploy/qbittorrent -c qbittorrent -- \
        curl -s -m 10 -X POST "http://localhost:8080/api/v2/app/setPreferences" \
        --data-urlencode "json=$PREFS" >/dev/null 2>&1; then
-    printf '  %-16s %s\n' "listening on" "${FWD_PORT:-unchanged}"
+    printf '  %-16s %s\n' "listening on" "${TUN_ADDR:-every interface}:${FWD_PORT:-unchanged}"
     printf '  %-16s %s\n' "upnp" "off — nothing on a tunnel to negotiate with"
   else
     echo "  Could not reach the client's API to apply these. It may still be" >&2
