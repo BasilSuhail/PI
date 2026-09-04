@@ -126,10 +126,12 @@ const NodeCard = ({ node, sort, onOpen }: { node: FleetNode; sort: SortKey; onOp
         <div class="mrow" key={d.device} title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used`}>
           <span class="lbl">{labels[i]}</span>
           <Meter value={d.usedPct} tone={diskTone(d.usedPct)} />
-          {/* Used and total rather than a percentage: "27 GB / 917 GB" answers
-              both "how full" and "how big", and the meter still carries the
-              proportion on its own. */}
-          <strong class="fig">{bytes(d.usedBytes, 0)} / {bytes(d.totalBytes, 0)}</strong>
+          {/* Used and total rather than a percentage: "29.34 GB / 984.37 GB"
+              answers both "how full" and "how big", and the meter still
+              carries the proportion on its own. Full precision: this row is
+              how a download is watched, and rounding to whole gigabytes hid
+              the first twenty minutes of every one of them. */}
+          <strong class="fig">{bytes(d.usedBytes)} / {bytes(d.totalBytes)}</strong>
         </div>
       ))}
 
