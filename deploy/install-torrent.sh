@@ -159,10 +159,10 @@ fi
 #                        a key to since qBittorrent generates its own at every
 #                        start and voids it on the next.
 echo "==> qBittorrent settings"
+# The port AirVPN forwards, taken from the secret it was stored in. Prompted
+# for if it is missing: an earlier install could store the keys without it, and
+# a client listening on a port nobody forwards is a client no peer can reach.
 FWD_PORT=$(kube -n jug get secret "$SECRET" -o jsonpath='{.data.forwardedPort}' 2>/dev/null | base64 -d 2>/dev/null || true)
-if [ -z "$FWD_PORT" ]; then
-  echo "  no forwarded port in the secret — leaving the listen port alone" >&2
-fi
 
 # qBittorrent rewrites this file when it exits, so an edit made while it runs is
 # discarded on the way out. Stopped, edited, then put back the way it was found.
@@ -177,15 +177,13 @@ fi
 # backslash and keys qBittorrent does not recognise. Line-based, with no
 # regular expression near a value — a backslash in a re.sub replacement is an
 # escape too, which cost one more attempt.
-sudo python3 - "$QBT_CONF" "$CLUSTER_CIDRS" "$FWD_PORT" <<'EDIT'
+sudo python3 - "$QBT_CONF" "$CLUSTER_CIDRS" <<'EDIT'
 import sys
 
-path, cidrs, port = sys.argv[1], sys.argv[2], sys.argv[3]
+path, cidrs = sys.argv[1], sys.argv[2]
 
 want = [("Preferences", "WebUI\\AuthSubnetWhitelistEnabled", "true"),
         ("Preferences", "WebUI\\AuthSubnetWhitelist", cidrs)]
-if port:
-    want.append(("BitTorrent", "Session\\Port", port))
 
 lines = open(path).read().splitlines()
 
@@ -193,15 +191,13 @@ for section, key, value in want:
     lines = [l for l in lines if not l.startswith(key + "=")]
     header = "[" + section + "]"
     if header in lines:
-        at = lines.index(header) + 1
-        lines.insert(at, key + "=" + value)
+        lines.insert(lines.index(header) + 1, key + "=" + value)
     else:
         lines += ["", header, key + "=" + value]
 
 open(path, "w").write("\n".join(lines) + "\n")
 EDIT
 sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
-printf '  %-16s %s\n' "listens on" "${FWD_PORT:-unchanged}"
 printf '  %-16s %s\n' "no login from" "$CLUSTER_CIDRS"
 if [ "${WAS:-0}" != "0" ]; then
   kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
@@ -290,6 +286,41 @@ if [ "$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev
     echo "  Options > Web UI."
   else
     echo "  No temporary password in the log, which means a permanent one is set."
+  fi
+fi
+
+# The rest is applied through qBittorrent's own API rather than its config
+# file, because the file route quietly failed: the port was written to a key
+# the client reads at startup and then overwrites on exit, and the value never
+# survived. The API is what qBittorrent's own settings page uses, it applies
+# immediately, and it answers whether it worked.
+#
+# Run from inside the pod against localhost, which is exempt from the web
+# interface's own authentication and needs no credentials.
+if [ "$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)" != "0" ]; then
+  echo "==> Peer settings"
+  kube -n jug rollout status deployment/qbittorrent --timeout=180s >/dev/null 2>&1 || true
+
+  if [ -z "$FWD_PORT" ]; then
+    echo "  No forwarded port stored. Reserve one under AirVPN's Client Area >" >&2
+    echo "  Ports and re-run; until then peers cannot reach this client and it" >&2
+    echo "  will report itself firewalled." >&2
+  fi
+
+  # UPnP is off because there is nothing here to ask. UPnP negotiates a port
+  # with a router on the local network; this client's only route out is a
+  # tunnel, and the port on the far end of it was reserved by hand in AirVPN's
+  # control panel. Left on, it retries forever against a gateway that will
+  # never answer.
+  PREFS="{\"upnp\":false${FWD_PORT:+,\"listen_port\":$FWD_PORT},\"random_port\":false}"
+  if kube -n jug exec deploy/qbittorrent -c qbittorrent -- \
+       curl -s -m 10 -X POST "http://localhost:8080/api/v2/app/setPreferences" \
+       --data-urlencode "json=$PREFS" >/dev/null 2>&1; then
+    printf '  %-16s %s\n' "listening on" "${FWD_PORT:-unchanged}"
+    printf '  %-16s %s\n' "upnp" "off — nothing on a tunnel to negotiate with"
+  else
+    echo "  Could not reach the client's API to apply these. It may still be" >&2
+    echo "  starting; re-run this in a minute." >&2
   fi
 fi
 
