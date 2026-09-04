@@ -125,6 +125,70 @@ else
   echo "==> qBittorrent already has settings — leaving them alone"
 fi
 
+# No password, for the same reason the console has none.
+#
+# Reaching this at all means being on the tailnet: no port is open, the name
+# resolves nowhere else, and the certificate is issued to a machine only an
+# authenticated device can route to. Tailscale has already answered "who is
+# this" before qBittorrent is asked. A second password on top of that is not a
+# second lock — it is the same lock, and one nobody can open, because
+# qBittorrent generates its own at every start and voids it on the next.
+#
+# The whitelist is the cluster's own networks, which is where the ingress proxy
+# sits and the only place a request can arrive from. Nothing outside the
+# cluster can present those addresses.
+#
+# Applied whether or not the config was just written: a board set up before
+# this existed is holding a generated password nobody knows.
+echo "==> Web interface access"
+if sudo grep -q '^WebUI.AuthSubnetWhitelistEnabled=true$' "$QBT_CONF" 2>/dev/null; then
+  echo "  already open to the tailnet"
+else
+  # qBittorrent rewrites this file when it exits, so an edit made while it is
+  # running is discarded on the way out. Stopped, edited, then put back.
+  WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+  if [ "${WAS:-0}" != "0" ]; then
+    kube -n jug scale deployment/qbittorrent --replicas=0 >/dev/null
+    kube -n jug wait --for=delete pod -l app=qbittorrent --timeout=60s >/dev/null 2>&1 || true
+  fi
+  # python3 rather than sed. The key contains a backslash, the value contains
+  # slashes, and the whole thing goes through a heredoc — nested sed escaping
+  # produced a doubled backslash and a key qBittorrent does not recognise.
+  # python3 is already a dependency here: it is what the agent runs on.
+  # python3 rather than sed. The key contains a backslash, the value contains
+  # slashes, and the whole thing goes through a heredoc — nested sed escaping
+  # produced a doubled backslash and a key qBittorrent does not recognise.
+  # python3 is already a dependency here: it is what the agent runs on.
+  sudo python3 - "$QBT_CONF" "$CLUSTER_CIDRS" <<'EDIT'
+import sys
+
+path, cidrs = sys.argv[1], sys.argv[2]
+
+# Line by line, and no regular expression anywhere near the replacement. A
+# backslash in a re.sub replacement is an escape sequence, and this value is
+# nothing but backslashes: the first attempt died on "bad escape \A".
+lines = [l for l in open(path).read().splitlines()
+         if not l.startswith("WebUI\\AuthSubnetWhitelist")]
+
+block = ["WebUI\\AuthSubnetWhitelistEnabled=true",
+         "WebUI\\AuthSubnetWhitelist=" + cidrs]
+
+if "[Preferences]" in lines:
+    at = lines.index("[Preferences]") + 1
+    lines[at:at] = block
+else:
+    lines += ["", "[Preferences]"] + block
+
+open(path, "w").write("\n".join(lines) + "\n")
+EDIT
+  sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
+  echo "  no login: anything arriving from ${CLUSTER_CIDRS} is let straight in,"
+  echo "  and only the tailnet ingress can be arriving from there."
+  if [ "${WAS:-0}" != "0" ]; then
+    kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
+  fi
+fi
+
 echo "==> AirVPN credentials"
 if kube -n jug get secret "$SECRET" >/dev/null 2>&1; then
   echo "  already present — leaving them alone"
@@ -190,6 +254,26 @@ if [ -n "$WAS" ] && [ "$WAS" != "0" ]; then
   echo "  it was running, so it has been left running"
 fi
 
+# The generated password, fished out of the log rather than left for someone to
+# go looking for. qBittorrent 5 ships no default: it makes one per start and
+# prints it once, so a restart invalidates whatever was written down last time.
+# Only worth showing while the client is actually running.
+if [ "$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)" != "0" ]; then
+  echo
+  echo "==> Web interface login"
+  kube -n jug rollout status deployment/qbittorrent --timeout=120s >/dev/null 2>&1 || true
+  QBT_PW=$(kube -n jug logs deploy/qbittorrent -c qbittorrent --tail=200 2>/dev/null |
+    sed -n 's/.*temporary password is provided for this session: *//p' | tail -1 || true)
+  if [ -n "$QBT_PW" ]; then
+    printf '  %-12s %s\n' "username" "admin"
+    printf '  %-12s %s\n' "password" "$QBT_PW"
+    echo "  Generated for this run and void on the next restart. Set your own in"
+    echo "  Options > Web UI."
+  else
+    echo "  No temporary password in the log, which means a permanent one is set."
+  fi
+fi
+
 cat <<NEXT
 
 ==> Installed, and stopped.
@@ -215,10 +299,10 @@ straight to ${DATA_DIR}/Jellyfin/Media/Movies without retyping it.
 
 The port you reserved goes in Options > Connection > Listening Port.
 
-First login: qBittorrent 5 generates a temporary password and prints it to its
-log rather than shipping a default one.
-
-  sudo k3s kubectl -n jug logs deploy/qbittorrent -c qbittorrent | grep -i password
+There is no login. Tailscale has already established who you are before
+qBittorrent is asked, and a second password on top of that is the same lock
+twice — one of which nobody can open, since qBittorrent generates its own at
+every start and voids it on the next.
 
 Rollback:  sudo k3s kubectl -n jug delete -f ${REPO_ROOT}/k8s/qbittorrent.yaml
 NEXT
