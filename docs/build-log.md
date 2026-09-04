@@ -588,6 +588,50 @@ The Discord notification is deliberately not in that file. It is a webhook URL,
 which is a credential, and the import assumes it is notification id 1 — the
 first one set up, which it will be on a fresh install.
 
+### Three more monitors, and one that had to be invented
+
+The 6TB was the only thing being watched. Jellyfin, the tunnel and the
+download client were not, which is how the client spent a day connected to
+nothing while every signal anyone looked at was green.
+
+| monitor | endpoint | keyword |
+|---|---|---|
+| Jellyfin | `/health` on its in-cluster name | `Healthy` |
+| Torrent VPN tunnel | gluetun's control server, `/v1/vpn/status` | `"status":"running"` |
+| Torrent swarm | qBittorrent's API, `/api/v2/transfer/info` | `"connection_status":"connected"` |
+
+**The keyword is the check, not the status code.** gluetun's status route
+answers `200` from the moment its control server binds a socket, with
+`{"status":"stopped"}` in the body while WireGuard is still handshaking. A
+plain HTTP monitor on it would be green before the tunnel existed — which is
+not hypothetical, it is precisely what the pod's own `startupProbe` was doing,
+and what let qBittorrent start into a pod with no `tun0`.
+
+**The swarm monitor is the one that was missing.** "The tunnel is up" and "the
+pod is ready" were both true throughout that failure and neither was the
+question. Whether the client has a connection to the swarm is a third claim,
+it is the one that matters, and qBittorrent answers it in one field. This
+monitor goes down for that fault and the other two do not.
+
+**Down is not always a fault.** The torrent stack is meant to be off most of
+the time, so both torrent monitors sit red whenever it is switched off. That
+is deliberate rather than tolerated: it makes the pair a session signal, and
+Discord says when a download session comes up properly connected and when it
+goes away. Nothing inside the cluster can tell "switched off" apart from
+"broken" — the replica count is the difference and only the console reads it.
+The console is not in the cluster yet (`make dashboard-k8s`, still unrun), and
+its API is reachable only through `tailscale serve` on jug2, which a pod is
+not a tailnet peer of. A monitor built on that would have been shipped untested,
+which is the habit that caused the fault it is meant to catch.
+
+**No password on the two torrent monitors.** qBittorrent's web interface
+exempts the cluster's own subnets from its login, and Kuma's pod is in one of
+them. The same exemption is why the tailnet proxy reaches it without one.
+
+Matched with Uptime Kuma's own algorithm — axios parses the body, Kuma
+`JSON.stringify`s anything that is not a string, then does `includes` — run
+against the live endpoints rather than against what they ought to return.
+
 ### The node card, one row per drive
 
 `FleetView.tsx` and the meter block in `index.css`.

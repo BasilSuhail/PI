@@ -105,15 +105,43 @@ First visit asks you to create an admin account. Then, in this order:
      and retrofitting it means opening every monitor one at a time.
 
   2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
-     this repo. One monitor: the 6TB. Both boards boot from their SSD, so a
-     dead SSD is a dead board and the ping already says so — the 6TB is the
-     only disk that can vanish without anything else noticing.
+     this repo. Four monitors:
+
+       HDD 6TB             Both boards boot from their SSD, so a dead SSD is a
+                           dead board and the ping already says so. The 6TB is
+                           the only disk that can vanish without anything else
+                           noticing.
+
+       Jellyfin            Its own /health endpoint, which answers "Healthy"
+                           only once the server has finished starting.
+
+       Torrent VPN tunnel  gluetun's word for whether WireGuard is up. The
+                           keyword is the check and not the status code: that
+                           route answers 200 from the moment gluetun starts,
+                           with "stopped" in the body, which is exactly how an
+                           httpGet probe on it came to guarantee nothing.
+
+       Torrent swarm       Whether qBittorrent is talking to the swarm, which
+                           is a different claim from the tunnel being up and
+                           from the pod being ready. It was false for a day
+                           with both of those green.
+
+     The last two are down whenever the torrent stack is switched off, which
+     is most of the time and is not a fault. That is deliberate: it makes the
+     pair a session signal, so Discord says when a download session comes up
+     properly connected and when it goes away again. Nothing in the cluster
+     can tell "switched off" apart from "broken" — only the console knows the
+     replica count, and it does not run in the cluster yet.
 
 One trap that file exists to avoid: monitors must NOT point at the services'
 .ts.net names. MagicDNS does not resolve inside a pod — that is what the
 hostAliases in k8s/uptime-kuma.yaml work around, and they cover the two boards
 only. The services are checked on their in-cluster names instead, which also
 tests the app rather than the tailnet round trip to it.
+
+The two torrent monitors reach qBittorrent's own API without a password. The
+web interface exempts the cluster's subnets from its login (installed by
+deploy/install-torrent.sh), and Kuma's pod is in one of them.
 
 NEXT
 echo "Rollback:  sudo k3s kubectl delete -f ${REPO_ROOT}/k8s/uptime-kuma.yaml"

@@ -35,6 +35,108 @@
       "notificationIDList": {
         "1": true
       }
+    },
+    {
+      "id": 2,
+      "name": "Jellyfin",
+      "description": "Jellyfin's own health endpoint, asked on its in-cluster name. Answers the plain string Healthy once the server has finished starting, so this checks the application rather than the tailnet round trip to it. Down means the media library is unreachable, which is a fault.",
+      "type": "keyword",
+      "url": "http://jellyfin.jug.svc.cluster.local/health",
+      "keyword": "Healthy",
+      "invertKeyword": false,
+      "hostname": null,
+      "port": null,
+      "interval": 60,
+      "retryInterval": 60,
+      "resendInterval": 0,
+      "maxretries": 2,
+      "expiryNotification": false,
+      "ignoreTls": false,
+      "upsideDown": false,
+      "packetSize": 56,
+      "maxredirects": 10,
+      "accepted_statuscodes": [
+        "200-299"
+      ],
+      "dns_resolve_type": "A",
+      "dns_resolve_server": "1.1.1.1",
+      "method": "GET",
+      "body": null,
+      "headers": null,
+      "authMethod": null,
+      "active": true,
+      "tags": [],
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "id": 3,
+      "name": "Torrent VPN tunnel",
+      "description": "gluetun's own word for whether WireGuard is up, read from the control server inside the pod. The status code alone is not enough: this route answers 200 from the moment gluetun starts, with a body of \"stopped\" while the tunnel is still coming up. The keyword is the check. Down while the torrent stack is switched off, which is not a fault.",
+      "type": "keyword",
+      "url": "http://qbittorrent.jug.svc.cluster.local:8000/v1/vpn/status",
+      "keyword": "\"status\":\"running\"",
+      "invertKeyword": false,
+      "hostname": null,
+      "port": null,
+      "interval": 60,
+      "retryInterval": 60,
+      "resendInterval": 0,
+      "maxretries": 2,
+      "expiryNotification": false,
+      "ignoreTls": false,
+      "upsideDown": false,
+      "packetSize": 56,
+      "maxredirects": 10,
+      "accepted_statuscodes": [
+        "200-299"
+      ],
+      "dns_resolve_type": "A",
+      "dns_resolve_server": "1.1.1.1",
+      "method": "GET",
+      "body": null,
+      "headers": null,
+      "authMethod": null,
+      "active": true,
+      "tags": [],
+      "notificationIDList": {
+        "1": true
+      }
+    },
+    {
+      "id": 4,
+      "name": "Torrent swarm",
+      "description": "Whether qBittorrent is actually talking to the swarm, which is a different claim from the tunnel being up and from the pod being ready. It went down for a day with both of those green, because the client had bound to eth0 and the killswitch was silently dropping everything it sent. This is the monitor that would have caught it. Down while the torrent stack is switched off, which is not a fault.",
+      "type": "keyword",
+      "url": "http://qbittorrent.jug.svc.cluster.local/api/v2/transfer/info",
+      "keyword": "\"connection_status\":\"connected\"",
+      "invertKeyword": false,
+      "hostname": null,
+      "port": null,
+      "interval": 60,
+      "retryInterval": 60,
+      "resendInterval": 0,
+      "maxretries": 2,
+      "expiryNotification": false,
+      "ignoreTls": false,
+      "upsideDown": false,
+      "packetSize": 56,
+      "maxredirects": 10,
+      "accepted_statuscodes": [
+        "200-299"
+      ],
+      "dns_resolve_type": "A",
+      "dns_resolve_server": "1.1.1.1",
+      "method": "GET",
+      "body": null,
+      "headers": null,
+      "authMethod": null,
+      "active": true,
+      "tags": [],
+      "notificationIDList": {
+        "1": true
+      }
     }
   ]
 }
