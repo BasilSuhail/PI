@@ -140,53 +140,78 @@ fi
 #
 # Applied whether or not the config was just written: a board set up before
 # this existed is holding a generated password nobody knows.
-echo "==> Web interface access"
-if sudo grep -q '^WebUI.AuthSubnetWhitelistEnabled=true$' "$QBT_CONF" 2>/dev/null; then
-  echo "  already open to the tailnet"
-else
-  # qBittorrent rewrites this file when it exits, so an edit made while it is
-  # running is discarded on the way out. Stopped, edited, then put back.
-  WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
-  if [ "${WAS:-0}" != "0" ]; then
-    kube -n jug scale deployment/qbittorrent --replicas=0 >/dev/null
-    kube -n jug wait --for=delete pod -l app=qbittorrent --timeout=60s >/dev/null 2>&1 || true
-  fi
-  # python3 rather than sed. The key contains a backslash, the value contains
-  # slashes, and the whole thing goes through a heredoc — nested sed escaping
-  # produced a doubled backslash and a key qBittorrent does not recognise.
-  # python3 is already a dependency here: it is what the agent runs on.
-  # python3 rather than sed. The key contains a backslash, the value contains
-  # slashes, and the whole thing goes through a heredoc — nested sed escaping
-  # produced a doubled backslash and a key qBittorrent does not recognise.
-  # python3 is already a dependency here: it is what the agent runs on.
-  sudo python3 - "$QBT_CONF" "$CLUSTER_CIDRS" <<'EDIT'
+# Three settings qBittorrent cannot work without here, and cannot be told from
+# its own interface because two of them are why the interface is useless.
+#
+#   InterfaceName=tun0   Bind to the tunnel and nothing else. Without it
+#                        qBittorrent binds whatever interfaces exist when it
+#                        starts — which, losing the race against gluetun, was
+#                        eth0 and loopback and no tun0 at all. It then talked
+#                        to the swarm through eth0, the killswitch dropped
+#                        every packet, and the result was zero DHT nodes and a
+#                        magnet stuck on "retrieving metadata" while the tunnel
+#                        sat there healthy and reporting an exit address. The
+#                        sidecar ordering in the manifest fixes the race; this
+#                        makes the binding explicit so it cannot come back.
+#
+#   Port=<reserved>      Listen on the port AirVPN forwards. It was picking a
+#                        random one — 32522 — so the forwarded port pointed at
+#                        nothing and the client reported itself firewalled.
+#
+#   AuthSubnetWhitelist  No login. Reaching this means being on the tailnet,
+#                        which has already established who you are; a second
+#                        password is the same lock twice, and one nobody holds
+#                        a key to since qBittorrent generates its own at every
+#                        start and voids it on the next.
+echo "==> qBittorrent settings"
+FWD_PORT=$(kube -n jug get secret "$SECRET" -o jsonpath='{.data.forwardedPort}' 2>/dev/null | base64 -d 2>/dev/null || true)
+if [ -z "$FWD_PORT" ]; then
+  echo "  no forwarded port in the secret — leaving the listen port alone" >&2
+fi
+
+# qBittorrent rewrites this file when it exits, so an edit made while it runs is
+# discarded on the way out. Stopped, edited, then put back the way it was found.
+WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+if [ "${WAS:-0}" != "0" ]; then
+  kube -n jug scale deployment/qbittorrent --replicas=0 >/dev/null
+  kube -n jug wait --for=delete pod -l app=qbittorrent --timeout=90s >/dev/null 2>&1 || true
+fi
+
+# python3 rather than sed: the keys contain backslashes and the values contain
+# slashes, and nested sed escaping through a heredoc produced a doubled
+# backslash and keys qBittorrent does not recognise. Line-based, with no
+# regular expression near a value — a backslash in a re.sub replacement is an
+# escape too, which cost one more attempt.
+sudo python3 - "$QBT_CONF" "$CLUSTER_CIDRS" "$FWD_PORT" <<'EDIT'
 import sys
 
-path, cidrs = sys.argv[1], sys.argv[2]
+path, cidrs, port = sys.argv[1], sys.argv[2], sys.argv[3]
 
-# Line by line, and no regular expression anywhere near the replacement. A
-# backslash in a re.sub replacement is an escape sequence, and this value is
-# nothing but backslashes: the first attempt died on "bad escape \A".
-lines = [l for l in open(path).read().splitlines()
-         if not l.startswith("WebUI\\AuthSubnetWhitelist")]
+want = [("BitTorrent", "Session\\InterfaceName", "tun0"),
+        ("Preferences", "WebUI\\AuthSubnetWhitelistEnabled", "true"),
+        ("Preferences", "WebUI\\AuthSubnetWhitelist", cidrs)]
+if port:
+    want.append(("BitTorrent", "Session\\Port", port))
 
-block = ["WebUI\\AuthSubnetWhitelistEnabled=true",
-         "WebUI\\AuthSubnetWhitelist=" + cidrs]
+lines = open(path).read().splitlines()
 
-if "[Preferences]" in lines:
-    at = lines.index("[Preferences]") + 1
-    lines[at:at] = block
-else:
-    lines += ["", "[Preferences]"] + block
+for section, key, value in want:
+    lines = [l for l in lines if not l.startswith(key + "=")]
+    header = "[" + section + "]"
+    if header in lines:
+        at = lines.index(header) + 1
+        lines.insert(at, key + "=" + value)
+    else:
+        lines += ["", header, key + "=" + value]
 
 open(path, "w").write("\n".join(lines) + "\n")
 EDIT
-  sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
-  echo "  no login: anything arriving from ${CLUSTER_CIDRS} is let straight in,"
-  echo "  and only the tailnet ingress can be arriving from there."
-  if [ "${WAS:-0}" != "0" ]; then
-    kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
-  fi
+sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
+printf '  %-16s %s\n' "binds to" "tun0 — the tunnel, and nothing else"
+printf '  %-16s %s\n' "listens on" "${FWD_PORT:-unchanged}"
+printf '  %-16s %s\n' "no login from" "$CLUSTER_CIDRS"
+if [ "${WAS:-0}" != "0" ]; then
+  kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
 fi
 
 echo "==> AirVPN credentials"
