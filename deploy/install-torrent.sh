@@ -122,54 +122,7 @@ CONF
   printf '  %-16s %s\n' "in progress" "$DATA_DIR/Downloads/.incomplete"
   echo "  Both on the 6TB, so finishing a download is a rename and not a copy."
 else
-  echo "==> qBittorrent already has save paths — leaving them alone"
-fi
-
-# The one setting that has to be right or the web interface is unusable, and
-# which fails in the most misleading way available: qBittorrent 5 checks the
-# Host header on every request and answers anything it does not recognise with
-# a page reading "Unauthorized" — served as HTTP 200, so every probe, health
-# check and curl reports the service perfectly healthy while a browser shows
-# one word and no way past it.
-#
-# It only recognises localhost and its own address. Reached on a tailnet name
-# through an ingress, which is the only way anyone reaches it here, every
-# request fails that check.
-#
-# ServerDomains=* turns the check off. What it defends against is DNS
-# rebinding, and the defence it replaces is stronger: this service has no open
-# port, is published only on the tailnet, and is reachable only by a device
-# already authenticated to it. The alternative is compiling a tailnet name into
-# a repository that should not know one.
-#
-# Applied whether or not the file was just written, because a board installed
-# before this existed has the broken value and no way to fix it from a web
-# interface it cannot open.
-echo "==> Web interface host check"
-if sudo grep -q '^WebUI.ServerDomains=\*$' "$QBT_CONF" 2>/dev/null; then
-  echo "  already set"
-else
-  # qBittorrent rewrites this file when it exits, so an edit made while it is
-  # running is discarded on the way out. Stopped, edited, then put back the way
-  # it was found.
-  WAS=$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
-  if [ "${WAS:-0}" != "0" ]; then
-    echo "  stopping it to edit the file it would otherwise overwrite"
-    kube -n jug scale deployment/qbittorrent --replicas=0 >/dev/null
-    kube -n jug wait --for=delete pod -l app=qbittorrent --timeout=60s >/dev/null 2>&1 || true
-  fi
-  if sudo grep -q '^\[Preferences\]$' "$QBT_CONF"; then
-    sudo sed -i '/^WebUI.ServerDomains=/d' "$QBT_CONF"
-    sudo sed -i 's|^\[Preferences\]$|[Preferences]\nWebUI\\ServerDomains=*|' "$QBT_CONF"
-  else
-    printf '\n[Preferences]\nWebUI\\ServerDomains=*\n' | sudo tee -a "$QBT_CONF" >/dev/null
-  fi
-  sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
-  echo "  set — the tailnet name is accepted now"
-  if [ "${WAS:-0}" != "0" ]; then
-    kube -n jug scale deployment/qbittorrent --replicas="$WAS" >/dev/null
-    echo "  started again"
-  fi
+  echo "==> qBittorrent already has settings — leaving them alone"
 fi
 
 echo "==> AirVPN credentials"

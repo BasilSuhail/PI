@@ -776,33 +776,31 @@ Open in New Tab keep working exactly as the browser defines them. Only an
 unmodified left click is taken over, and only to give it a better window. A
 pop-up blocker turns the click into a plain tab rather than into nothing.
 
-### "Unauthorized", served as HTTP 200
+### The password is generated, and it does not survive a restart
 
-qBittorrent's web interface answered every request with a page reading
-`Unauthorized` and nothing else. Not a login screen — one word, no form.
+qBittorrent 5 ships no default password. It generates one at every start,
+prints it to its log once, and voids it the moment the process restarts — so a
+password noted down after one deploy is wrong after the next, and the failure
+reads as `Invalid Username or Password. Server response: Unauthorized`, which
+sounds like a permissions problem rather than an expired secret.
 
-qBittorrent 5 validates the `Host` header on every request and recognises only
-localhost and its own address. Reached on a tailnet name through an ingress,
-which is the only way anyone reaches it here, every request fails that check.
+The installer reads it out of the log and prints it at the end of a run, with
+the username and with the fact that a restart replaces it. Only when the client
+is running: a stopped one has no log to read.
 
-What made it hard to see is that the refusal is **HTTP 200**. Every probe,
-every readiness check and every `curl -o /dev/null -w '%{http_code}'` reported
-the service perfectly healthy, because as far as the status line was concerned
-it was. Only a browser, rendering the body, showed the problem — and the first
-guess from a working status code is that the click is broken rather than the
-response.
+Set a permanent password in Options > Web UI once in, or every restart repeats
+the exercise.
 
-`WebUI\ServerDomains=*` turns the check off. What it defends against is DNS
-rebinding, and what replaces it is stronger: no open port, published only on
-the tailnet, reachable only from a device already authenticated to it. The
-alternative is compiling a tailnet name into a repository that should not know
-one.
-
-The installer applies it whether or not it wrote the config, because a board
-set up before this existed carries the broken value and cannot be fixed from a
-web interface it will not serve. It stops the client first: qBittorrent
-rewrites that file when it exits, so an edit made while it is running is
-discarded on the way out.
+**A wrong turn worth recording.** The first diagnosis was `Host` header
+validation: qBittorrent 5 checks it, only recognises localhost, and refuses
+anything else with a page reading `Unauthorized` served as HTTP 200. That
+matched the symptom exactly — a bare "Unauthorized", and a status code that
+told every probe the service was healthy. It was wrong. The login page renders
+on the tailnet name, which means the header is accepted, and the `Unauthorized`
+seen earlier was a failed login rather than a refused request. The fix that
+followed from it — `WebUI\ServerDomains=*` — would have turned off a real
+defence to solve a problem that did not exist, and was dropped before it
+shipped.
 
 ## Security posture
 
