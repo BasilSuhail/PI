@@ -729,6 +729,22 @@ They exist so the button stays optional: delete the RoleBinding and the console
 loses its only cluster write while both targets keep working.
 
 
+### A class name that ate the toolbar
+
+The selected toolbar button rendered at 8px in a monospace face with a pixel of
+padding, while the unselected one beside it looked normal. Clicking either made
+the other one shrink.
+
+The tag naming which disk swap and the cache live on was given the class `on`.
+A bare `.on`, in a stylesheet where `on` already means "selected" — on the
+toolbar buttons, the segmented sort control, a selected file row. Every other
+use is scoped to its component; that one was not, and being declared later in
+the file it beat `.tbtn`'s own `font-size` on source order.
+
+It is `on-disk` now. Worth remembering that a class name is a global, and that
+a two-letter one describing a relationship ("on which disk") will collide with
+the same two letters describing a state.
+
 ### Opening a service as an application
 
 The Apps shelf gives every tile two ways in.

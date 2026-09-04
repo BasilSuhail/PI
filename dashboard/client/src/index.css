@@ -183,8 +183,14 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .duo .half>.lbl{flex:0 0 46px}
 .duo .half>.fig{font-size:10px}
 /* Which disk these bytes are actually on. Small enough to read as an
-   annotation on the figure rather than a value of its own. */
-.on{flex:none;font-family:var(--mono);font-size:8px;letter-spacing:.04em;
+   annotation on the figure rather than a value of its own.
+   Named `on-disk`, not `on`. A bare `.on` is what this was, and `on` is the
+   word this stylesheet already uses for "selected" — on the toolbar buttons,
+   the segmented control, a file row. Declared later in the file, it beat
+   `.tbtn`'s own font-size on source order and rendered the selected toolbar
+   button at 8px in a monospace face with 1px of padding. Every other `.on`
+   here is scoped to its component; this one was not. */
+.on-disk{flex:none;font-family:var(--mono);font-size:8px;letter-spacing:.04em;
   color:var(--faint);border:1px solid var(--panel-line);border-radius:3px;
   padding:1px 3px;line-height:1.35}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
@@ -452,22 +458,29 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 .app-health{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:10px;
   color:var(--muted);font-family:var(--mono);font-size:9px}
-/* Exactly where the chevron was, saying what it does instead of hinting at
-   it. Same corner, same size of tile — the words replace the glyph and nothing
-   moves. Padding for the thumb is cancelled by an equal negative margin, so
-   the hit area grows without the text shifting off the corner it belongs in. */
-.app-browser{position:absolute;right:11px;bottom:11px;z-index:1;
-  padding:7px 8px;margin:-7px -8px;
+/* Sits on the health line, not below it.
+   The health row is the tile's last flow item: its text box bottom lands on
+   the tile's 12px bottom padding, and its right edge on the 13px side padding.
+   This is positioned to the same two numbers, minus its own padding, and given
+   the same 9px mono — so the two text boxes are the same size in the same
+   place and the baselines agree. A negative margin was doing that job before
+   and doing it approximately, which is why it read as sitting low. */
+.app-browser{position:absolute;right:3px;bottom:4px;z-index:1;
+  padding:8px 10px;
   color:var(--faint);text-decoration:none;white-space:nowrap;
-  font-family:var(--mono);font-size:7px;letter-spacing:.01em;
+  font-family:var(--mono);font-size:9px;letter-spacing:.02em;line-height:1.2;
   transition:color .16s ease,transform .16s ease}
 .app-browser:hover{color:var(--link)}
-.app-browser:focus-visible{outline:2px solid var(--link);outline-offset:1px}
+.app-browser:focus-visible{outline:2px solid var(--link);outline-offset:-1px}
 /* Both lift together: the tile transforms, and this is its sibling. */
 .app-slot:hover .app-browser{transform:translateY(-3px)}
-/* The health line stops short of it rather than running underneath. Only on
-   tiles that have one — a tile opening a view inside the console does not. */
-.app-slot:has(.app-browser) .app-health{padding-right:84px}
+/* The health line stops short of it rather than running underneath, and gives
+   up its own text before it collides — on the narrowest tile the two together
+   are wider than the tile is, and a truncated word beats two overlapping
+   ones. Only on tiles that have one: a tile opening a view inside the console
+   does not. */
+.app-slot:has(.app-browser) .app-health{padding-right:112px}
+.app-health span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app-note{margin-top:21px}
 .app-note>svg{color:var(--link);flex:none}
 
