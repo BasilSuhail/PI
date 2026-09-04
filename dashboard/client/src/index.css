@@ -395,7 +395,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .app-summary strong{color:var(--link);font-family:var(--mono);font-size:21px;font-variant-numeric:tabular-nums}
 .app-summary span{color:var(--faint);font-size:10px}
 .apps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:13px}
-.app-tile{position:relative;display:flex;flex-direction:column;min-height:168px;padding:14px 13px 12px;
+.app-tile{position:relative;display:flex;flex-direction:column;min-height:168px;padding:14px 13px 12px;cursor:pointer;
   border:1px solid var(--card-edge);border-radius:7px;color:var(--ink-2);text-decoration:none;
   background:linear-gradient(145deg,var(--card-1),var(--card-2));
   box-shadow:0 2px 4px rgba(37,72,85,.13),inset 0 1px var(--gloss-soft);
@@ -458,28 +458,22 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 .app-health{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:10px;
   color:var(--muted);font-family:var(--mono);font-size:9px}
-/* Sits on the health line, not below it.
-   The health row is the tile's last flow item: its text box bottom lands on
-   the tile's 12px bottom padding, and its right edge on the 13px side padding.
-   This is positioned to the same two numbers, minus its own padding, and given
-   the same 9px mono — so the two text boxes are the same size in the same
-   place and the baselines agree. A negative margin was doing that job before
-   and doing it approximately, which is why it read as sitting low. */
-.app-browser{position:absolute;right:3px;bottom:4px;z-index:1;
-  padding:8px 10px;
+/* On the status row, pushed to its right edge. In flow rather than floated
+   over a corner: a corner belongs to whatever row happens to be last, which on
+   the torrent tile is the VPN line, and reserving space for it in the row
+   above truncated the status word instead. Sharing the row costs no height and
+   cannot overlap anything.
+   Padding for the thumb, cancelled vertically by an equal negative margin so
+   the row stays the height it was, and horizontally so the text still lands on
+   the tile's own 13px edge. */
+.app-browser{flex:none;margin-left:auto;padding:7px 9px;margin-top:-7px;
+  margin-bottom:-7px;margin-right:-9px;
   color:var(--faint);text-decoration:none;white-space:nowrap;
-  font-family:var(--mono);font-size:9px;letter-spacing:.02em;line-height:1.2;
-  transition:color .16s ease,transform .16s ease}
+  font-family:var(--mono);font-size:9px;letter-spacing:.02em;
+  transition:color .16s ease}
 .app-browser:hover{color:var(--link)}
 .app-browser:focus-visible{outline:2px solid var(--link);outline-offset:-1px}
-/* Both lift together: the tile transforms, and this is its sibling. */
-.app-slot:hover .app-browser{transform:translateY(-3px)}
-/* The health line stops short of it rather than running underneath, and gives
-   up its own text before it collides — on the narrowest tile the two together
-   are wider than the tile is, and a truncated word beats two overlapping
-   ones. Only on tiles that have one: a tile opening a view inside the console
-   does not. */
-.app-slot:has(.app-browser) .app-health{padding-right:112px}
+/* The status word gives way first if a tile is ever too narrow for both. */
 .app-health span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app-note{margin-top:21px}
 .app-note>svg{color:var(--link);flex:none}
