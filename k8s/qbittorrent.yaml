@@ -124,6 +124,26 @@ spec:
             # tunnel however good the link is.
             - name: SERVER_COUNTRIES
               value: "__VPN_COUNTRIES__"
+            # gluetun runs its own DNS-over-TLS resolver and points the pod's
+            # /etc/resolv.conf at it, and it ships a malicious-hostname
+            # blocklist turned on. Public BitTorrent trackers are on that list.
+            #
+            # A blocked name is answered NXDOMAIN, so qBittorrent reported
+            # "Host not found (authoritative)" against every tracker in the
+            # magnet — an authoritative denial rather than a timeout, which is
+            # why it never looked like a network fault. DHT was dead for the
+            # same reason: bootstrapping resolves router.bittorrent.com.
+            #
+            # Everything else worked and said so. curl from the same container
+            # fetched an AirVPN address, because ipinfo.io is not on the list.
+            # The tunnel, the routing and the killswitch were never the
+            # problem; one DNS answer was.
+            #
+            # Turned off rather than worked around: the client's whole job is
+            # to talk to trackers, and a resolver that refuses to resolve them
+            # is not protecting anything here.
+            - name: BLOCK_MALICIOUS
+              value: "off"
             - name: TZ
               value: Europe/London
           securityContext:
