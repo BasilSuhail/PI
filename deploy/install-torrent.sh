@@ -149,17 +149,6 @@ fi
 # Three settings qBittorrent cannot work without here, and cannot be told from
 # its own interface because two of them are why the interface is useless.
 #
-#   InterfaceName=tun0   Bind to the tunnel and nothing else. Without it
-#                        qBittorrent binds whatever interfaces exist when it
-#                        starts — which, losing the race against gluetun, was
-#                        eth0 and loopback and no tun0 at all. It then talked
-#                        to the swarm through eth0, the killswitch dropped
-#                        every packet, and the result was zero DHT nodes and a
-#                        magnet stuck on "retrieving metadata" while the tunnel
-#                        sat there healthy and reporting an exit address. The
-#                        sidecar ordering in the manifest fixes the race; this
-#                        makes the binding explicit so it cannot come back.
-#
 #   Port=<reserved>      Listen on the port AirVPN forwards. It was picking a
 #                        random one — 32522 — so the forwarded port pointed at
 #                        nothing and the client reported itself firewalled.
@@ -193,8 +182,7 @@ import sys
 
 path, cidrs, port = sys.argv[1], sys.argv[2], sys.argv[3]
 
-want = [("BitTorrent", "Session\\InterfaceName", "tun0"),
-        ("Preferences", "WebUI\\AuthSubnetWhitelistEnabled", "true"),
+want = [("Preferences", "WebUI\\AuthSubnetWhitelistEnabled", "true"),
         ("Preferences", "WebUI\\AuthSubnetWhitelist", cidrs)]
 if port:
     want.append(("BitTorrent", "Session\\Port", port))
@@ -213,7 +201,6 @@ for section, key, value in want:
 open(path, "w").write("\n".join(lines) + "\n")
 EDIT
 sudo chown "$OWNER_UID:$OWNER_GID" "$QBT_CONF"
-printf '  %-16s %s\n' "binds to" "tun0 — the tunnel, and nothing else"
 printf '  %-16s %s\n' "listens on" "${FWD_PORT:-unchanged}"
 printf '  %-16s %s\n' "no login from" "$CLUSTER_CIDRS"
 if [ "${WAS:-0}" != "0" ]; then
