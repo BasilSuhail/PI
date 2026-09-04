@@ -729,6 +729,33 @@ They exist so the button stays optional: delete the RoleBinding and the console
 loses its only cluster write while both targets keep working.
 
 
+### Opening a service as an application
+
+The Apps shelf gives every tile two ways in.
+
+**The tile opens the app.** A window of its own with no tab strip, no address
+bar and no bookmarks — `window.open` with `popup=yes`, sized to the screen and
+named after the service so pressing the same tile twice raises the window that
+is already open rather than stacking a second one behind it.
+
+**The corner opens a browser tab.** What was a decorative chevron is a real
+link now, with a hit area a thumb can find, and it does what a link has always
+done.
+
+**What this is not, and cannot be.** A web page cannot hand a link to an
+installed PWA. There is no API for it, and whether one is installed is a
+property of the machine someone happens to be holding rather than of this
+console. What a page *can* ask for is a window with no browser furniture, which
+on every platform this is used from looks and behaves like the application. The
+genuine article — a Dock icon, its own login, surviving a browser restart — is
+still Safari's File > Add to Dock, once per service, and nothing on the server
+side can do it for you.
+
+The `href` stays real and stays on the anchor, so cmd-click, middle-click and
+Open in New Tab keep working exactly as the browser defines them. Only an
+unmodified left click is taken over, and only to give it a better window. A
+pop-up blocker turns the click into a plain tab rather than into nothing.
+
 ## Security posture
 
 | | |

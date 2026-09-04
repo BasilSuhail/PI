@@ -452,7 +452,19 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 .app-health{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:10px;
   color:var(--muted);font-family:var(--mono);font-size:9px}
-.app-arrow{position:absolute;right:11px;bottom:12px;color:var(--faint)}
+/* Where the decorative chevron used to sit, now a control you can actually
+   press: the tile opens the app, this opens a browser tab. Given a hit area
+   larger than the glyph, because a 14px arrow in the corner of a tile is not
+   something a thumb can reliably find. */
+.app-browser{position:absolute;right:6px;bottom:6px;z-index:1;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:26px;height:26px;border-radius:6px;
+  color:var(--faint);text-decoration:none;
+  transition:color .16s ease,background .16s ease,transform .16s ease}
+.app-browser:hover{color:var(--link);background:var(--row-hover)}
+.app-browser:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+/* Follows the tile's own lift, being a sibling rather than a child of it. */
+.app-slot:hover .app-browser{transform:translateY(-3px)}
 .app-note{margin-top:21px}
 .app-note>svg{color:var(--link);flex:none}
 

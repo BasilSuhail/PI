@@ -19,6 +19,37 @@ const isArt = (icon: string | null): icon is string =>
 const isInternal = (url: string) => url.startsWith('#');
 
 /**
+ * Open a service the way you would open an application: its own window, with
+ * no tab strip, no address bar and no bookmarks.
+ *
+ * This is as close as a web page can get. A page cannot hand a link to an
+ * installed PWA — there is no API for it, and whether one exists is a property
+ * of the machine you happen to be holding, not of this console. What it can do
+ * is ask for a window with no browser furniture, which on every platform that
+ * matters here looks and behaves like the app.
+ *
+ * The window is named after the app, so opening the same tile twice raises the
+ * window that is already there instead of stacking a second one on top of it.
+ */
+const openAsApp = (name: string, url: string): boolean => {
+  const w = Math.min(1440, Math.round(screen.availWidth * 0.92));
+  const h = Math.min(940, Math.round(screen.availHeight * 0.92));
+  const left = Math.round((screen.availWidth - w) / 2);
+  const top = Math.round((screen.availHeight - h) / 2);
+  const handle = window.open(
+    url,
+    `jug-${name.replace(/[^a-z0-9]+/gi, '-')}`,
+    `popup=yes,width=${w},height=${h},left=${left},top=${top}`,
+  );
+  // Blocked by a pop-up setting, and the click would otherwise do nothing at
+  // all. Say so by returning false; the caller falls back to a plain tab,
+  // which is worse than what was asked for and much better than silence.
+  if (!handle) return false;
+  handle.focus();
+  return true;
+};
+
+/**
  * A switchable tile has four states, and they are not the same thing:
  * off on purpose, coming up, running, and going down. "unreachable" would be
  * wrong for three of them.
@@ -105,6 +136,10 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
             // not the same as failing one. Only a tile that actually answered
             // false is held shut; an unprobed one opens like any other, since
             // nothing here knows whether it is up.
+            // The href stays real so the browser's own gestures keep working:
+            // cmd-click, middle-click, right-click and Open in New Tab all do
+            // what they have always done. Only a plain left click is taken
+            // over, and only to give it a better window.
             href={shut ? undefined : app.url}
             target={isInternal(app.url) ? undefined : '_blank'}
             rel="noreferrer"
@@ -112,9 +147,19 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               if (isInternal(app.url)) {
                 e.preventDefault();
                 onOpenView(app.url.slice(1));
-              } else if (shut) {
-                e.preventDefault();
+                return;
               }
+              if (shut) {
+                e.preventDefault();
+                return;
+              }
+              // A modified click is the user asking for the browser's
+              // behaviour by name. Leave it alone.
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              // Falling through to the href on a blocked pop-up is deliberate:
+              // preventDefault has already run, so open a tab explicitly.
+              if (!openAsApp(app.name, app.url)) window.open(app.url, '_blank', 'noreferrer');
             }}
           >
             <div class={`app-icon ${isArt(app.icon) ? 'art' : ACCENTS[i % ACCENTS.length]}`}>
@@ -156,8 +201,23 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
                 </span>
               </div>
             )}
-            <Chevron size={16} class="app-arrow" />
           </a>
+          {/* The other half of the choice, and a real link rather than the
+              decorative chevron it replaces: the tile gives you the app, this
+              corner gives you a browser tab. A sibling of the tile, not a
+              child — a link inside a link is invalid and swallows the click. */}
+          {!isInternal(app.url) && !shut && (
+            <a
+              class="app-browser"
+              href={app.url}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${app.name} in a browser tab`}
+              aria-label={`Open ${app.name} in a browser tab`}
+            >
+              <Chevron size={14} />
+            </a>
+          )}
           {sw && sw.action && (
             <button
               class={`app-power ${sw.on ? 'on' : ''}`}
