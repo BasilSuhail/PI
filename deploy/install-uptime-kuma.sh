@@ -104,16 +104,60 @@ First visit asks you to create an admin account. Then, in this order:
      monitors: "Default enabled" only applies to monitors created after it,
      and retrofitting it means opening every monitor one at a time.
 
-  2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
-     this repo. One monitor: the 6TB. Both boards boot from their SSD, so a
-     dead SSD is a dead board and the ping already says so — the 6TB is the
-     only disk that can vanish without anything else noticing.
+  2. Settings > Backup > Import, with "Skip existing" selected. "Overwrite"
+     deletes every monitor already there, along with its history.
 
-One trap that file exists to avoid: monitors must NOT point at the services'
-.ts.net names. MagicDNS does not resolve inside a pod — that is what the
-hostAliases in k8s/uptime-kuma.yaml work around, and they cover the two boards
-only. The services are checked on their in-cluster names instead, which also
-tests the app rather than the tailnet round trip to it.
+     The monitor list is not kept in this repository. Uptime Kuma is the
+     record of what is being watched; a copy here would be a second one, and
+     the two disagreed for months without anyone noticing — the file claimed a
+     single disk check while the board ran eight monitors, none of them that
+     one. Export from Settings > Backup when a copy is wanted, and keep it
+     outside this repo: the export carries notification tokens.
+
+     Twelve monitors are set up today. Eight cover the boards and the apps on
+     them: the console, the three OSINT endpoints, both Glances agents and
+     both file shims. The other four:
+
+       HDD 6TB             The agent on pi2, reading /sys, keyed on the disk
+                           model. Both boards boot from their SSD, so a dead
+                           SSD is a dead board and the ping already says so.
+                           The 6TB is the only disk that can vanish without
+                           anything else noticing. Sysfs rather than the mount
+                           table: a disconnected disk leaves its mount entry
+                           behind, so a mount-based check sits green over a
+                           drive that is physically gone.
+
+       Jellyfin            Its own /health endpoint, which answers "Healthy"
+                           only once the server has finished starting.
+
+       Torrent VPN tunnel  gluetun's word for whether WireGuard is up. The
+                           keyword is the check and not the status code: that
+                           route answers 200 from the moment gluetun starts,
+                           with "stopped" in the body, which is exactly how an
+                           httpGet probe on it came to guarantee nothing.
+
+       Torrent swarm       Whether qBittorrent is talking to the swarm, which
+                           is a different claim from the tunnel being up and
+                           from the pod being ready. It was false for a day
+                           with both of those green.
+
+     The last two are down whenever the torrent stack is switched off, which
+     is most of the time and is not a fault. That is deliberate: it makes the
+     pair a session signal, so Discord says when a download session comes up
+     properly connected and when it goes away again. Nothing in the cluster
+     can tell "switched off" apart from "broken" — only the console knows the
+     replica count, and it does not run in the cluster yet.
+
+One trap worth knowing when adding a monitor. MagicDNS does not resolve inside a pod, so
+a monitor cannot simply be given a service's .ts.net name. The hostAliases in
+k8s/uptime-kuma.yaml work around it for pi and pi2 and for nothing else,
+which is why the board-level monitors can use those two names and the
+cluster's own services cannot. Those are checked on their in-cluster names
+instead, which also tests the app rather than the tailnet round trip to it.
+
+The two torrent monitors reach qBittorrent's own API without a password. The
+web interface exempts the cluster's subnets from its login (installed by
+deploy/install-torrent.sh), and Kuma's pod is in one of them.
 
 NEXT
 echo "Rollback:  sudo k3s kubectl delete -f ${REPO_ROOT}/k8s/uptime-kuma.yaml"
