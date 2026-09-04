@@ -237,6 +237,26 @@ if [ -n "$WAS" ] && [ "$WAS" != "0" ]; then
   echo "  it was running, so it has been left running"
 fi
 
+# The generated password, fished out of the log rather than left for someone to
+# go looking for. qBittorrent 5 ships no default: it makes one per start and
+# prints it once, so a restart invalidates whatever was written down last time.
+# Only worth showing while the client is actually running.
+if [ "$(kube -n jug get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)" != "0" ]; then
+  echo
+  echo "==> Web interface login"
+  kube -n jug rollout status deployment/qbittorrent --timeout=120s >/dev/null 2>&1 || true
+  QBT_PW=$(kube -n jug logs deploy/qbittorrent -c qbittorrent --tail=200 2>/dev/null |
+    sed -n 's/.*temporary password is provided for this session: *//p' | tail -1 || true)
+  if [ -n "$QBT_PW" ]; then
+    printf '  %-12s %s\n' "username" "admin"
+    printf '  %-12s %s\n' "password" "$QBT_PW"
+    echo "  Generated for this run and void on the next restart. Set your own in"
+    echo "  Options > Web UI."
+  else
+    echo "  No temporary password in the log, which means a permanent one is set."
+  fi
+fi
+
 cat <<NEXT
 
 ==> Installed, and stopped.
@@ -262,10 +282,12 @@ straight to ${DATA_DIR}/Jellyfin/Media/Movies without retyping it.
 
 The port you reserved goes in Options > Connection > Listening Port.
 
-First login: qBittorrent 5 generates a temporary password and prints it to its
-log rather than shipping a default one.
+First login is the username admin and the password printed above, if the
+client is running. qBittorrent 5 ships no default password: it generates one
+per start and writes it to its log, so it changes every time the pod restarts.
 
-  sudo k3s kubectl -n jug logs deploy/qbittorrent -c qbittorrent | grep -i password
+Set a permanent one in Options > Web UI as soon as you are in, or the next
+restart hands you a different password and this dance again.
 
 Rollback:  sudo k3s kubectl -n jug delete -f ${REPO_ROOT}/k8s/qbittorrent.yaml
 NEXT
