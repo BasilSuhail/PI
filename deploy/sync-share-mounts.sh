@@ -97,7 +97,26 @@ if [ -z "$TS" ]; then
   exit 1
 fi
 
-tailnet_up() { "$TS" status >/dev/null 2>&1; }
+# Whether the backend is up, answered without asking the backend.
+#
+# Every path to the tailscale CLI on macOS is a shim that execs the app bundle,
+# so `tailscale status` does not report on Tailscale, it starts it. From this
+# agent, on a fifteen-second timer, that is not a status check — it is a
+# resurrection loop. The app reappears seconds after every quit, the VPN session
+# with it, and nothing on screen says why; the obvious suspect is Tailscale
+# itself, and the actual cause is this file. It cost an evening to find once.
+#
+# The interface list answers the same question, costs nothing, and starts
+# nothing. A tunnel holding a 100.64.0.0/10 address is the backend running.
+# No such address is the backend stopped — which is the honest answer, and the
+# one that lets the stale-mount path below unmount what can no longer be
+# reached instead of waking a VPN to ask.
+tailnet_addressed() {
+  ifconfig 2>/dev/null |
+    grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.'
+}
+
+tailnet_up() { tailnet_addressed && "$TS" status >/dev/null 2>&1; }
 
 node_online() {
   local row
