@@ -214,7 +214,7 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               rel="noreferrer"
               title={`Open ${app.name} in a browser tab instead of its own window`}
             >
-              open in browser
+              ( Open in Browser )
             </a>
           )}
           {sw && sw.action && (
