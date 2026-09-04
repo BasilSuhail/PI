@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { Chevron, Gauge, Power, Shield } from './icons';
+import { Gauge, Power, Shield } from './icons';
 import type { AppTile, TorrentState } from '../../../shared/fleet';
 import { getTorrent, setTorrent } from '../lib/api';
 import { StatusDot } from './primitives';
@@ -212,10 +212,9 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               href={app.url}
               target="_blank"
               rel="noreferrer"
-              title={`Open ${app.name} in a browser tab`}
-              aria-label={`Open ${app.name} in a browser tab`}
+              title={`Open ${app.name} in a browser tab instead of its own window`}
             >
-              <Chevron size={14} />
+              open in browser
             </a>
           )}
           {sw && sw.action && (

@@ -452,19 +452,25 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 .app-health{display:flex;align-items:center;gap:5px;margin-top:auto;padding-top:10px;
   color:var(--muted);font-family:var(--mono);font-size:9px}
-/* Where the decorative chevron used to sit, now a control you can actually
-   press: the tile opens the app, this opens a browser tab. Given a hit area
-   larger than the glyph, because a 14px arrow in the corner of a tile is not
-   something a thumb can reliably find. */
-.app-browser{position:absolute;right:6px;bottom:6px;z-index:1;
-  display:inline-flex;align-items:center;justify-content:center;
-  width:26px;height:26px;border-radius:6px;
-  color:var(--faint);text-decoration:none;
+/* The second way in, saying what it does rather than hinting at it with a
+   glyph. A strip along the foot of the tile, not a corner icon: "open in
+   browser" beside "healthy" does not fit a 168px tile, and a control that only
+   fits on a wide screen is a control that disappears on a phone.
+   It sits inside the tile's border — inset a pixel, bottom corners matched —
+   so it reads as part of the tile rather than as something under it. */
+.app-browser{position:absolute;left:1px;right:1px;bottom:1px;z-index:1;
+  height:30px;display:flex;align-items:center;justify-content:center;
+  border-radius:0 0 6px 6px;border-top:1px solid var(--panel-line);
+  color:var(--muted);text-decoration:none;
+  font-family:var(--mono);font-size:9px;letter-spacing:.05em;
   transition:color .16s ease,background .16s ease,transform .16s ease}
 .app-browser:hover{color:var(--link);background:var(--row-hover)}
-.app-browser:focus-visible{outline:2px solid var(--link);outline-offset:2px}
-/* Follows the tile's own lift, being a sibling rather than a child of it. */
+.app-browser:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
+/* Both lift together: the tile transforms, and this is its sibling. */
 .app-slot:hover .app-browser{transform:translateY(-3px)}
+/* Room for the strip, and only on the tiles that have one — a tile that opens
+   a view inside the console has no browser to open it in. */
+.app-slot:has(.app-browser) .app-tile{padding-bottom:40px}
 .app-note{margin-top:21px}
 .app-note>svg{color:var(--link);flex:none}
 

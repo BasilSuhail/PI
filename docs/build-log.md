@@ -738,9 +738,14 @@ bar and no bookmarks — `window.open` with `popup=yes`, sized to the screen and
 named after the service so pressing the same tile twice raises the window that
 is already open rather than stacking a second one behind it.
 
-**The corner opens a browser tab.** What was a decorative chevron is a real
-link now, with a hit area a thumb can find, and it does what a link has always
-done.
+**A strip along the foot of the tile opens a browser tab**, and says so in
+words. A glyph in the corner would have been smaller and worse: "open in
+browser" does not fit beside "healthy" on a 168px tile, and a control that only
+fits on a wide screen is a control that vanishes on a phone. The strip sits
+inside the tile's border, bottom corners matched, so it reads as part of the
+tile rather than as something underneath it — and only tiles that lead
+somewhere else get one, since a tile that opens a view inside the console has
+no browser to open it in.
 
 **What this is not, and cannot be.** A web page cannot hand a link to an
 installed PWA. There is no API for it, and whether one is installed is a
