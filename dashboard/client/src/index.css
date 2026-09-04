@@ -457,9 +457,9 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    moves. Padding for the thumb is cancelled by an equal negative margin, so
    the hit area grows without the text shifting off the corner it belongs in. */
 .app-browser{position:absolute;right:11px;bottom:11px;z-index:1;
-  padding:4px 5px;margin:-4px -5px;
+  padding:7px 8px;margin:-7px -8px;
   color:var(--faint);text-decoration:none;white-space:nowrap;
-  font-family:var(--mono);font-size:8px;letter-spacing:.02em;
+  font-family:var(--mono);font-size:7px;letter-spacing:.01em;
   transition:color .16s ease,transform .16s ease}
 .app-browser:hover{color:var(--link)}
 .app-browser:focus-visible{outline:2px solid var(--link);outline-offset:1px}
@@ -467,7 +467,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .app-slot:hover .app-browser{transform:translateY(-3px)}
 /* The health line stops short of it rather than running underneath. Only on
    tiles that have one — a tile opening a view inside the console does not. */
-.app-slot:has(.app-browser) .app-health{padding-right:96px}
+.app-slot:has(.app-browser) .app-health{padding-right:84px}
 .app-note{margin-top:21px}
 .app-note>svg{color:var(--link);flex:none}
 
