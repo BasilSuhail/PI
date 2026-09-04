@@ -880,6 +880,53 @@ choosing a random one, so the forwarded port pointed at nothing and the client
 reported itself firewalled even once traffic could flow.
 
 
+### One DNS answer, and everything downstream of it
+
+Every tracker in a magnet reported the same thing:
+
+```
+Host not found (authoritative)
+```
+
+DHT sat at zero nodes. Nothing connected to a peer, ever, and a magnet stayed
+on "downloading metadata" indefinitely.
+
+**gluetun runs its own DNS-over-TLS resolver, points the pod's
+`/etc/resolv.conf` at `127.0.0.1`, and ships a malicious-hostname blocklist
+turned on by default.** Public BitTorrent trackers are on that list. A blocked
+name is answered NXDOMAIN — an *authoritative denial*, not a timeout — which is
+why it never presented as a network fault.
+
+DHT was dead for the same reason: bootstrapping resolves
+`router.bittorrent.com`.
+
+**Everything else worked, and said so.** The tunnel was up, reporting a healthy
+exit address. `curl https://ipinfo.io/ip` from inside the very same container
+returned an AirVPN address, because ipinfo is not on the blocklist. Readiness
+passed, the pod was 2/2, the web interface served. Every signal available said
+the stack was fine, and every one of them was telling the truth. One DNS answer
+was wrong.
+
+`BLOCK_MALICIOUS=off`. Turned off rather than worked around: the client's whole
+job is to talk to trackers, and a resolver that refuses to resolve them is not
+protecting anything here.
+
+**What this cost, and what caused the cost.** The route to it ran through three
+wrong diagnoses — a pop-up blocker, `Host` header validation, and an interface
+binding — each of which explained the symptom and none of which was true. Two
+of them were fixed and shipped before being disproved. The common mistake was
+reaching for a plausible cause instead of the log that names the actual one:
+`torrents/trackers` had `Host not found (authoritative)` on it the whole time
+and was not read until the fourth attempt.
+
+**Removed on the way.** `Session\InterfaceName=tun0` was set on the theory that
+qBittorrent had bound the wrong interface. It had, but that is not the key that
+binds — `Session\Interface` is; `InterfaceName` is a label. Setting the real
+one made things worse: qBittorrent tried `tun0:32250`, never bound, and went
+from `firewalled` to `disconnected`. gluetun's default route already sends
+everything through the tunnel and its firewall drops anything that is not, so
+the binding was belt to an existing pair of braces and it did not fit. Gone.
+
 ## Security posture
 
 | | |
