@@ -3,17 +3,30 @@
  * conversion lives here so the components stay about layout.
  */
 
-export const bytes = (n: number | null | undefined, digits = 1): string => {
+/**
+ * Decimal, because everything this console is measured against is decimal.
+ * Finder calls the archive folder 40.85 GB, the drive is sold as 6 TB, and
+ * the agent names it "HDD 6TB" off the same 1e9 division. Dividing by 1024
+ * and writing "GB" made the console the only thing in the room reading 38 GB
+ * for the same bytes and 5 TB for a 6 TB disk — the figure was right, the
+ * label was a lie, and the two never lined up.
+ *
+ * Two decimals, always. This is watched to see something move, and a
+ * download's first hour is invisible at whole-GB resolution. The old rule
+ * dropped the decimals above 100, which is exactly where a filling disk
+ * lives, so the number sat still for ten gigabytes at a time.
+ */
+export const bytes = (n: number | null | undefined, digits = 2): string => {
   if (n == null) return '—';
-  if (n < 1024) return `${n} B`;
+  if (n < 1000) return `${Math.round(n)} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = n / 1024;
+  let value = n / 1000;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
     unit += 1;
   }
-  return `${value.toFixed(value >= 100 ? 0 : digits)} ${units[unit]}`;
+  return `${value.toFixed(digits)} ${units[unit]}`;
 };
 
 /**
@@ -26,7 +39,12 @@ export const swapTone = (pct: number): string => (pct >= 50 ? 'red' : pct >= 20 
 export const bytesPerSec = (n: number | null | undefined): string =>
   n == null ? '—' : `${bytes(n, 1)}/s`;
 
-/** Installed RAM, rounded to the nearest sane capacity: 7.9 GiB reads "8 GB". */
+/**
+ * Installed RAM, rounded to the nearest sane capacity: 7.9 GiB reads "8 GB".
+ * Binary on purpose and the one thing here that is: memory really is sold in
+ * powers of two, so this is the nominal chip size, not a measurement. Every
+ * measured figure beside it goes through `bytes` and is decimal.
+ */
 export const capacity = (totalBytes: number | null | undefined): string => {
   if (!totalBytes) return '—';
   const gb = totalBytes / 1024 ** 3;
