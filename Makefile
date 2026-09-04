@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse samba mounts sata
+.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off news news-logs news-arm news-dry agents deploy check logs bootstrap archive automount browse samba mounts sata
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -47,6 +47,9 @@ help:
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
+	@echo "make news            OSINT's developing stories into Discord. Installs in dry run"
+	@echo "make news-logs       what the relay's last runs said"
+	@echo "make news-arm        stop the dry run and start posting. make news-dry undoes it"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
@@ -95,6 +98,28 @@ torrent-on:
 	@ssh $(DASH_NODE) 'sudo k3s kubectl -n jug scale deployment/qbittorrent --replicas=1'
 torrent-off:
 	@ssh $(DASH_NODE) 'sudo k3s kubectl -n jug scale deployment/qbittorrent --replicas=0'
+
+# The other half of what Uptime Kuma does: Kuma reports a service dying, this
+# reports a story developing. Interactive, because the first run asks for the
+# board's address and a webhook.
+news:
+	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-osint-news.sh'
+
+# Runs are cleaned up an hour after they finish, so an empty answer here means
+# the last run was over an hour ago and not that anything is wrong.
+news-logs:
+	@ssh $(DASH_NODE) 'sudo k3s kubectl -n jug logs -l app=osint-news --tail=60 --prefix' \
+	  || echo "nothing kept — runs are removed an hour after they finish"
+
+# The switch is one key in a ConfigMap, so neither of these retypes a webhook,
+# and neither restarts anything: the next scheduled run reads the new value.
+news-arm:
+	@ssh $(DASH_NODE) 'sudo k3s kubectl -n jug patch configmap osint-news-settings --type merge -p "{\"data\":{\"DRY_RUN\":\"false\"}}"'
+	@echo "Armed. The next run at :12 or :42 posts for real."
+
+news-dry:
+	@ssh $(DASH_NODE) 'sudo k3s kubectl -n jug patch configmap osint-news-settings --type merge -p "{\"data\":{\"DRY_RUN\":\"true\"}}"'
+	@echo "Back to dry run. It still reads the board and still records what it saw."
 
 agents:
 	@for node in $(AGENT_NODES); do \

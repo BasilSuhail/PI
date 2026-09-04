@@ -1,0 +1,128 @@
+# News from the OSINT board into Discord (#127). The other half of the alerting
+# Uptime Kuma does: Kuma says when something broke, this says when something
+# happened.
+#
+# Deployed by deploy/install-osint-news.sh. Same namespace and same node as
+# everything else on this board.
+#
+# It reads the board over HTTP and writes nothing back, so the OSINT stack is
+# untouched by this and does not know it exists. That is deliberate: the stack
+# runs continuously and the branch it runs is a large open pull request, so a
+# reader is a much safer shape than a change to it.
+#
+# The relay is `news/relay.py`, loaded from a ConfigMap the installer builds
+# from that file rather than pasted in here. One copy, in a file that can be
+# read and linted, instead of a second copy indented inside YAML that would
+# start disagreeing with it the first time either was edited.
+#
+# Everything addressable — the board's URL, the webhook, the API token — comes
+# from the `osint-news` Secret, which the installer creates from answers it
+# asks for once. None of it is in this file, and none of it is in this
+# repository.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: osint-news
+  namespace: jug
+spec:
+  # Five past the board's own clustering beat, which runs at :07 and :37. The
+  # relay reads what that beat produced, so running before it would read the
+  # previous half hour and call it new.
+  schedule: "12,42 * * * *"
+  # A run takes seconds. If one is somehow still going when the next is due,
+  # the answer is to skip rather than to have two jobs reading the same state
+  # file and racing to write it.
+  concurrencyPolicy: Forbid
+  # A board that was asleep or unreachable at the scheduled minute should pick
+  # up at the next one, not fire a backlog of missed runs at once.
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Two attempts, not six. A failed read is nearly always the board being
+      # down or restarting, and the next scheduled run is thirty minutes away —
+      # far better than hammering a board that is already struggling.
+      backoffLimit: 2
+      # Jobs are cleaned up an hour after they finish. Long enough to read the
+      # logs of the one that just ran, short enough that completed pods do not
+      # accumulate on a small board.
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          # Ours, not the generated job-name. `make news-logs` selects on this,
+          # so one stable label reaches every run's pod whatever Kubernetes
+          # decided to call that run.
+          labels:
+            app: osint-news
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          # MagicDNS names do not resolve inside a pod — DNS there goes to
+          # CoreDNS, which has never heard of the tailnet. Same problem and
+          # same fix as Uptime Kuma; see the long note in k8s/uptime-kuma.yaml.
+          #
+          # The address is given here and the name kept in the URL, because the
+          # board's certificate is issued to its tailnet name. Pointing the URL
+          # at a bare address would fail TLS instead of failing DNS.
+          hostAliases:
+            - ip: "__BOARD_IP__"
+              hostnames: ["__BOARD_HOST__"]
+          securityContext:
+            # The state file is the only thing written, and it belongs to
+            # whoever owns the directory it lands in.
+            runAsUser: __UID__
+            runAsGroup: __GID__
+            fsGroup: __GID__
+          containers:
+            - name: relay
+              # Alpine and stock: the relay imports nothing that is not in the
+              # standard library, so there is no build, no registry, and no
+              # image to keep patched beyond bumping this line.
+              image: python:3.12-alpine
+              command: ["python3", "/app/relay.py"]
+              envFrom:
+                # The board's URL, the webhook and the API token.
+                - secretRef:
+                    name: osint-news
+                # DRY_RUN lives apart from the credentials so it can be flipped
+                # without retyping them: `make news-arm` patches this one key.
+                - configMapRef:
+                    name: osint-news-settings
+              volumeMounts:
+                - name: relay
+                  mountPath: /app
+                  readOnly: true
+                - name: state
+                  mountPath: /state
+              resources:
+                requests:
+                  memory: 32Mi
+                  cpu: 10m
+                # It parses a few hundred KB of JSON and exits. The ceiling is
+                # for a runaway, not a target.
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: relay
+              configMap:
+                name: osint-news-relay
+            # A named directory on a named drive, not a local-path claim. Same
+            # reasoning as every other app here: a folder called OsintNews can
+            # be found, read and backed up; pvc-<uuid> inside k3s' internals
+            # cannot. See the note at the top of deploy/install-media.sh.
+            #
+            # `Directory` and not `DirectoryOrCreate`, so a missing folder stops
+            # the pod with the path named in its events rather than quietly
+            # starting with an empty history and re-announcing every story that
+            # is currently pinned.
+            - name: state
+              hostPath:
+                path: __APPS_DIR__/OsintNews
+                type: Directory

@@ -89,6 +89,7 @@ installed as its own app from a browser — Safari's File, then Add to Dock.
 | Jellyfin | `jellyfin.<tailnet>.ts.net` | `make media` |
 | Kiwix | `kiwix.<tailnet>.ts.net` | `make media` |
 | qBittorrent | `torrent.<tailnet>.ts.net` | `make torrent` — off by default |
+| News relay | no address of its own | `make news` — a CronJob, not a page |
 
 `make media` also moves every app's files into the layout above: settings on the
 SSD under `1) Archive/Apps/`, content on the 6TB. It replaced local-path volumes,
@@ -333,6 +334,69 @@ goes in this repo.
 
 **Worth monitoring**: the OSINT API and news page, both boards' Glances agents
 on port 61208, the console itself, and the shim on 9101.
+
+</details>
+
+<details>
+<summary><strong>News relay — the OSINT board's developing stories in Discord</strong></summary>
+
+```bash
+make news
+```
+
+Uptime Kuma reports a service dying. This reports a story developing. Same
+channel, same posture, the other half of the same idea.
+
+It has no page and no tailnet name, because there is nothing to open. A CronJob
+runs twice an hour, reads the OSINT board over HTTP the same way Kuma does, and
+posts to a Discord webhook.
+
+**What arrives.** One message, only when a story is newly pinned on the
+console's Developing slot. The story, the board's own reasons for pinning it,
+and under that the two newest headlines from the reading page as context.
+
+Those two halves are not the same kind of signal, which is the whole design.
+The pinned slot has four gates declared in the board's code — harm severity at
+least 0.6, at least three independent tellers, at least one new member in twelve
+hours, at least a day old — and clearing all four is rare. The reading page's
+feed is not rare at all: clustering runs twice an hour, so its top rows change
+up to 48 times a day. Alerting on those would be a firehose. Riding them along
+inside a pin's message costs nothing and keeps a message at two or three titles.
+
+A story is announced once. Nothing new pinned means no message, and a quiet
+channel is the expected state, not a fault.
+
+**It installs in dry run.** How often a story pins has never been measured, so
+arming it on install would be guessing at how often your phone buzzes. Until
+armed it reads the board, builds the exact message, and writes it to its own log
+instead of posting:
+
+```bash
+make news-logs    # what the last runs said
+make news-arm     # start posting. make news-dry goes back
+```
+
+Give it a day or two first. The log is the measurement.
+
+One thing to know before arming it: a dry run records what it has seen, exactly
+as the armed relay does, because a run that did not record would print the same
+three stories every half hour and tell you nothing about the arrival rate. So
+arming does not replay the dry run. The first real message is the first story to
+pin afterwards, which on a quiet day can be hours.
+
+**Why it lives in the cluster and not in OSINT.** The board's stack runs
+continuously, and the branch it runs is a large open pull request. Adding a
+feature to that means a code change and a container restart on the thing that is
+serving. This reads and writes nothing back, so the board is untouched and does
+not know it exists — the same separation Kuma already has from what it watches.
+
+**Configuration.** The first run asks for the console's address, a Discord
+webhook, and the board's API token if one is set. All three go into a Secret on
+the cluster. None of them is in this repository, and re-running `make news`
+keeps what is already stored.
+
+**Nothing to back up.** The only state is `1) Archive/Apps/OsintNews/announced.json`,
+a list of story ids already sent. Losing it costs one repeated message.
 
 </details>
 
