@@ -165,8 +165,8 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   font-variant-numeric:tabular-nums}
 
 /* Every row shares a left edge and a right edge; the meter takes whatever is
-   left between them. So a row reading "27 GB / 917 GB" gets a shorter bar than
-   one reading "5%", and the ragged bar ends are the figures saying how much
+   left between them. So a row reading "29.34 GB / 984.37 GB" gets a shorter
+   bar than one reading "5%", and the ragged bar ends are the figures saying how much
    they had to say. Fixed columns would have to be as wide as the longest
    figure on any board, which spends that room on every row that does not need
    it. */
@@ -340,6 +340,18 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .content{padding:14px 11px 16px}
   .card{padding:13px 13px 11px}
 
+  /* Eight items in a 375px bar is one item too many: the toolbar wrapped and
+     left the refresh button alone on a second row, which reads as a mistake
+     rather than a layout. The LIVE pill is the one that goes, because the line
+     directly under it already says SCANNING against the same green LED and the
+     status bar at the foot says "live telemetry" — it was the third statement
+     of one fact, and the only one paying for it in width. Nowrap and the
+     scroll it inherits are the backstop for a 320px screen, so a bar that
+     still cannot fit slides instead of breaking. */
+  .toolbar{flex-wrap:nowrap;padding:6px 9px}
+  .toolbar .live,.toolbar .tdiv{display:none}
+  .tbtn{padding:7px 10px}
+
   .prow{grid-template-columns:minmax(0,1fr) 88px;gap:10px;padding:10px 12px}
   .prow>[data-col]{display:none}
   .ptable[data-sort="cpuPct"] .prow>[data-col="cpuPct"],
@@ -451,6 +463,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .app-vpn.up{color:var(--ok)}
 .app-vpn svg{flex:none}
+/* The ellipsis on .app-vpn does nothing while the span inside it refuses to
+   be narrower than "via 203.0.113.9 · Netherlands". The tile is a grid item,
+   so that width was not truncated, it was added to the column. */
+.app-vpn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .app-note.bad{border-color:color-mix(in srgb,var(--crit) 40%,transparent);
   background:color-mix(in srgb,var(--crit) 9%,transparent)}
@@ -637,7 +653,12 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 }
 @media (max-width:640px){
   .fx-find{min-width:0;flex:1 1 90px}
-  .fx-tools{flex:1 1 auto}
+  /* The search field was already told it could shrink, but the group holding
+     it was not, and a flex item floors at its own min-content unless min-width
+     says otherwise. So the group kept its full width, carried the view toggle
+     off the right edge of a phone, and .shell clipped it — the toggle was on
+     the page and unreachable. */
+  .fx-tools{flex:1 1 auto;min-width:0}
   .fx-sel .fx-meta{display:none}
 }
 
@@ -720,7 +741,12 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 
 @media (max-width:900px){
   .detail-grid{grid-template-columns:1fr}
-  .apps-grid{grid-template-columns:1fr 1fr}
+  /* minmax(0,...), not 1fr. A bare 1fr track floors at the tile's min-content,
+     and the tile's widest unbreakable thing — "( Open in Browser )" — is about
+     190px. Two of those plus the gap is wider than a phone, and .shell clips
+     rather than scrolls, so the right-hand column was simply cut off the
+     screen. Zero as the floor lets the track be as narrow as the screen is. */
+  .apps-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .network-row{grid-template-columns:1.15fr 1fr .4fr .7fr}
   .network-row .network-secondary:last-child{display:none}
 }
@@ -729,6 +755,16 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .app-icon{width:44px;height:44px;font-size:23px;margin-bottom:12px}
   .disk-row .mount{width:58px}
   .memory-legend{grid-template-columns:1fr}
+  /* Once the heading wraps, the count is no longer beside anything to be
+     flush against — it is its own line, and a right-aligned line under a
+     left-aligned one just looks misplaced. */
+  .app-summary{align-items:flex-start}
+
+  /* A phone has no second kind of window. The tile's own tap already lands in
+     a browser tab here — the pop-up it asks for is one — so this link is the
+     same gesture twice, and it is the widest thing on the tile. Gone, the
+     status word gets the row it was being squeezed out of. */
+  .app-browser{display:none}
 }
 
 /* ── Storage ───────────────────────────────────────────────────────────── */
@@ -754,7 +790,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .fx-size.mid{color:#3fa38a}
 .fx-size.small{color:#5aa36a}
 .fx-size.zero{color:var(--faint)}
-/* "48 GB / 512 GB" on the boards. The capacity is the quieter half — it is
+/* "48.21 GB / 512.11 GB" on the boards. The capacity is the quieter half: it is
    context for the number in front of it, not a second number to read. */
 .fx-cap{color:var(--faint)}
 .fx-row.on .fx-cap{color:rgba(255,255,255,.72)}
