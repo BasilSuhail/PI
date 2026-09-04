@@ -104,19 +104,28 @@ First visit asks you to create an admin account. Then, in this order:
      monitors: "Default enabled" only applies to monitors created after it,
      and retrofitting it means opening every monitor one at a time.
 
-  2. Settings > Backup > Import, and choose deploy/uptime-monitors.json from
-     this repo. Pick "Skip existing" first — "Overwrite" deletes every monitor
-     already there, along with its history.
+  2. Settings > Backup > Import, with "Skip existing" selected. "Overwrite"
+     deletes every monitor already there, along with its history.
 
-     Twelve monitors. Eight are the boards and the apps on them, exported from
-     a running Kuma so this file describes what is actually there rather than
-     what was once intended: the console, the three OSINT endpoints, both
-     Glances agents and both file shims. The other four:
+     The monitor list is not kept in this repository. Uptime Kuma is the
+     record of what is being watched; a copy here would be a second one, and
+     the two disagreed for months without anyone noticing — the file claimed a
+     single disk check while the board ran eight monitors, none of them that
+     one. Export from Settings > Backup when a copy is wanted, and keep it
+     outside this repo: the export carries notification tokens.
 
-       HDD 6TB             The agent on jug2, reading /sys. Both boards boot
-                           from their SSD, so a dead SSD is a dead board and
-                           the ping already says so. The 6TB is the only disk
-                           that can vanish without anything else noticing.
+     Twelve monitors are set up today. Eight cover the boards and the apps on
+     them: the console, the three OSINT endpoints, both Glances agents and
+     both file shims. The other four:
+
+       HDD 6TB             The agent on jug2, reading /sys, keyed on the disk
+                           model. Both boards boot from their SSD, so a dead
+                           SSD is a dead board and the ping already says so.
+                           The 6TB is the only disk that can vanish without
+                           anything else noticing. Sysfs rather than the mount
+                           table: a disconnected disk leaves its mount entry
+                           behind, so a mount-based check sits green over a
+                           drive that is physically gone.
 
        Jellyfin            Its own /health endpoint, which answers "Healthy"
                            only once the server has finished starting.
@@ -139,7 +148,7 @@ First visit asks you to create an admin account. Then, in this order:
      can tell "switched off" apart from "broken" — only the console knows the
      replica count, and it does not run in the cluster yet.
 
-One trap that file exists to avoid. MagicDNS does not resolve inside a pod, so
+One trap worth knowing when adding a monitor. MagicDNS does not resolve inside a pod, so
 a monitor cannot simply be given a service's .ts.net name. The hostAliases in
 k8s/uptime-kuma.yaml work around it for jug and jug2 and for nothing else,
 which is why the board-level monitors can use those two names and the

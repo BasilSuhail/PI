@@ -561,9 +561,9 @@ not the configuration.
 
 ### Noticing the 6TB fall off
 
-`deploy/uptime-monitors.json`, imported through Uptime Kuma's Settings >
-Backup > Import. The 6TB monitor exists because it is the only disk on either
-board whose failure is not already obvious.
+Set up through Uptime Kuma's Settings > Backup > Import. The 6TB monitor
+exists because it is the only disk on either board whose failure is not
+already obvious.
 
 Both boards boot from their SSD. If that disk goes, the board goes, and the
 ping monitor already says so — a second monitor for it would only repeat what
@@ -596,21 +596,24 @@ client were not, which is how the client spent a day connected to nothing
 while every signal anyone looked at was green.
 
 **And the 6TB was not being watched either**, despite this document saying it
-was. `uptime-monitors.json` held exactly one monitor, that one, and it had
-never been imported. The live Kuma held eight monitors, none of which were in
-the file — not one name overlapped. The file was a proposal that had been
-written up as a fact.
+was. The tracked `uptime-monitors.json` held exactly one monitor, that one,
+and it had never been imported. The live Kuma held eight, none of which were
+in the file — not one name overlapped. The file was a proposal that had been
+written up as a fact, and it had been wrong for months without anyone noticing,
+because nothing ever compares the two.
 
-That is worse than a stale file. The install instructions say to import it,
+That is worse than a stale file. The install instructions said to import it,
 and the import offers "Overwrite", which deletes every existing monitor and
 its history. Following this repo's own instructions with the wrong radio
 button would have wiped a working setup and replaced it with a single disk
 check.
 
-Fixed by exporting the running Kuma and merging: the file now carries all
-twelve, the eight that exist plus the four added here, so importing it with
-"Skip existing" adds only what is missing. The rule it now follows is that
-this file is a mirror of the board, not a wishlist for it.
+**The file is gone rather than fixed.** Kuma is the record of what is being
+watched. A copy in git is a second record with no mechanism keeping it honest,
+which is exactly how this one drifted, and the export also carries notification
+tokens. Export from Kuma when a copy is wanted and keep it out of the repo. The
+monitors themselves are described here instead, which is a document that does
+not pretend to be executable.
 
 | monitor | endpoint | keyword |
 |---|---|---|
