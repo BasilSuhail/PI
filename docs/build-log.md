@@ -1325,6 +1325,48 @@ library, which Immich reads and never moves.
 
 Losing the Postgres costs albums, faces and search. Not the pictures.
 
+### Checked against upstream, after the fact
+
+The manifest was written first and the homework done second, which is the
+wrong order. Three things came back, and two of them changed it.
+
+**There is an official Helm chart** — `immich-app/immich-charts`, maintained,
+and Immich's Kubernetes page points at it. It does not fit. It ships no
+database: `DB_HOSTNAME` is left blank in the values file and the examples point
+at a CloudNativePG cluster, so using it means running a Postgres operator on
+jug2 or hand-writing this Postgres anyway. Its library volume is
+`existingClaim`, with "automatically creating the library volume is not
+supported by this chart" — a PersistentVolumeClaim for the photos, which is the
+thing #113 moved the vault out of and section 11 was written to avoid. Kept the
+hand-written manifest, now for a stated reason rather than by reflex.
+
+**The Alpine DNS caveat does not apply.** Immich's Kubernetes page warns that
+its Alpine images hit a musl resolver bug when the host has a search domain
+set. Checked the image config for all four rather than assuming: server is
+Debian trixie, machine-learning bookworm, the Postgres is stock `postgres:14`
+underneath, and the pinned Valkey digest is the Debian variant, not the
+`-alpine` tag the Helm chart defaults to. Nothing here is Alpine.
+
+**`immich-app/immich#26162` is open and unfixed**, and it is the one that
+matters. `immich-api` grows until the cgroup kills it at 95-97% of whatever
+limit it was given — one reporter reproduced that at both 4g and 6g, on an
+idle instance with no jobs queued. It is not JS heap: that reporter measured a
+V8 heap limit of 2.24GB against an RSS of 5.8GB, so the growth is native and
+`NODE_OPTIONS` does not reach it. The suspected mechanism is a client retrying
+an asset that can never succeed, and it correlates with large libraries and an
+iOS client backing up — which is this deployment.
+
+That changes what a limit is for. Raising it buys nothing, because the process
+grows to fill whatever it is given; the 2Gi stays, and its comment now says why.
+On compose, which is what everyone in that thread runs, hitting `mem_limit`
+takes the host down with it. Here kubelet restarts one container in seconds and
+the other three keep running. The symptom to watch for is `immich-server`
+accumulating restarts with `OOMKilled` as its last state on an otherwise idle
+board — that is the upstream bug, not a mistake in this manifest.
+
+The estimates in the budget table above are therefore a floor for a small
+library and not a promise. What actually happens gets read off the console.
+
 ### Not verified
 
 Nothing here has run. The manifest validates clean against the Kubernetes

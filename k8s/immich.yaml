@@ -26,6 +26,18 @@
 # and a directory named after a UUID cannot be found in Finder, cannot be
 # backed up without knowing k3s, and cannot tell you what is eating the disk.
 #
+# Why not the official Helm chart. There is one, immich-app/immich-charts, and
+# it is actively maintained. It does not fit here for two reasons. It ships no
+# database at all — the values file leaves DB_HOSTNAME for you to fill in and
+# its examples point at a CloudNativePG cluster, so adopting it would mean
+# running a Postgres operator on jug2 or hand-writing this Postgres anyway. And
+# its library volume is `existingClaim`: "automatically creating the library
+# volume is not supported by this chart", which forces the photo library into a
+# PersistentVolumeClaim — the exact thing #113 moved the vault out of. The
+# chart also runs an Alpine Valkey, which is the image family Immich's own
+# Kubernetes page warns about for musl DNS resolution. Every image below is
+# Debian-based, checked rather than assumed, so that caveat does not apply.
+#
 # Every hostPath below is `type: Directory`, never DirectoryOrCreate. With the
 # 6TB unmounted, /srv/storage still exists as an empty mount point on the boot
 # disk. DirectoryOrCreate would create the photo tree inside it, Immich would
@@ -343,8 +355,29 @@ spec:
             requests:
               memory: 512Mi
               cpu: 100m
-            # Node plus the job workers. Video transcoding is the spike, and
-            # a 2160p file is the worst case the library already contains.
+            # 2Gi, and deliberately not more.
+            #
+            # immich-app/immich#26162 is open and unfixed: the api process
+            # grows until the cgroup kills it at 95-97% of whatever limit it
+            # was given, reproduced by one reporter at both 4g and 6g. The
+            # growth is native, not JS heap — that reporter measured a V8 heap
+            # limit of 2.24GB against an RSS of 5.8GB — so NODE_OPTIONS and
+            # --max-old-space-size do not touch it. It is suspected to be a
+            # client retry loop against an asset that can never succeed, and
+            # it is correlated with large libraries and an iOS client backing
+            # up, which is this deployment exactly.
+            #
+            # Raising the ceiling therefore buys nothing: the process grows to
+            # fill it either way, and a bigger number only means a longer wait
+            # and a larger hole in the board when it goes. A modest limit turns
+            # the bug into a container restart that kubelet handles in seconds,
+            # while the other three containers carry on. This is the one place
+            # where k3s is strictly better than the compose file everyone in
+            # that thread is running.
+            #
+            # Symptom to watch for: immich-server accumulating restarts with
+            # OOMKilled as the last state, on a board that is otherwise idle.
+            # That is the bug, not a misconfiguration here.
             limits:
               memory: 2Gi
           readinessProbe:

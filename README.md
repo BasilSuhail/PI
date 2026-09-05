@@ -537,6 +537,15 @@ owns the data. The storage template above keeps the tree readable, and existing
 photos can be added as an external library, which Immich reads and never moves.
 Losing the database costs albums, faces and search — not the pictures.
 
+**One open upstream bug worth knowing about.** `immich-app/immich#26162`: the
+api process grows until its memory limit kills it, at 95-97% of whatever that
+limit is, and raising the limit only makes it take longer. It correlates with
+large libraries and a phone backing up. The manifest caps the server at 2Gi
+deliberately, so the failure is one container restarting in seconds rather than
+the board going down — which is what happens to the people hitting this under
+Docker Compose. Watch for `immich-server` collecting restarts with `OOMKilled`
+on an idle board.
+
 **There is no backup of it**, the same as everything else on these boards.
 
 </details>
