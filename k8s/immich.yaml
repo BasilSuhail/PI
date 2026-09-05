@@ -26,6 +26,33 @@
 # and a directory named after a UUID cannot be found in Finder, cannot be
 # backed up without knowing k3s, and cannot tell you what is eating the disk.
 #
+# enableServiceLinks: false, on all four pods. This is not tidying — without it
+# nothing here starts at all.
+#
+# The kubelet still injects Docker-link-era environment variables for every
+# Service in the namespace: a Service named `immich` becomes IMMICH_PORT,
+# IMMICH_SERVICE_HOST, IMMICH_PORT_80_TCP and so on, in every pod in `pi`.
+# IMMICH_PORT is also the name of Immich's own listening-port setting, which
+# expects a number. It gets `tcp://10.43.x.x:80` instead and the process exits
+# on its first line:
+#
+#   Error: Invalid environment variables:
+#     - [IMMICH_PORT] Invalid input: expected number, received NaN
+#
+# Both Immich containers read that variable, so both crash-loop while Postgres
+# and Valkey, which have never heard of it, come up fine. The collision comes
+# from the Service name meeting the app's own vocabulary, so it would survive
+# any amount of staring at the app's config.
+#
+# Turning the links off is the fix rather than renaming the Service, because
+# the next collision is already latent: name anything in this namespace `redis`
+# and REDIS_PORT arrives as a URL too. Nothing here needs the injected
+# variables — every address below is a DNS name.
+#
+# The two ports are also set explicitly, which is belt and braces: an explicit
+# env entry wins over an injected one, so the containers survive someone
+# turning service links back on.
+#
 # The budget, and why every container has a ceiling on both axes.
 #
 # pi2 has 4 cores and 15.8GB, and the point of this file is that Immich never
@@ -121,6 +148,9 @@ spec:
       labels:
         app: immich-postgres
     spec:
+      # See the note at the top of this file. Without it the kubelet sets
+      # IMMICH_PORT to a URL and Immich refuses to start.
+      enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       containers:
@@ -219,6 +249,9 @@ spec:
       labels:
         app: immich-redis
     spec:
+      # See the note at the top of this file. Without it the kubelet sets
+      # IMMICH_PORT to a URL and Immich refuses to start.
+      enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       containers:
@@ -275,6 +308,9 @@ spec:
       labels:
         app: immich-machine-learning
     spec:
+      # See the note at the top of this file. Without it the kubelet sets
+      # IMMICH_PORT to a URL and Immich refuses to start.
+      enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       containers:
@@ -291,6 +327,9 @@ spec:
             # Models unload after five minutes with nothing to do. This is the
             # default and it is worth not losing: it is the difference between
             # ~1GB resident all day and ~1GB only while the queue is draining.
+            # Its default. Explicit so an injected IMMICH_PORT can never win.
+            - name: IMMICH_PORT
+              value: "3003"
             - name: MACHINE_LEARNING_MODEL_TTL
               value: "300"
             # One worker. Four cores, and the server's own job workers want
@@ -367,6 +406,9 @@ spec:
       labels:
         app: immich-server
     spec:
+      # See the note at the top of this file. Without it the kubelet sets
+      # IMMICH_PORT to a URL and Immich refuses to start.
+      enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       containers:
@@ -376,6 +418,9 @@ spec:
             - name: http
               containerPort: 2283
           env:
+            # Its default. Explicit so an injected IMMICH_PORT can never win.
+            - name: IMMICH_PORT
+              value: "2283"
             - name: DB_HOSTNAME
               value: immich-postgres
             - name: DB_USERNAME

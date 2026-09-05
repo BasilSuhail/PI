@@ -1397,6 +1397,40 @@ board — that is the upstream bug, not a mistake in this manifest.
 The estimates in the budget table above are therefore a floor for a small
 library and not a promise. What actually happens gets read off the console.
 
+### The first deploy, and what broke
+
+`make photos` ran to completion on the manifests. Postgres and Valkey came up
+and stayed up. Both Immich containers crash-looped, six restarts in four
+minutes, and the image had nothing to do with it — it pulled in 79 seconds.
+
+```
+Initializing Immich v3.1.0
+Detected CPU Cores: 1
+Error: Invalid environment variables:
+  - [IMMICH_PORT] Invalid input: expected number, received NaN
+```
+
+The kubelet still injects Docker-link-era environment variables for every
+Service in the namespace. A Service named `immich` becomes `IMMICH_PORT`,
+`IMMICH_SERVICE_HOST`, `IMMICH_PORT_80_TCP` and the rest, in every pod in
+`pi`. `IMMICH_PORT` is also the name of Immich's own listening-port setting,
+which expects a number, so it read `tcp://10.43.x.x:80` and exited on its first
+line. Both Immich containers read that variable; Postgres and Valkey have never
+heard of it, which is exactly why two of four were healthy.
+
+The collision is between the Service name and the application's own
+vocabulary, so no amount of reading the app's configuration would have found
+it. `enableServiceLinks: false` on all four pods is the fix, rather than
+renaming the Service, because the next collision is already latent: name
+anything in this namespace `redis` and `REDIS_PORT` arrives as a URL too.
+Nothing here wanted the injected variables — every address in the manifest is a
+DNS name. Both ports are now also set explicitly, since an explicit env entry
+beats an injected one.
+
+Worth keeping from that log line: **Detected CPU Cores: 1**. The `cpu` limits
+are not decoration — Immich reads the cgroup quota and sizes itself to it, so
+the caps above are doing exactly what they were written to do.
+
 ### Not verified
 
 Nothing here has run. The manifest validates clean against the Kubernetes
