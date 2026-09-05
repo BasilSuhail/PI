@@ -36,6 +36,12 @@
     "icon": "/app-icons/files.png"
   },
   {
+    "name": "Photos",
+    "url": "https://photos.<tailnet>.ts.net/",
+    "nodeId": "pi2",
+    "icon": "/app-icons/photos.svg"
+  },
+  {
     "name": "Jellyfin",
     "url": "https://jellyfin.<tailnet>.ts.net/",
     "nodeId": "pi2",
