@@ -9,9 +9,9 @@
 #              databases, caches, artwork, indexes. Small, and the part where
 #              speed is felt — a seek costs a spinning disk about 5ms against
 #              an SSD's 0.1, and a database is thousands of seeks.
-#   DATA_DIR   the 6TB. Everything you would recognise as a file: films, .zim
-#              archives, the vault. Large, read start to finish, which is what
-#              a spinning disk is actually good at.
+#   DATA_DIR   the 6TB. Everything you would recognise as a file: films and
+#              .zim archives. Large, read start to finish, which is what a
+#              spinning disk is actually good at.
 #
 # The cut is by how a file is read, not by whether it is called data. Calling a
 # database "data" and putting it on the big disk is the mistake this layout was
@@ -49,9 +49,22 @@ APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 DATA_DIR="${DATA_DIR:-/srv/storage}"
 
 APPS=(Jellyfin Kiwix Vaultwarden Uptime)
-# Uptime Kuma is entirely on the SSD: a few megabytes of heartbeats, written
-# constantly, which would keep the 6TB awake for nothing.
-DATA_APPS=(Jellyfin Kiwix Vaultwarden)
+# Two apps are entirely on the SSD and have no half on the 6TB.
+#
+# Uptime Kuma is a few megabytes of heartbeats, written constantly, which would
+# keep the 6TB awake for nothing.
+#
+# Vaultwarden is a few megabytes of SQLite read at random, so the SSD is where
+# it belonged anyway. It has to be off the 6TB for a second reason: qBittorrent
+# mounts that whole disk at /data so a finished download can be hard-linked
+# into place, and a torrent client with write access to a password vault is a
+# bad trade for a convenience. k8s/vaultwarden.yaml moved its volume in #113
+# and this list was not updated with it, so the folder went on being created
+# and advertised on the 6TB — and the live vault went on sitting in it.
+DATA_APPS=(Jellyfin Kiwix)
+# Apps whose SSD folder needs a data/ subdirectory of its own, because their
+# manifest mounts one with type: Directory and Kubernetes will not create it.
+APPS_WITH_DATA_SUBDIR=(Uptime Vaultwarden)
 
 if ! sudo systemctl is-active --quiet k3s; then
   echo "k3s is not running on this board. This installs into the cluster." >&2
@@ -112,9 +125,9 @@ fi
 
 echo "==> Creating the folders"
 for app in "${APPS[@]}"; do sudo mkdir -p "$APPS_DIR/$app"; done
-# Kuma takes ownership of everything inside its mount, so its data sits one
-# level below the app folder and the note stays outside it.
-sudo mkdir -p "$APPS_DIR/Uptime/data"
+# These apps take ownership of everything inside their mount, so their data
+# sits one level below the app folder and the note stays outside it.
+for app in "${APPS_WITH_DATA_SUBDIR[@]}"; do sudo mkdir -p "$APPS_DIR/$app/data"; done
 for app in "${DATA_APPS[@]}"; do sudo mkdir -p "$DATA_DIR/$app"; done
 # Jellyfin's brain on the SSD, its films on the 6TB.
 sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
@@ -145,6 +158,14 @@ sudo chown -R "$OWNER_UID:$OWNER_GID" \
 # A note in each app's SSD folder, because a folder holding only a config file
 # does not explain itself six months later.
 for app in "${APPS[@]}"; do
+  # Only the split apps get a second half. Writing the same note for all four
+  # sent Uptime Kuma's to /srv/storage/Uptime, a path that has never existed.
+  case " ${DATA_APPS[*]} " in
+    *" $app "*) content="  Its content      $DATA_DIR/$app
+                   the big files. Films and .zim archives." ;;
+    *)          content="  Its content      is in this folder too. This app is small enough
+                   to live entirely on the SSD, and has nothing on the 6TB." ;;
+  esac
   sudo tee "$APPS_DIR/$app/WHERE-IS-MY-DATA.txt" >/dev/null <<NOTE
 $app
 
@@ -152,14 +173,69 @@ $app
                    settings, database, cache. Small, fast, and the part
                    worth backing up.
 
-  Its content      $DATA_DIR/$app
-                   the big files. Films, .zim archives, attachments.
+$content
 
 Written by deploy/install-media.sh. Change the split by re-running it with
 APPS_DIR= or DATA_DIR= set.
 NOTE
 done
 sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR"
+
+# The vault, if it is still on the 6TB.
+#
+# #113 repointed Vaultwarden's volume at the SSD and nothing moved the database
+# that was already on the 6TB, so the pod went on serving from the old path and
+# the manifest and the board disagreed. Applying the manifest without this step
+# would point a running vault at an empty directory, and Vaultwarden's answer to
+# an empty directory is to build a fresh one and show you an empty account.
+#
+# Copy, never move: this is a password database. The original is left exactly
+# where it is and the command to remove it is printed at the end, for you to run
+# once you have logged in and seen your own passwords.
+VW_OLD="$DATA_DIR/Vaultwarden"
+VW_NEW="$APPS_DIR/Vaultwarden/data"
+if [ -f "$VW_OLD/db.sqlite3" ] && [ ! -f "$VW_NEW/db.sqlite3" ]; then
+  echo
+  echo "==> Moving the vault off the 6TB"
+  echo "    from  $VW_OLD"
+  echo "    to    $VW_NEW"
+
+  # SQLite in WAL mode keeps recent commits in db.sqlite3-wal, so a copy taken
+  # while the pod is writing can be a database missing its newest entries. Stop
+  # it first and wait for the pod to actually be gone, not merely asked to go.
+  if kube -n jug get deployment vaultwarden >/dev/null 2>&1; then
+    echo "    stopping vaultwarden"
+    kube -n jug scale deployment/vaultwarden --replicas=0 >/dev/null
+    kube -n jug wait --for=delete pod -l app=vaultwarden --timeout=120s >/dev/null 2>&1 || true
+  fi
+
+  sudo rsync -aHAX --info=stats2 "$VW_OLD/" "$VW_NEW/" | sed 's/^/    /'
+
+  # Prove the copy is a database and not a file of the right length. Without
+  # sqlite3 on the board, fall back to comparing what was copied.
+  if command -v sqlite3 >/dev/null; then
+    check=$(sudo sqlite3 "$VW_NEW/db.sqlite3" 'PRAGMA integrity_check;' 2>&1 | head -1)
+    if [ "$check" != "ok" ]; then
+      echo "    integrity_check on the copy said: $check" >&2
+      echo "    The original is untouched. Nothing was applied." >&2
+      exit 1
+    fi
+    users=$(sudo sqlite3 "$VW_NEW/db.sqlite3" 'SELECT COUNT(*) FROM users;' 2>/dev/null || echo '?')
+    ciphers=$(sudo sqlite3 "$VW_NEW/db.sqlite3" 'SELECT COUNT(*) FROM ciphers;' 2>/dev/null || echo '?')
+    echo "    integrity_check ok — $users account(s), $ciphers item(s)"
+  else
+    old_n=$(sudo find "$VW_OLD" -type f | wc -l)
+    new_n=$(sudo find "$VW_NEW" -type f | wc -l)
+    [ "$old_n" = "$new_n" ] || { echo "    copied $new_n files of $old_n" >&2; exit 1; }
+    echo "    $new_n files copied (sqlite3 not on this board, so no integrity check)"
+  fi
+
+  # rsync preserved the source's ownership. Vaultwarden runs as root and can
+  # write regardless, but leaving a vault owned by whoever happened to own the
+  # 6TB copy is not a state worth keeping.
+  sudo chown -R 0:0 "$VW_NEW"
+  sudo chmod 700 "$VW_NEW"
+fi
 
 echo "==> Applying manifests"
 # The paths are substituted here rather than being fixed in the manifests,
@@ -184,6 +260,21 @@ echo
 echo "==> The old volumes are still there, untouched:"
 kube -n jug get pvc 2>/dev/null | sed 's/^/  /' || true
 echo "  Remove when you are happy:  sudo k3s kubectl -n jug delete pvc vaultwarden uptime-kuma"
+
+# Fires whether or not this run did the copying. A board where the migration
+# already happened, or was half done by hand, still has a vault sitting on the
+# torrent client's disk and should still be told so.
+if [ -f "$VW_OLD/db.sqlite3" ]; then
+  echo
+  echo "==> A vault is still on the 6TB, untouched:"
+  echo "  $VW_OLD"
+  echo
+  echo "  It holds db.sqlite3 and rsa_key.pem, and $DATA_DIR is the disk"
+  echo "  qBittorrent mounts whole. Log in at the vault's tailnet address, see"
+  echo "  your own passwords, then remove it:"
+  echo
+  echo "    sudo rm -rf \"$VW_OLD\""
+fi
 
 echo
 echo "==> Waiting for the rollouts"
