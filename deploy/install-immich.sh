@@ -107,7 +107,16 @@ if kube -n pi get secret immich-db >/dev/null 2>&1; then
 else
   # A-Za-z0-9 only. Immich's own example env says so, and a password with a
   # slash or an @ in it breaks the connection URL the server builds from it.
-  PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40)"
+  #
+  # python3 rather than the usual `tr -dc ... </dev/urandom | head -c 40`.
+  # That idiom is a trap under `set -o pipefail`: head exits the moment it has
+  # its 40 bytes, tr is still reading an endless file, and the closed pipe
+  # kills tr with SIGPIPE. The pipeline then reports 141, `set -e` takes the
+  # script down, and the message is `Error 141` at the exact point the install
+  # looked like it was working. python3 is already required by
+  # install-vaultwarden.sh and install-torrent.sh, and secrets.choice is the
+  # right generator for this anyway.
+  PASSWORD="$(python3 -c 'import secrets,string; print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(40)))')"
   kube -n pi create secret generic immich-db --from-literal="password=${PASSWORD}" >/dev/null
   unset PASSWORD
   echo "  generated, 40 characters, stored only in the cluster"

@@ -181,20 +181,30 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
               <small>{isInternal(app.url) ? 'in this console' : new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
             </div>
             <div class="app-health">
-              {/* A switchable tile is not probed — a stopped workload would
-                  fail a health check by design, and reporting that as
-                  "unreachable" would be describing the intent as a fault. Its
-                  light follows the cluster instead: green only once the pod is
-                  actually up, not merely asked for. */}
-              <StatusDot online={sw ? sw.text === 'running' : !!app.healthy} size="sm" />
-              <span>
-                {sw ? sw.text : app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}
-              </span>
+              <div class="app-status">
+                {/* A switchable tile is not probed — a stopped workload would
+                    fail a health check by design, and reporting that as
+                    "unreachable" would be describing the intent as a fault. Its
+                    light follows the cluster instead: green only once the pod is
+                    actually up, not merely asked for. */}
+                <StatusDot online={sw ? sw.text === 'running' : !!app.healthy} size="sm" />
+                <span>
+                  {sw ? sw.text : app.healthy === null ? 'not checked' : app.healthy ? 'healthy' : 'unreachable'}
+                </span>
+              </div>
               {/* The other half of the choice: the tile gives you the app, this
-                  gives you a browser tab. On the status row rather than in a
-                  corner, so it takes no height of its own and cannot land on
-                  top of anything. */}
-              {!isInternal(app.url) && !shut && (
+                  gives you a browser tab. On its own line under the status, so
+                  neither has to give up characters to the other.
+
+                  Shown whether or not the probe passed. It used to be hidden on
+                  an unhealthy tile, which is backwards: a tile reading
+                  "unreachable" is exactly when you want to try the URL yourself,
+                  either because the probe is wrong or because you want to see
+                  the error the app gives rather than the one the console
+                  inferred. The tile body still refuses to open — that is the
+                  guard against a mis-click — while this stays a deliberate act.
+                  Internal tiles have no URL to open and still get nothing. */}
+              {!isInternal(app.url) && (
                 <a
                   class="app-browser"
                   href={app.url}
