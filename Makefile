@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse samba mounts sata
+.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse wifi samba mounts sata
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -54,6 +54,7 @@ help:
 	@echo "make archive               create "/1) Archive" on both boards, once"
 	@echo "make automount             plugged-in drives mount themselves, once"
 	@echo "make browse                rebuild /srv/browse on both boards"
+	@echo "make wifi                  stop the wifi radio sleeping between packets, both boards"
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make sata NODE=pi2        report the PCIe port and the SATA HAT. Changes nothing."
@@ -130,6 +131,10 @@ automount:
 
 browse:
 	@$(call on_storage_nodes,deploy/setup-browse.sh)
+
+# Both boards, because both are on wlan0 and both serve something.
+wifi:
+	@$(call on_storage_nodes,deploy/tune-wifi.sh)
 
 # Interactive: smbpasswd prompts on the board, so this one wants a terminal
 # and cannot be looped silently. One node at a time, on purpose.
