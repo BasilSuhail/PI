@@ -1,0 +1,391 @@
+# Immich: a photo library, and the thing the phone backs up to.
+#
+# Deployed by deploy/install-immich.sh. Lives in the `jug` namespace alongside
+# the dashboard, Uptime Kuma and Vaultwarden.
+#
+# Four containers, which is three more than anything else here runs, and each
+# one earns its place:
+#
+#   server            the API, the web interface, and the job workers
+#   machine-learning  CLIP for search, and face detection. CPU only
+#   postgres          the library index AND the vector search index
+#   valkey            the job queue
+#
+# The Postgres is a second database on the fleet and cannot be jug's. Immich
+# needs the VectorChord extension compiled in, which is what makes "a photo of
+# a bicycle" a query instead of a wish. Sharing was never on the table.
+#
+# No GPU. Issue #1 listed Immich as blocked on one for a year; Immich's own
+# requirements ask for 6GB of RAM, two cores, and nothing else. A GPU only
+# makes the indexing faster. jug2 has 13.7GB free and an idle CPU.
+#
+# __APPS_DIR__ and __DATA_DIR__ are substituted by the installer, the same way
+# jellyfin.yaml and vaultwarden.yaml do it. hostPath rather than a
+# PersistentVolumeClaim, for the reason install-media.sh spells out: a
+# local-path volume lands in /var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>
+# and a directory named after a UUID cannot be found in Finder, cannot be
+# backed up without knowing k3s, and cannot tell you what is eating the disk.
+#
+# Every hostPath below is `type: Directory`, never DirectoryOrCreate. With the
+# 6TB unmounted, /srv/storage still exists as an empty mount point on the boot
+# disk. DirectoryOrCreate would create the photo tree inside it, Immich would
+# start, find an empty library, and begin filling the boot SSD — and remounting
+# the 6TB would hide that second copy underneath the real one. Directory
+# refuses instead: the pod stops at ContainerCreating with the missing path in
+# its events. Loud and harmless.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-postgres
+  namespace: jug
+spec:
+  selector:
+    app: immich-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-postgres
+  namespace: jug
+spec:
+  replicas: 1
+  # One data directory on a ReadWriteOnce path: the old pod has to be gone
+  # before the new one starts, or two postgres processes fight over the same
+  # WAL and the loser corrupts it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: immich-postgres
+  template:
+    metadata:
+      labels:
+        app: immich-postgres
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: postgres
+          # Pinned by digest as well as tag, which is how Immich publishes it.
+          # This image is not stock Postgres: it carries VectorChord and
+          # pgvecto.rs, and swapping it for postgres:14 gives a server that
+          # starts, accepts connections, and then fails every search.
+          image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_DB
+              value: immich
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-db
+                  key: password
+            # Checksums cost a few percent and turn silent corruption into a
+            # loud error. On a board whose database is not backed up anywhere,
+            # finding out is worth more than the percent.
+            - name: POSTGRES_INITDB_ARGS
+              value: "--data-checksums"
+            # The default assumes the data directory is on an SSD, and here it
+            # is — __APPS_DIR__ is the 1TB. If this ever moves to the 6TB, set
+            # this to HDD or every query pays for the wrong random_page_cost.
+            - name: DB_STORAGE_TYPE
+              value: SSD
+          volumeMounts:
+            - name: db
+              mountPath: /var/lib/postgresql/data
+            # Postgres wants shared memory for parallel queries and hash joins.
+            # A container gets 64MB by default; compose asks for 128MB, and an
+            # emptyDir on Memory is how you say the same thing here.
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 50m
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "immich"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "immich"]
+            initialDelaySeconds: 90
+            periodSeconds: 30
+      volumes:
+        # SSD. A database is thousands of small random reads, which is the one
+        # workload a spinning disk is worst at: ~5ms a seek against ~0.1ms.
+        # install-media.sh made this same call for Jellyfin's index.
+        - name: db
+          hostPath:
+            path: __APPS_DIR__/Immich/db
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-redis
+  namespace: jug
+spec:
+  selector:
+    app: immich-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-redis
+  namespace: jug
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: immich-redis
+  template:
+    metadata:
+      labels:
+        app: immich-redis
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: redis
+          image: docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+          ports:
+            - name: redis
+              containerPort: 6379
+          # Deliberately no volume. This is a job queue, not storage: what it
+          # holds is "these twenty photos still need thumbnails". Losing it on
+          # a restart loses queued work, which the admin Jobs page can re-run
+          # with one click. Persisting it would buy nothing and keep a disk
+          # awake for writes nobody would miss.
+          resources:
+            requests:
+              memory: 32Mi
+              cpu: 10m
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-machine-learning
+  namespace: jug
+spec:
+  selector:
+    app: immich-machine-learning
+  ports:
+    - name: http
+      port: 3003
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-machine-learning
+  namespace: jug
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: immich-machine-learning
+  template:
+    metadata:
+      labels:
+        app: immich-machine-learning
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: machine-learning
+          # The plain tag, not one of the -armnn / -cuda / -rknn variants.
+          # ARM NN would use the Pi's GPU for some of this, but it is a
+          # different image and a separate experiment; CPU works today and the
+          # board is idle.
+          image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
+          ports:
+            - name: http
+              containerPort: 3003
+          env:
+            # Models unload after five minutes with nothing to do. This is the
+            # default and it is worth not losing: it is the difference between
+            # ~1GB resident all day and ~1GB only while the queue is draining.
+            - name: MACHINE_LEARNING_MODEL_TTL
+              value: "300"
+            # One worker. Four cores, and the server's own job workers want
+            # some of them; a second ML worker would double peak memory to win
+            # nothing on a machine this size.
+            - name: MACHINE_LEARNING_WORKERS
+              value: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /cache
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 50m
+            # Idles near nothing once the models unload. The ceiling is for a
+            # backfill: CLIP and the face model loaded at once, on a large
+            # image, is the peak this has to survive.
+            limits:
+              memory: 3Gi
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: { path: /ping, port: http }
+            # Generous on purpose. A cold model load on four ARM cores takes
+            # far longer than the web-app default anyone would copy here, and
+            # a liveness probe that fires during it produces a crash loop that
+            # looks like a broken image.
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 10
+      volumes:
+        # SSD. Downloaded model weights — a few hundred MB, read at start-up.
+        # On the 6TB this would spin the disk up every time a model loads.
+        - name: model-cache
+          hostPath:
+            path: __APPS_DIR__/Immich/model-cache
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich
+  namespace: jug
+spec:
+  selector:
+    app: immich-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-server
+  namespace: jug
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: immich-server
+  template:
+    metadata:
+      labels:
+        app: immich-server
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: server
+          image: ghcr.io/immich-app/immich-server:v3.1.0
+          ports:
+            - name: http
+              containerPort: 2283
+          env:
+            - name: DB_HOSTNAME
+              value: immich-postgres
+            - name: DB_USERNAME
+              value: postgres
+            - name: DB_DATABASE_NAME
+              value: immich
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-db
+                  key: password
+            - name: REDIS_HOSTNAME
+              value: immich-redis
+            - name: IMMICH_MACHINE_LEARNING_URL
+              value: http://immich-machine-learning:3003
+          envFrom:
+            # TZ, written once by the installer from the board's own clock.
+            # Without it the nightly tasks and both cron schedules run in UTC,
+            # so "06:00" silently means something else. Not pinned here
+            # because the timezone belongs to the board, not to the repo.
+            - configMapRef:
+                name: immich-config
+          volumeMounts:
+            - name: photos
+              mountPath: /data
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 100m
+            # Node plus the job workers. Video transcoding is the spike, and
+            # a 2160p file is the worst case the library already contains.
+            limits:
+              memory: 2Gi
+          readinessProbe:
+            httpGet: { path: /api/server/ping, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: { path: /api/server/ping, port: http }
+            # The first start runs database migrations against an empty
+            # Postgres, on ARM. Slow, and killing it half way leaves a schema
+            # that is neither the old one nor the new one.
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+      volumes:
+        # The 6TB. Photos and videos: large, written once, read start to
+        # finish. Exactly what a spinning disk is good at, and 5.9TB of it.
+        - name: photos
+          hostPath:
+            path: __DATA_DIR__/Immich
+            type: Directory
+---
+# Its own tailnet machine, so it answers at a root path with a real
+# certificate. The mobile app will talk to a bare IP over plain HTTP, but then
+# every photo you own crosses the network unencrypted and the app has to be
+# reconfigured whenever DHCP moves the board.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: photos
+  namespace: jug
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: immich
+      port:
+        name: http
+  tls:
+    - hosts: ["photos"]
+# No body-size annotation, deliberately. The tailscale IngressClass is not
+# Traefik: the operator runs its own proxy pod that forwards straight to the
+# Service, so a traefik.ingress.kubernetes.io middleware here would be
+# accepted, ignored, and quietly misleading. Upload limits are Immich's own.

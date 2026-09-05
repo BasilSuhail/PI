@@ -1164,6 +1164,177 @@ accepts no incoming connection, so it seeds to far fewer peers than it could.
 Re-running `deploy/install-torrent.sh` on the board sets it from the secret,
 along with the binding above.
 
+## 13. Immich on jug2
+
+Written, not yet run on the board. Section reads as the plan until a deploy
+has happened and been measured; the numbers below are the estimates it will be
+checked against, not readings.
+
+### The blocker that was not one
+
+Issue #1 has carried Immich under *NO, holds — still needs a GPU* since the
+start. That is wrong. Immich's own requirements ask for 6GB of RAM and two
+cores, and name no GPU at all; hardware acceleration is an optional image tag
+that makes indexing faster. What the original entry was really encoding was the
+8GB board, where a photo manager's ML would have fought `llama-server` for
+memory. jug2 is a different machine.
+
+Read from the console API on 2026-09-05, before anything was written:
+
+| | jug | jug2 |
+|---|---|---|
+| RAM available | 3.1GB of 7.9 | 13.7GB of 15.8 |
+| CPU | 98.9%, load 5.6 | 2.6%, load 0.1 |
+| Free | 478GB SSD | 954GB SSD, 5.9TB HDD |
+
+jug is saturated by the OSINT analytics worker and was never a candidate. jug2
+is doing nothing at all, which is what makes a slow CPU-only backfill free
+rather than expensive.
+
+All four images are published for `linux/arm64`, checked against ghcr.io rather
+than assumed.
+
+### Four containers
+
+More than anything else here runs, and the count is not negotiable:
+
+| | |
+|---|---|
+| `immich-server` | API, web interface, and the job workers |
+| `immich-machine-learning` | CLIP and the face model, CPU only |
+| `immich-postgres` | library index and vector search index |
+| `immich-redis` | the job queue, Valkey |
+
+The Postgres cannot be jug's. Immich's image carries VectorChord and
+pgvecto.rs compiled in, and the search index is a column in that database
+rather than a service beside it. Swapping in stock `postgres:14` gives a server
+that starts, accepts connections, and fails every search. This is the same
+objection that keeps Miniflux off the list — *wants its own Postgres* — and it
+is the one case where the answer is yes anyway.
+
+Valkey gets no volume. It holds "these twenty photos still need thumbnails",
+which the admin Jobs page can re-run with one click. Persisting it would keep a
+disk awake for writes nobody would miss.
+
+### Storage, the same split as section 11
+
+| | |
+|---|---|
+| `1) Archive/Apps/Immich/db` | Postgres. SSD, `700`, owned by uid 999 |
+| `1) Archive/Apps/Immich/model-cache` | downloaded weights. SSD |
+| `/srv/storage/Immich` | the photos. 6TB |
+
+The database is the case section 11 was written about: thousands of small
+random reads, roughly 5ms a seek on a spinning disk against 0.1ms on the SSD.
+Putting it on the 6TB because it is "data" would have made every search slow.
+
+Every `hostPath` is `type: Directory`, never `DirectoryOrCreate`, for the
+reason `k8s/vaultwarden.yaml` records: with the 6TB unmounted `/srv/storage`
+still exists as an empty mount point on the boot disk, and `DirectoryOrCreate`
+would begin filling the boot SSD with a second library that remounting the disk
+would then hide underneath the real one.
+
+`deploy/install-immich.sh` also refuses outright if `DATA_DIR` is not a mount
+point, so the failure is a sentence rather than a pod stuck in
+`ContainerCreating`.
+
+### The Ingress is not Traefik
+
+`ingressClassName: tailscale` means the operator runs its own proxy pod that
+forwards straight to the Service. A first draft of the manifest carried a
+`traefik.ingress.kubernetes.io/router.middlewares` annotation and a `Middleware`
+raising the request body limit for phone uploads. Both would have been accepted
+by the API server and then ignored, which is worse than absent. Removed, and
+the manifest now says why so it is not re-added.
+
+### Probes
+
+The liveness probes are far more generous than any default worth copying:
+
+| | |
+|---|---|
+| `immich-server` | 300s initial delay |
+| `immich-machine-learning` | 180s |
+| `immich-postgres` | 90s |
+
+The server's first start runs every schema migration against an empty database
+on four ARM cores, and the ML container's first request loads a model that is
+not in the cache yet. A probe that fires during either produces a crash loop
+that reads exactly like a broken image — the same lesson `k8s/uptime-kuma.yaml`
+records about guessing at an entrypoint.
+
+### Budget
+
+Estimates, to be checked after a deploy:
+
+| | requests | limit |
+|---|---|---|
+| server | 512Mi | 2Gi |
+| machine-learning | 256Mi | 3Gi |
+| postgres | 256Mi | 1Gi |
+| valkey | 32Mi | 256Mi |
+
+`MACHINE_LEARNING_MODEL_TTL` is left at its default of 300, which unloads a
+model after five minutes idle. That is the difference between roughly a
+gigabyte resident all day and a gigabyte only while the queue is draining.
+
+Requests total about 1GB against 13.7GB free. The limits are ceilings for a
+backfill, not an expectation.
+
+### Jobs, and the three schedules
+
+Machine learning is queued per upload, not continuous and not at search time:
+
+```
+Upload → Metadata → Storage Template → Thumbnails
+                                         ├→ Smart Search → Duplicate Detection
+                                         ├→ Face Detection → Facial Recognition
+                                         ├→ OCR
+                                         └→ Video Transcoding
+```
+
+The queue drains and the workers sleep. Searching is a lookup against work
+already done, so it costs the same at 5000 photos as at 500.
+
+Three recurring schedules exist and all three default to the middle of the
+night. The installer prints them, and they are set by hand in the admin UI
+rather than pinned in the manifest, because they are preferences rather than
+deployment:
+
+| | default | wanted |
+|---|---|---|
+| `nightlyTasks.startTime` | `00:00` | `06:00` |
+| `library.scan.cronExpression` | `0 0 * * *` | `0 6 * * *` |
+| `backup.database.cronExpression` | `0 02 * * *` | off |
+
+`TZ` is written into a ConfigMap from the board's own clock by the installer.
+Without it all three run in UTC and a `06:00` setting silently means something
+else — `TZ` is what Immich uses for cron execution, not just log timestamps.
+
+The third is a database dump, on by default. Nothing else on these boards runs
+a scheduled backup, so it is a decision rather than a default. It would dump
+the database only: albums, faces and the search index, not the photos.
+
+### What it costs
+
+Immich owns its data layout, which is the one real argument against it and a
+better one than the GPU ever was. The storage template is set to
+`{{y}}/{{MM}}/{{filename}}` so the tree stays walkable in Finder and in the
+console's file browser, and existing photos can be added as an external
+library, which Immich reads and never moves.
+
+Losing the Postgres costs albums, faces and search. Not the pictures.
+
+### Not verified
+
+Nothing here has run. The manifest validates clean against the Kubernetes
+1.36 schema under `kubeconform -strict`, and the two probe paths were read out
+of Immich's source rather than guessed — `/ping` on the ML container, and
+`server.controller.ts` plus the `/api` global prefix for `/api/server/ping`.
+That is the whole of it. Untested: whether the images pull on this board,
+whether Postgres accepts the data directory's ownership, first-start migration
+time, real idle memory, and how long a backfill actually takes per photo.
+
 
 ## Security posture
 
@@ -1194,6 +1365,7 @@ SSH remains password-authenticated on both boards, which is the weaker of the tw
 - [ ] Clear the two dead public keys from jug2's `authorized_keys`.
 - [ ] Image jug1's SD card. Boot-only and holds no data, but its loss means the board will not start.
 - [ ] Wired ethernet. Both boards are on `wlan0`; issue #1 says a first Time Machine backup over wifi is hours.
+- [ ] **Run `make photos`.** Section 13 is written but has never run on jug2. Until it does, there is no photo library and nothing for the phone to back up to.
 
 Deferred by decision, not oversight:
 

@@ -36,6 +36,12 @@
     "icon": "/app-icons/files.png"
   },
   {
+    "name": "Photos",
+    "url": "https://photos.taild9f605.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/photos.svg"
+  },
+  {
     "name": "Jellyfin",
     "url": "https://jellyfin.taild9f605.ts.net/",
     "nodeId": "jug2",
