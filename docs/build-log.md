@@ -457,14 +457,13 @@ SSD-1TB/1) Archive/Apps/     read at random — settings, databases, caches
 │   ├── data/    library database, artwork
 │   └── cache/   transcode scratch, image cache
 ├── Kiwix/       the library index
-├── Vaultwarden/ settings
+├── Vaultwarden/ all of it. settings, vault, attachments, key.
 └── Uptime/      all of it. a few megabytes.
 
 HDD-6TB/                     read start to finish — things you would call files
 ├── Jellyfin/
 │   └── Media/   Movies/ and Shows/
-├── Kiwix/       the .zim archives
-└── Vaultwarden/ the vault database and attachments
+└── Kiwix/       the .zim archives
 ```
 
 The obvious cut — "app on the fast disk, data on the big disk" — is right in
