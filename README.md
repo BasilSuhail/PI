@@ -537,6 +537,27 @@ owns the data. The storage template above keeps the tree readable, and existing
 photos can be added as an external library, which Immich reads and never moves.
 Losing the database costs albums, faces and search — not the pictures.
 
+**It is capped on both axes, so it cannot take the board.** Every container has
+a kernel-enforced ceiling, not a promise:
+
+| | CPU | memory |
+|---|---|---|
+| server | 1500m | 2Gi |
+| machine-learning | 1000m | 3Gi |
+| postgres | 500m | 1Gi |
+| valkey | 100m | 256Mi |
+| **total** | **3100m of 4000m** | **6.25Gi of 15.8GB** |
+
+Roughly nine tenths of a core and 9.5GB stay out of Immich's reach whatever it
+does, which is what k3s, the agents, the console, Jellyfin and Kiwix keep
+running out of. Indexing is a batch job that would otherwise saturate all four
+cores for as long as the queue lasts; capped at one core it takes about four
+times longer and nothing else on jug2 notices. That single number is the knob
+to turn if a first import is too slow.
+
+Disk is not capped here and has no cgroup equivalent. The lever is Immich's own
+per-user storage quota under Administration, Users.
+
 **One open upstream bug worth knowing about.** `immich-app/immich#26162`: the
 api process grows until its memory limit kills it, at 95-97% of whatever that
 limit is, and raising the limit only makes it take longer. It correlates with

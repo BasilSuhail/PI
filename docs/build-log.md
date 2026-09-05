@@ -1281,6 +1281,36 @@ gigabyte resident all day and a gigabyte only while the queue is draining.
 Requests total about 1GB against 13.7GB free. The limits are ceilings for a
 backfill, not an expectation.
 
+CPU is capped too, which the first draft missed entirely — it set requests and
+no limits, so a backfill could have taken all four cores for as long as the
+queue lasted:
+
+| | CPU limit |
+|---|---|
+| server | 1500m |
+| machine-learning | 1000m |
+| postgres | 500m |
+| valkey | 100m |
+| total | 3100m of 4000m |
+
+Roughly nine tenths of a core stays outside Immich's reach whatever it does,
+which is what k3s, the metrics agent, the console, Jellyfin and Kiwix keep
+running out of. The ML container gets the tightest cap because indexing is a
+batch job and nobody is waiting on it: one core makes a backfill about four
+times slower and costs nothing else. The server gets more because it answers
+the phone and the browser, where throttling is felt as latency.
+
+Deliberately not a `ResourceQuota` on the namespace. `jug` also holds the
+console, Uptime Kuma, Vaultwarden, Jellyfin, Kiwix and qBittorrent, and a quota
+on CPU or memory makes the API server reject every pod in the namespace that
+does not declare both. That would break the running apps at their next restart
+rather than at apply time. With four fixed containers the sum above is already
+bounded by the per-container limits, so a quota adds a footgun and no ceiling.
+
+Disk has no equivalent. Nothing here caps the photo tree on a 6TB with 5.9TB
+free; the lever is Immich's own per-user storage quota, which is a policy about
+people rather than about containers.
+
 ### Jobs, and the three schedules
 
 Machine learning is queued per upload, not continuous and not at search time:
