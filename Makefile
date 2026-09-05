@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse wifi samba mounts sata
+.PHONY: help dashboard dashboard-k8s uptime vault media photos torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse wifi samba mounts sata
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -44,6 +44,7 @@ help:
 	@echo "make uptime          Uptime Kuma on its own tailnet name, asks for an OAuth client once"
 	@echo "make vault           Vaultwarden on its own tailnet name, needs make uptime first"
 	@echo "make media           Jellyfin and Kiwix, and moves all four apps' data onto the 6TB"
+	@echo "make photos          Immich on its own tailnet name. The phone backs up to it"
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
@@ -84,6 +85,12 @@ vault:
 # Override where things land:  make media DATA_DIR=/somewhere/else
 media:
 	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-media.sh'
+
+# Immich: the photo library, and what the phone backs up to. Four containers
+# and a Postgres of its own, so it wants the operator like the rest.
+# Override where things land:  make photos DATA_DIR=/somewhere/else
+photos:
+	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-immich.sh'
 
 # Interactive: asks for the WireGuard keys on the first run.
 torrent:
