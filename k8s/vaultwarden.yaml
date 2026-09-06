@@ -9,7 +9,7 @@
 # current.
 #
 # Its files used to be a local-path PersistentVolumeClaim, which put them in
-# /var/lib/rancher/k3s/storage/pvc-<uuid>_jug_vaultwarden — a directory named
+# /var/lib/rancher/k3s/storage/pvc-<uuid>_pi_vaultwarden — a directory named
 # after a UUID, inside k3s' internals. For the most important file on the
 # board that is the wrong place: you cannot find it, and you cannot back up
 # what you cannot find. It is two named directories on two named drives now,
