@@ -64,6 +64,10 @@ spec:
             - name: http
               containerPort: 8096
           env:
+            # Without this, Jellyfin advertises its internal cluster IP
+            # (10.42.x.x:8096) to Chromecast, which can't reach it.
+            - name: JELLYFIN_PublishedServerUrl
+              value: https://jellyfin.taild9f605.ts.net
             # The split described at the top. Without these three, "config"
             # holds the database and the artwork too.
             - name: JELLYFIN_CONFIG_DIR
@@ -158,11 +162,19 @@ spec:
 ---
 # Its own tailnet machine, the same shape as Uptime and Vault: a root path and
 # a real certificate, because Jellyfin's clients assume they own the root.
+#
+# Funnel makes this reachable from the public internet, not just the tailnet.
+# Chromecast has no Tailscale client, so without Funnel the cast receiver
+# cannot stream: the phone tells it "fetch from jellyfin.taild9f605.ts.net"
+# and the Chromecast, on plain WiFi, gets nothing back. Jellyfin's own login
+# still gates access — Funnel only opens the door to the login page.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: jellyfin
   namespace: jug
+  annotations:
+    tailscale.com/funnel: "true"
 spec:
   ingressClassName: tailscale
   defaultBackend:
