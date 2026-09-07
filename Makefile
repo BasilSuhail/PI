@@ -155,7 +155,7 @@ mounts:
 	STORAGE_NODES="$(STORAGE_NODES)" bash deploy/install-share-mounts.sh
 
 quiet:
-	@$(call on_storage_nodes,deploy/install-quiet-hours.sh)
+	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-quiet-hours.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
