@@ -6,9 +6,8 @@
 # comes back. System maintenance timers (apt, man-db, fstrim) are rescheduled
 # to run during the day so they cannot wake a sleeping disk at 3 AM.
 #
-# Runs on both boards. On the k3s board it scales Deployments; on a board
-# running Docker Compose it stops periodic workers. Either way, spinning disks
-# are told to sleep once there is nothing left to read from them.
+# Runs on the k3s board. Scales Deployments that touch the spinning disk, then
+# tells the disk to sleep once there is nothing left to read from it.
 set -euo pipefail
 
 SCRIPT=/usr/local/lib/pi/quiet-hours
@@ -68,29 +67,6 @@ if systemctl is-active --quiet k3s 2>/dev/null; then
       kube -n pi annotate deployment/"$dep" quiet-hours/was-replicas- \
         >/dev/null 2>&1 || true
       log "scaled $dep $was"
-    done
-  fi
-fi
-
-# --- Docker Compose workloads --------------------------------------------
-# Stop containers that run periodic or scheduled work. Matching by name
-# pattern rather than listing every container: a blanket stop would take down
-# databases and APIs that other things depend on.
-if command -v docker &>/dev/null && systemctl is-active --quiet docker 2>/dev/null; then
-  if [ "$ACTION" = start ]; then
-    for pattern in worker beat; do
-      for cid in $(docker ps -q --filter "name=$pattern" 2>/dev/null); do
-        name=$(docker inspect --format '{{.Name}}' "$cid" | sed 's|^/||')
-        docker stop "$cid" >/dev/null 2>&1 && log "stopped $name" || true
-      done
-    done
-  else
-    for pattern in worker beat; do
-      for cid in $(docker ps -aq --filter "name=$pattern" \
-                   --filter "status=exited" 2>/dev/null); do
-        name=$(docker inspect --format '{{.Name}}' "$cid" | sed 's|^/||')
-        docker start "$cid" >/dev/null 2>&1 && log "started $name" || true
-      done
     done
   fi
 fi
