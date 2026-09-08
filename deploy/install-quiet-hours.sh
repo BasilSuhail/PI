@@ -1,25 +1,21 @@
 #!/usr/bin/env bash
-# Quiet hours: keep the boards silent between midnight and 6 AM.
+# Quiet hours: rest mode for the k3s board between midnight and 6 AM.
 #
-# Installs two systemd timers. At midnight, workloads that touch the spinning
-# disk are scaled to zero and the disk is put to standby. At six, everything
-# comes back. System maintenance timers (apt, man-db, fstrim) are rescheduled
-# to run during the day so they cannot wake a sleeping disk at 3 AM.
+# Installs two systemd timers. At midnight, background workers that grind
+# through the spinning disk — ML indexing, library scans — are scaled to
+# zero. The services themselves stay up: you can still watch a film, browse
+# photos, or back up from the phone. At six, the workers come back and the
+# queue drains.
 #
-# Runs on the k3s board. Scales Deployments that touch the spinning disk, then
-# tells the disk to sleep once there is nothing left to read from it.
+# System maintenance timers (apt, man-db, fstrim) are rescheduled to run
+# during the day so they cannot trigger disk activity at 3 AM.
+#
+# Nothing here touches the disk directly. No hdparm, no spindown. If you
+# are awake and using the HDD, it keeps running. The point is to stop the
+# automatic background noise, not to force anything offline.
 set -euo pipefail
 
 SCRIPT=/usr/local/lib/pi/quiet-hours
-
-# hdparm is what tells a spinning disk to sleep. Most images ship it; make
-# sure, because a missing binary means a disk that grinds all night with the
-# workloads already gone.
-if ! command -v hdparm &>/dev/null; then
-  echo "==> Installing hdparm"
-  sudo apt-get update -qq && sudo apt-get install -y -qq hdparm \
-    || echo "  could not install hdparm — disks will not be spun down" >&2
-fi
 
 echo "==> Installing $SCRIPT"
 sudo mkdir -p "$(dirname "$SCRIPT")"
@@ -39,50 +35,43 @@ esac
 
 log() { echo "[quiet-hours] $*"; }
 
-# --- k3s workloads --------------------------------------------------------
-# Scale down deployments whose pods read from the spinning disk. The list is
-# deliberately short: every entry is a service that goes dark for six hours.
-if systemctl is-active --quiet k3s 2>/dev/null; then
-  kube() { sudo k3s kubectl "$@"; }
-  QUIET_DEPLOYMENTS="jellyfin"
-
-  if [ "$ACTION" = start ]; then
-    for dep in $QUIET_DEPLOYMENTS; do
-      current=$(kube -n pi get deployment "$dep" \
-        -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
-      if [ "$current" != "0" ]; then
-        kube -n pi annotate deployment/"$dep" \
-          quiet-hours/was-replicas="$current" --overwrite >/dev/null 2>&1
-        kube -n pi scale deployment/"$dep" --replicas=0 >/dev/null
-        log "scaled $dep 0 (was $current)"
-      fi
-    done
-  else
-    for dep in $QUIET_DEPLOYMENTS; do
-      was=$(kube -n pi get deployment "$dep" \
-        -o jsonpath='{.metadata.annotations.quiet-hours/was-replicas}' \
-        2>/dev/null || echo 1)
-      [ -n "$was" ] || was=1
-      kube -n pi scale deployment/"$dep" --replicas="$was" >/dev/null
-      kube -n pi annotate deployment/"$dep" quiet-hours/was-replicas- \
-        >/dev/null 2>&1 || true
-      log "scaled $dep $was"
-    done
-  fi
+if ! systemctl is-active --quiet k3s 2>/dev/null; then
+  log "k3s is not running — nothing to do"
+  exit 0
 fi
 
-# --- Spinning disks -------------------------------------------------------
-# Put every rotational disk to standby once the workloads are down. The disk
-# wakes on its own the moment something reads from it, which after 6 AM is
-# fine — the whole point is the six hours where nothing does.
+kube() { sudo k3s kubectl "$@"; }
+
+# Background workers that churn through the HDD automatically. Each one is
+# scaled to zero at midnight and restored at six. The services they support
+# (Jellyfin, Immich) stay up — you can still use them, the disk just is not
+# being walked by a batch job.
+#
+#   immich-machine-learning   CLIP embeddings and face detection. Reads every
+#                             photo off the 6TB, one by one, for hours.
+QUIET_DEPLOYMENTS="immich-machine-learning"
+
 if [ "$ACTION" = start ]; then
-  for disk in /dev/sd?; do
-    [ -b "$disk" ] || continue
-    bn=$(basename "$disk")
-    rotational=$(cat "/sys/block/$bn/queue/rotational" 2>/dev/null || echo 0)
-    if [ "$rotational" = "1" ]; then
-      sudo hdparm -y "$disk" >/dev/null 2>&1 && log "standby $disk" || true
+  for dep in $QUIET_DEPLOYMENTS; do
+    current=$(kube -n pi get deployment "$dep" \
+      -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+    if [ "$current" != "0" ]; then
+      kube -n pi annotate deployment/"$dep" \
+        quiet-hours/was-replicas="$current" --overwrite >/dev/null 2>&1
+      kube -n pi scale deployment/"$dep" --replicas=0 >/dev/null
+      log "scaled $dep 0 (was $current)"
     fi
+  done
+else
+  for dep in $QUIET_DEPLOYMENTS; do
+    was=$(kube -n pi get deployment "$dep" \
+      -o jsonpath='{.metadata.annotations.quiet-hours/was-replicas}' \
+      2>/dev/null || echo 1)
+    [ -n "$was" ] || was=1
+    kube -n pi scale deployment/"$dep" --replicas="$was" >/dev/null
+    kube -n pi annotate deployment/"$dep" quiet-hours/was-replicas- \
+      >/dev/null 2>&1 || true
+    log "scaled $dep $was"
   done
 fi
 BODY
@@ -93,7 +82,7 @@ echo "==> Installing timers"
 
 sudo tee /etc/systemd/system/pi-quiet-start.service >/dev/null <<EOF
 [Unit]
-Description=Quiet hours — scale down and spin down
+Description=Quiet hours — background workers down
 
 [Service]
 Type=oneshot
@@ -102,7 +91,7 @@ EOF
 
 sudo tee /etc/systemd/system/pi-quiet-end.service >/dev/null <<EOF
 [Unit]
-Description=Quiet hours — bring everything back
+Description=Quiet hours — background workers back
 
 [Service]
 Type=oneshot
@@ -186,13 +175,17 @@ fi
 sudo systemctl daemon-reload
 
 echo
-echo "==> Quiet hours installed"
-echo "  midnight  workloads scale to zero, disks go to standby"
-echo "  06:00     everything comes back"
+echo "==> Quiet hours installed (rest mode, not shutdown)"
+echo "  midnight  background workers scale to zero (ML indexing stops)"
+echo "  06:00     workers come back, queued jobs drain"
+echo
+echo "  Still up all night: Jellyfin, Immich, Vaultwarden, the console"
+echo "  The HDD stays accessible — only automatic grinding stops"
 echo
 echo "  Test now:    sudo $SCRIPT start    (then: sudo $SCRIPT end)"
 echo "  Next fire:   systemctl list-timers pi-quiet-*"
 echo "  Logs:        journalctl -u pi-quiet-start -u pi-quiet-end --since today"
 echo
-echo "  To remove:   sudo systemctl disable --now pi-quiet-start.timer pi-quiet-end.timer"
-echo "               sudo rm $SCRIPT /etc/systemd/system/pi-quiet-*"
+echo "  Jellyfin's library scan is configured inside Jellyfin, not here."
+echo "  Open Dashboard > Scheduled Tasks and set 'Scan Media Library' to"
+echo "  run at 07:00 instead of overnight."
