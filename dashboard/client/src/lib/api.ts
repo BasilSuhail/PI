@@ -101,6 +101,9 @@ export const useHistory = (nodes: FleetNode[] | null, cap = 40) => {
   return store.current;
 };
 
+/** The same ring buffer for board watts, so the power cell gets its own
+ *  sparkline — a board's draw is steadier than its temperature, and the
+ *  dips are exactly what the graph is for. */
 export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => {
   const store = useRef(new Map<string, number[]>());
   useEffect(() => {
@@ -117,6 +120,8 @@ export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => {
   return store.current;
 };
 
+/** Rx/tx totals per node, summed across interfaces — the two lines the
+ *  network graph draws. Per-interface detail stays on the API. */
 export const useNetHistory = (nodes: FleetNode[] | null, cap = 60) => {
   const store = useRef(new Map<string, Array<[number, number]>>());
   useEffect(() => {

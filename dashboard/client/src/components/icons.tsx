@@ -56,3 +56,10 @@ export const List    = ({ size, class: c }: P) => S('<path d="M3 6h18M7 12h14M11
 export const Files   = ({ size, class: c }: P) => S('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/>', size, c);
 export const Key     = ({ size, class: c }: P) => S('<circle cx="8" cy="12" r="4"/><path d="M12 12h9"/><path d="M17 12v4"/><path d="M20.5 12v3"/>', size, c);
 export const Wifi    = ({ size, class: c }: P) => S('<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 20h.01"/>', size, c);
+export const Server  = ({ size, class: c }: P) => S('<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>', size, c);
+export const Check   = ({ size, class: c }: P) => S('<path d="M20 6 9 17l-5-5"/>', size, c);
+export const Warn    = ({ size, class: c }: P) => S('<path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>', size, c);
+export const Down    = ({ size, class: c }: P) => S('<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>', size, c);
+export const Up      = ({ size, class: c }: P) => S('<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>', size, c);
+export const Clock   = ({ size, class: c }: P) => S('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', size, c);
+export const X       = ({ size, class: c }: P) => S('<path d="M18 6 6 18M6 6l12 12"/>', size, c);
