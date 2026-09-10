@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media photos torrent torrent-on torrent-off agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet
+.PHONY: help dashboard dashboard-k8s uptime vault media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -48,6 +48,7 @@ help:
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
+	@echo "make archivebox      ArchiveBox on its own tailnet name. Asks for an admin password once"
 	@echo "make agents          agent/ changed — both boards"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
@@ -92,6 +93,10 @@ media:
 # Override where things land:  make photos DATA_DIR=/somewhere/else
 photos:
 	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-immich.sh'
+
+# Interactive: asks for the admin password on the first run.
+archivebox:
+	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-archivebox.sh'
 
 # Interactive: asks for the WireGuard keys on the first run.
 torrent:
