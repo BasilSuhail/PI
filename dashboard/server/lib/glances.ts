@@ -236,6 +236,7 @@ interface RawProcess {
   cpu_times?: { user?: number; system?: number };
   memory_percent?: number;
   memory_info?: { rss?: number };
+  memory_swap?: number;
   num_threads?: number;
   io_counters?: number[];
 }
@@ -342,6 +343,7 @@ export const fetchProcesses = async (host: string, limit = 30): Promise<ProcessR
     cpuPct: cpuPctOf(host, p, now),
     memBytes: p.memory_info?.rss ?? 0,
     memPct: round(p.memory_percent ?? 0),
+    swapBytes: p.memory_swap ?? null,
     threads: p.num_threads ?? 0,
     // Glances returns [read_bytes, write_bytes, ...]; index 0 is what we show.
     diskReadBytes: p.io_counters?.[0] ?? 0,
