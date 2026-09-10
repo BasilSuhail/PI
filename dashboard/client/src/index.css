@@ -388,9 +388,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .head-r{width:100%;justify-content:space-between}
   .seg{flex:1}
   .seg button{flex:1;padding:10px 8px}
-  .toolbar{overflow-x:auto;flex-wrap:wrap}
-  .tb-left{display:none}
+  .toolbar{overflow-x:auto;flex-wrap:wrap;justify-content:center;gap:6px 14px}
+  .tb-left{width:100%;justify-content:center}
   .tb-center{position:static;transform:none}
+  .tb-right{margin-left:auto}
 }
 
 /* ── Phone ───────────────────────────────────────────────────────────────
@@ -409,9 +410,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
      of one fact, and the only one paying for it in width. Nowrap and the
      scroll it inherits are the backstop for a 320px screen, so a bar that
      still cannot fit slides instead of breaking. */
-  .toolbar{flex-wrap:nowrap;padding:6px 9px}
+  .toolbar{flex-wrap:wrap;padding:6px 9px;justify-content:center;gap:4px 10px}
   .toolbar .live,.toolbar .tdiv{display:none}
-  .tb-left{display:none}
+  .tb-left{width:100%;justify-content:center;gap:10px}
+  .tb-center{position:static;transform:none}
   .tbtn{padding:7px 10px}
 
   .prow{gap:10px;padding:10px 12px}
