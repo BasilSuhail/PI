@@ -51,6 +51,8 @@ spec:
       # pi2 is where the image was imported; there is no registry to pull it
       # from anywhere else. Explicit rather than incidental, for when pi1
       # joins as an agent.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       containers:
