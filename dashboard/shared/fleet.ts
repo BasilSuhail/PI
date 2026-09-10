@@ -116,8 +116,6 @@ export interface ProcessRow {
   cpuPct: number | null;
   memBytes: number;
   memPct: number;
-  /** Per-process swap in bytes. Null when the agent's list has no such field. */
-  swapBytes?: number | null;
   threads: number;
   /** Cumulative bytes read since the process started. */
   diskReadBytes: number;

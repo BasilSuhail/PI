@@ -119,8 +119,7 @@ make agents
 ```
 
 ```bash
-make archive                              # defaults to STORAGE_NODES="pi pi2"
-make archive STORAGE_NODES="jug jug2"     # if your boards are named differently
+make archive
 ```
 
 ```bash
