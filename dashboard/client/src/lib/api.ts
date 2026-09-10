@@ -101,6 +101,39 @@ export const useHistory = (nodes: FleetNode[] | null, cap = 40) => {
   return store.current;
 };
 
+export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => {
+  const store = useRef(new Map<string, number[]>());
+  useEffect(() => {
+    if (!nodes) return;
+    for (const node of nodes) {
+      const w = node.power?.watts;
+      if (w == null) continue;
+      const series = store.current.get(node.id) ?? [];
+      series.push(w);
+      if (series.length > cap) series.shift();
+      store.current.set(node.id, series);
+    }
+  }, [nodes, cap]);
+  return store.current;
+};
+
+export const useNetHistory = (nodes: FleetNode[] | null, cap = 60) => {
+  const store = useRef(new Map<string, Array<[number, number]>>());
+  useEffect(() => {
+    if (!nodes) return;
+    for (const node of nodes) {
+      if (!node.online) continue;
+      const rx = node.net.reduce((a, i) => a + i.rxBps, 0);
+      const tx = node.net.reduce((a, i) => a + i.txBps, 0);
+      const series = store.current.get(node.id) ?? [];
+      series.push([rx, tx]);
+      if (series.length > cap) series.shift();
+      store.current.set(node.id, series);
+    }
+  }, [nodes, cap]);
+  return store.current;
+};
+
 export const getRoots = (id: string) =>
   json<DirRoots>(`/api/nodes/${encodeURIComponent(id)}/files`);
 export const getListing = (id: string, path: string) =>
