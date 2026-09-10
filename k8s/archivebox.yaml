@@ -41,6 +41,17 @@ spec:
         runAsUser: __UID__
         runAsGroup: __GID__
         fsGroup: __GID__
+      initContainers:
+        - name: passwd-entry
+          image: archivebox/archivebox:0.7.4
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp /etc/passwd /tmp-passwd/passwd
+              echo "archivebox:x:__UID__:__GID__:archivebox:$HOME:/bin/bash" >> /tmp-passwd/passwd
+          volumeMounts:
+            - name: passwd
+              mountPath: /tmp-passwd
       containers:
         - name: archivebox
           image: archivebox/archivebox:0.7.4
@@ -86,6 +97,10 @@ spec:
               mountPath: /data
             - name: index
               mountPath: /index
+            - name: passwd
+              mountPath: /etc/passwd
+              subPath: passwd
+              readOnly: true
           resources:
             requests:
               memory: 128Mi
@@ -104,6 +119,8 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
       volumes:
+        - name: passwd
+          emptyDir: {}
   # A note on `type: Directory` below, which is doing real work.
   #
   # The alternative, DirectoryOrCreate, is the default reflex and it is wrong for
