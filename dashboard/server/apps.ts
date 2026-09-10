@@ -12,7 +12,7 @@ import type { LookupFunction } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppTile } from '../shared/fleet';
-import { tailnetIpFor, warmTailnetIps } from './lib/tailnet';
+import { tailnetIpFor, tailnetName, warmTailnetIps } from './lib/tailnet';
 
 const CONFIG =
   process.env.APPS_CONFIG ?? join(dirname(fileURLToPath(import.meta.url)), 'apps.json');
@@ -99,10 +99,13 @@ export const fetchApps = async (): Promise<AppTile[]> => {
   // unreachable for the first fifteen seconds after every restart.
   await warmTailnetIps();
 
+  const tn = tailnetName();
+  const resolve = (url: string) => (tn ? url.replace(/<tailnet>/g, tn) : url);
+
   return Promise.all(
     config.map(async (app) => ({
       name: app.name,
-      url: app.url,
+      url: resolve(app.url),
       nodeId: app.nodeId ?? null,
       icon: app.icon ?? null,
       // A url beginning with # names a view inside the console rather than an

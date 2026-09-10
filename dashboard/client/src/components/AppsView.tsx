@@ -178,7 +178,7 @@ export const AppsView = ({ apps, onOpenView }: { apps: AppTile[]; onOpenView: (v
             <div class="app-info">
               <strong>{app.name}</strong>
               <span>{app.nodeId ?? 'fleet'}</span>
-              <small>{isInternal(app.url) ? 'in this console' : new URL(app.url).port ? `:${new URL(app.url).port}` : ''}</small>
+              <small>{isInternal(app.url) ? 'in this console' : (() => { try { const p = new URL(app.url).port; return p ? `:${p}` : ''; } catch { return ''; } })()}</small>
             </div>
             <div class="app-health">
               <div class="app-status">
