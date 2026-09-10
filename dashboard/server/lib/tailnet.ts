@@ -150,9 +150,13 @@ const fetchViaLocalCli = async (): Promise<TailnetDevice[] | null> => {
  * lookup into a connection to an address nothing answers on.
  */
 let tailnetIps = new Map<string, string>();
+let tailnetSuffix = '';
 
 /** Whether a discovery pass has ever filled the map. See warmTailnetIps. */
 let discovered = false;
+
+/** The tailnet identifier extracted from MagicDNS names, e.g. `taild9f605`. */
+export const tailnetName = (): string => tailnetSuffix;
 
 /**
  * The address behind a MagicDNS name, or null to let ordinary DNS handle it.
@@ -194,6 +198,8 @@ export const fetchTailnetDevices = async (): Promise<TailnetDevice[]> => {
   }
   tailnetIps = fresh;
   discovered = true;
+  const sample = devices.find((d) => d.dnsName.endsWith('.ts.net'));
+  if (sample) tailnetSuffix = sample.dnsName.split('.')[1] ?? '';
 
   // Only Linux nodes run the agents; phones and laptops are viewers. Cluster
   // infrastructure is Linux but has no agent either, so it goes too.
