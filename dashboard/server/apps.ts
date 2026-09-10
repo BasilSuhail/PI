@@ -111,7 +111,7 @@ export const fetchApps = async (): Promise<AppTile[]> => {
       // A url beginning with # names a view inside the console rather than an
       // address to leave for. There is nothing to probe: if the tile is on
       // screen, the thing it opens is already running.
-      healthy: app.url.startsWith('#') ? true : app.check === false ? null : await probe(app.url),
+      healthy: app.url.startsWith('#') ? true : app.check === false ? null : await probe(resolve(app.url)),
       switchable: app.switchable ?? false,
     })),
   );
