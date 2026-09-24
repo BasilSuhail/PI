@@ -216,6 +216,7 @@ spec:
               cpu: 20m
             limits:
               memory: 128Mi
+              cpu: 200m
           ports:
             - name: control
               containerPort: 8000
@@ -283,6 +284,7 @@ spec:
               cpu: 50m
             limits:
               memory: 768Mi
+              cpu: 500m
           # A TCP check, not an HTTP one. qBittorrent 5 puts its WebUI behind
           # a login, and whether GET / answers 200 or 401 depends on settings
           # this manifest does not own — a 401 fails readiness, the Service

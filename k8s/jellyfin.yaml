@@ -94,7 +94,7 @@ spec:
             # Idles near 300MB with a small library. The ceiling is for a
             # runaway scan, not a target.
             limits:
-              memory: 1Gi
+              memory: 3Gi
           # Jellyfin runs migrations and a library scan on a cold start, so the
           # first readiness check has to be patient.
           readinessProbe:
