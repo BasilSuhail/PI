@@ -57,9 +57,10 @@ API_KEY=$api_key
 MAX_STREAMS=4        # total active playback sessions (admin included)
 MAX_LOAD=3.5         # 1-minute load average (board has 4 cores)
 MAX_MEM_PCT=90       # percent of total RAM in use
+MAX_IOWAIT=50        # percent of CPU time spent waiting on disk I/O
 
 # How long non-admin users stay locked out after a trigger.
-COOLDOWN=1800        # seconds (30 minutes)
+COOLDOWN=900         # seconds (15 minutes)
 CONF
   sudo chmod 600 "$CONF"
   echo "  saved to $CONF (root-only)"
@@ -76,7 +77,7 @@ sudo tee "$SCRIPT" >/dev/null <<'WATCHDOG'
 #!/usr/bin/env bash
 # Jellyfin watchdog. Runs every 60s via systemd timer.
 #
-# Three checks: active streams, CPU load, memory pressure. Any one
+# Four checks: active streams, CPU load, memory pressure, disk I/O. Any one
 # exceeding its threshold disables every non-admin Jellyfin account for
 # the cooldown period. The admin account is identified by
 # Policy.IsAdministrator and is never touched.
@@ -98,10 +99,11 @@ DISABLED_USERS="$STATE_DIR/disabled_users"
 # shellcheck source=/dev/null
 . "$CONF"
 
-COOLDOWN="${COOLDOWN:-1800}"
+COOLDOWN="${COOLDOWN:-900}"
 MAX_STREAMS="${MAX_STREAMS:-4}"
 MAX_LOAD="${MAX_LOAD:-3.5}"
 MAX_MEM_PCT="${MAX_MEM_PCT:-90}"
+MAX_IOWAIT="${MAX_IOWAIT:-50}"
 
 # Resolve Jellyfin's cluster IP. If k3s or the service is not up, exit
 # quietly — there is nothing to protect and nothing to talk to.
@@ -142,10 +144,24 @@ fi
 
 # ---- load check ------------------------------------------------------
 
+# First /proc/stat sample — taken before the API call so the network
+# round-trip acts as the measurement window instead of a sleep.
+read -r _ u1 n1 s1 i1 w1 _ < /proc/stat
+
 streams=$(jf "$JF/Sessions" 2>/dev/null \
   | jq '[.[] | select(.NowPlayingItem != null)] | length' 2>/dev/null) || streams=0
 load=$(awk '{print $1}' /proc/loadavg)
 mem_pct=$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf "%.0f", (1-a/t)*100}' /proc/meminfo)
+
+# Second sample. The delta between the two gives iowait as a percentage
+# of total CPU time — high values mean the HDD is the bottleneck.
+read -r _ u2 n2 s2 i2 w2 _ < /proc/stat
+d_total=$(( (u2-u1) + (n2-n1) + (s2-s1) + (i2-i1) + (w2-w1) ))
+if [ "$d_total" -gt 0 ]; then
+  iowait=$(( (w2-w1) * 100 / d_total ))
+else
+  iowait=0
+fi
 
 overloaded=false
 reason=""
@@ -165,8 +181,13 @@ if [ "$mem_pct" -gt "$MAX_MEM_PCT" ]; then
   reason="${reason:+$reason, }mem=${mem_pct}%"
 fi
 
+if [ "$iowait" -gt "$MAX_IOWAIT" ]; then
+  overloaded=true
+  reason="${reason:+$reason, }iowait=${iowait}%"
+fi
+
 if [ "$overloaded" = false ]; then
-  echo "ok: streams=$streams load=$load mem=${mem_pct}%"
+  echo "ok: streams=$streams load=$load mem=${mem_pct}% iowait=${iowait}%"
   exit 0
 fi
 
@@ -247,6 +268,7 @@ echo "  Thresholds (any one triggers the lockout):"
 echo "    streams  > ${MAX_STREAMS:-4}"
 echo "    load     > ${MAX_LOAD:-3.5}"
 echo "    memory   > ${MAX_MEM_PCT:-90}%"
+echo "    iowait   > ${MAX_IOWAIT:-50}%"
 echo "  Cooldown   $((${COOLDOWN:-1800} / 60)) minutes"
 echo
 echo "  Logs:   journalctl -u $SERVICE --no-pager -n 20"
