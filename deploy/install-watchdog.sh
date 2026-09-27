@@ -228,20 +228,15 @@ if in_quiet_hours; then
     echo "quiet hours ($(printf '%02d' "$QUIET_START"):00–$(printf '%02d' "$QUIET_END"):00)"
     exit 0
   fi
-  echo "quiet hours starting — shutting down jellyfin"
+  echo "quiet hours starting — disabling non-admin users"
   rm -f "$DISABLED_AT"
   disable_non_admin_users "quiet hours until $(printf '%02d' "$QUIET_END"):00"
-  k3s kubectl -n "$JF_NAMESPACE" scale deployment/jellyfin --replicas=0 2>/dev/null || true
-  echo "  jellyfin scaled to 0 — no streams possible"
   touch "$QUIET_FLAG"
   exit 0
 fi
 
 if [ -f "$QUIET_FLAG" ]; then
-  echo "quiet hours ended — bringing jellyfin back"
-  k3s kubectl -n "$JF_NAMESPACE" scale deployment/jellyfin --replicas=1 2>/dev/null || true
-  echo "  jellyfin scaled to 1 — waiting for pod"
-  sleep 15
+  echo "quiet hours ended — re-enabling users"
   reenable_users
   echo "done"
   exit 0
