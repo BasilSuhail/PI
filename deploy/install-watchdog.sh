@@ -61,6 +61,11 @@ MAX_IOWAIT=50        # percent of CPU time spent waiting on disk I/O
 
 # How long non-admin users stay locked out after a trigger.
 COOLDOWN=900         # seconds (15 minutes)
+
+# Quiet hours: non-admin users are disabled regardless of load.
+# The HDD stays silent. Set both to the same value to disable.
+QUIET_START=0        # hour (0 = midnight)
+QUIET_END=6          # hour (6 = 6:00 AM)
 CONF
   sudo chmod 600 "$CONF"
   echo "  saved to $CONF (root-only)"
@@ -104,6 +109,10 @@ MAX_STREAMS="${MAX_STREAMS:-4}"
 MAX_LOAD="${MAX_LOAD:-3.5}"
 MAX_MEM_PCT="${MAX_MEM_PCT:-90}"
 MAX_IOWAIT="${MAX_IOWAIT:-50}"
+QUIET_START="${QUIET_START:-0}"
+QUIET_END="${QUIET_END:-6}"
+
+QUIET_FLAG="$STATE_DIR/quiet"
 
 # Resolve Jellyfin's cluster IP. If k3s or the service is not up, exit
 # quietly — there is nothing to protect and nothing to talk to.
@@ -112,6 +121,90 @@ JF_IP=$(k3s kubectl -n pi get svc jellyfin \
 JF="http://${JF_IP}"
 
 jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
+
+# ---- shared: disable/re-enable helpers --------------------------------
+
+disable_non_admin_users() {
+  local label="$1"
+  local users_json
+  users_json=$(jf "$JF/Users") || { echo "cannot list users"; return 1; }
+
+  local targets
+  targets=$(echo "$users_json" | jq -r \
+    '.[] | select(.Policy.IsAdministrator != true and .Policy.IsDisabled != true)
+         | [.Id, .Name] | @tsv')
+
+  if [ -z "$targets" ]; then
+    echo "no users to disable"
+    return 0
+  fi
+
+  > "$DISABLED_USERS"
+  while IFS=$'\t' read -r uid name; do
+    [ -z "$uid" ] && continue
+    local policy
+    policy=$(echo "$users_json" | jq -c --arg id "$uid" \
+      '.[] | select(.Id == $id) | .Policy')
+    echo "$policy" | jq -c '.IsDisabled = true' |
+      jf -X POST -H "Content-Type: application/json" \
+        -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1
+    printf '%s\t%s\n' "$uid" "$name" >> "$DISABLED_USERS"
+    echo "  disabled $name"
+  done <<< "$targets"
+
+  echo "$(wc -l < "$DISABLED_USERS" | tr -d ' ') user(s) locked out ($label)"
+}
+
+reenable_users() {
+  if [ -f "$DISABLED_USERS" ]; then
+    while IFS=$'\t' read -r uid name; do
+      [ -z "$uid" ] && continue
+      local policy
+      policy=$(jf "$JF/Users/$uid" 2>/dev/null | jq -c '.Policy' 2>/dev/null) || continue
+      echo "$policy" | jq -c '.IsDisabled = false' |
+        jf -X POST -H "Content-Type: application/json" \
+          -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1 || true
+      echo "  enabled ${name:-$uid}"
+    done < "$DISABLED_USERS"
+  fi
+  rm -f "$DISABLED_AT" "$DISABLED_USERS" "$QUIET_FLAG"
+}
+
+# ---- quiet hours ------------------------------------------------------
+# Between QUIET_START and QUIET_END, non-admin users are disabled
+# regardless of load so the HDD stays silent overnight.
+
+in_quiet_hours() {
+  local h
+  h=$(date +%-H)
+  if [ "$QUIET_START" -eq "$QUIET_END" ]; then
+    return 1
+  elif [ "$QUIET_START" -lt "$QUIET_END" ]; then
+    [ "$h" -ge "$QUIET_START" ] && [ "$h" -lt "$QUIET_END" ]
+  else
+    # wraps midnight, e.g. 23–6
+    [ "$h" -ge "$QUIET_START" ] || [ "$h" -lt "$QUIET_END" ]
+  fi
+}
+
+if in_quiet_hours; then
+  if [ -f "$QUIET_FLAG" ]; then
+    echo "quiet hours ($(printf '%02d' "$QUIET_START"):00–$(printf '%02d' "$QUIET_END"):00)"
+    exit 0
+  fi
+  echo "quiet hours starting — disabling non-admin users"
+  rm -f "$DISABLED_AT"
+  disable_non_admin_users "quiet hours until $(printf '%02d' "$QUIET_END"):00"
+  touch "$QUIET_FLAG"
+  exit 0
+fi
+
+if [ -f "$QUIET_FLAG" ]; then
+  echo "quiet hours ended — re-enabling users"
+  reenable_users
+  echo "done"
+  exit 0
+fi
 
 # ---- cooldown --------------------------------------------------------
 
@@ -124,20 +217,8 @@ if [ -f "$DISABLED_AT" ] && [ -s "$DISABLED_AT" ]; then
     exit 0
   fi
 
-  # Cooldown expired. Re-enable only the users we locked out.
   echo "cooldown expired — re-enabling users"
-  if [ -f "$DISABLED_USERS" ]; then
-    while IFS=$'\t' read -r uid name; do
-      [ -z "$uid" ] && continue
-      policy=$(jf "$JF/Users/$uid" 2>/dev/null | jq -c '.Policy' 2>/dev/null) || continue
-      echo "$policy" | jq -c '.IsDisabled = false' |
-        jf -X POST -H "Content-Type: application/json" \
-          -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1 || true
-      echo "  enabled ${name:-$uid}"
-    done < "$DISABLED_USERS"
-  fi
-
-  rm -f "$DISABLED_AT" "$DISABLED_USERS"
+  reenable_users
   echo "done"
   exit 0
 fi
@@ -194,34 +275,8 @@ fi
 # ---- disable non-admin users -----------------------------------------
 
 echo "OVERLOADED: $reason"
-
-users_json=$(jf "$JF/Users") || { echo "cannot list users"; exit 0; }
-
-# Non-admin users who are not already disabled (an admin might have
-# disabled one manually — leave those alone).
-targets=$(echo "$users_json" | jq -r \
-  '.[] | select(.Policy.IsAdministrator != true and .Policy.IsDisabled != true)
-       | [.Id, .Name] | @tsv')
-
-if [ -z "$targets" ]; then
-  echo "no users to disable"
-  exit 0
-fi
-
-> "$DISABLED_USERS"
-while IFS=$'\t' read -r uid name; do
-  [ -z "$uid" ] && continue
-  policy=$(echo "$users_json" | jq -c --arg id "$uid" \
-    '.[] | select(.Id == $id) | .Policy')
-  echo "$policy" | jq -c '.IsDisabled = true' |
-    jf -X POST -H "Content-Type: application/json" \
-      -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1
-  printf '%s\t%s\n' "$uid" "$name" >> "$DISABLED_USERS"
-  echo "  disabled $name"
-done <<< "$targets"
-
+disable_non_admin_users "cooldown ${COOLDOWN}s"
 date +%s > "$DISABLED_AT"
-echo "$(wc -l < "$DISABLED_USERS" | tr -d ' ') user(s) locked out for $((COOLDOWN / 60))m"
 WATCHDOG
 sudo chmod 755 "$SCRIPT"
 
@@ -269,7 +324,8 @@ echo "    streams  > ${MAX_STREAMS:-4}"
 echo "    load     > ${MAX_LOAD:-3.5}"
 echo "    memory   > ${MAX_MEM_PCT:-90}%"
 echo "    iowait   > ${MAX_IOWAIT:-50}%"
-echo "  Cooldown   $((${COOLDOWN:-1800} / 60)) minutes"
+echo "  Cooldown     $((${COOLDOWN:-900} / 60)) minutes"
+echo "  Quiet hours  $(printf '%02d' "${QUIET_START:-0}"):00–$(printf '%02d' "${QUIET_END:-6}"):00 (non-admin users disabled, HDD stays silent)"
 echo
 echo "  Logs:   journalctl -u $SERVICE --no-pager -n 20"
 echo "  Test:   sudo $SCRIPT"
