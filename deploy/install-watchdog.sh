@@ -124,7 +124,7 @@ JF_IP=$(k3s kubectl -n "$JF_NAMESPACE" get svc jellyfin \
   -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || exit 0
 JF="http://${JF_IP}"
 
-jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
+jf() { curl -sf -m 5 -H "Authorization: MediaBrowser Token=\"$API_KEY\"" "$@"; }
 
 # ---- shared: disable/re-enable helpers --------------------------------
 
@@ -351,7 +351,7 @@ set -euo pipefail
 [ -z "${1:-}" ] && { echo "usage: bypass-user <name>"; exit 1; }
 . /etc/jellyfin-watchdog.conf
 JF_IP=$(k3s kubectl -n "${JF_NAMESPACE:-pi}" get svc jellyfin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
-jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
+jf() { curl -sf -m 5 -H "Authorization: MediaBrowser Token=\"$API_KEY\"" "$@"; }
 uid=$(jf "http://$JF_IP/Users" | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
 [ -z "$uid" ] && uid=$(jf "http://$JF_IP/Users?isHidden=true" 2>/dev/null | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
 [ -z "$uid" ] && { echo "no user named '$1'"; exit 1; }
