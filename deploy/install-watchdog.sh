@@ -156,19 +156,28 @@ disable_non_admin_users() {
 
   echo "$(wc -l < "$DISABLED_USERS" | tr -d ' ') user(s) locked out ($label)"
 
-  # Stop active playback so disabled users don't keep streaming
+  # Stop active playback and revoke devices so clients get kicked out
   local sessions
   sessions=$(jf "$JF/Sessions" 2>/dev/null) || sessions="[]"
+  local devices
+  devices=$(jf "$JF/Devices" 2>/dev/null) || devices='{"Items":[]}'
   while IFS=$'\t' read -r uid name; do
     [ -z "$uid" ] && continue
-    local sids
-    sids=$(echo "$sessions" | jq -r --arg id "$uid" \
-      '.[] | select(.UserId == $id) | .Id')
+    # Send stop command to active sessions
+    echo "$sessions" | jq -r --arg id "$uid" \
+      '.[] | select(.UserId == $id) | .Id' |
     while IFS= read -r sid; do
       [ -z "$sid" ] && continue
       jf -X POST "$JF/Sessions/$sid/Playing/Stop" >/dev/null 2>&1 || true
-      echo "  stopped session for $name"
-    done <<< "$sids"
+    done
+    # Revoke all devices — forces re-auth which fails on a disabled account
+    echo "$devices" | jq -r --arg id "$uid" \
+      '.Items[] | select(.LastUserId == $id) | .Id' |
+    while IFS= read -r did; do
+      [ -z "$did" ] && continue
+      jf -X DELETE "$JF/Devices?id=$did" >/dev/null 2>&1 || true
+    done
+    echo "  killed sessions for $name"
   done < "$DISABLED_USERS"
 }
 
