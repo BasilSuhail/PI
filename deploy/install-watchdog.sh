@@ -179,6 +179,12 @@ disable_non_admin_users() {
     done
     echo "  killed sessions for $name"
   done < "$DISABLED_USERS"
+
+  # Restart Jellyfin to drop all TCP connections — the only guaranteed
+  # way to stop an active stream. Disabled accounts can't reconnect;
+  # the admin can.
+  k3s kubectl -n pi rollout restart deployment/jellyfin 2>/dev/null || true
+  echo "  restarted jellyfin — all streams dropped"
 }
 
 reenable_users() {
