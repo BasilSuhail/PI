@@ -16,7 +16,7 @@ not the silicon.
 | `agent/` | node agents — Glances plus a Pi-specific shim for power draw and throttle state |
 | `dashboard/` | the dashboard itself: `node:http` server, static client, no framework |
 | `deploy/` | install scripts run on a board — the dashboard, the services, the disks |
-| `k8s/` | manifests applied to the cluster — the dashboard, Uptime Kuma, Vaultwarden, Jellyfin, Kiwix, the Tailscale operator |
+| `k8s/` | manifests applied to the cluster — the dashboard, Uptime Kuma, Vaultwarden, Jellyfin, Kiwix, Immich, ArchiveBox, qBittorrent, the Tailscale operator |
 | `Makefile` | the deploy commands — `make` on its own lists them |
 
 ## The disks
@@ -90,6 +90,7 @@ installed as its own app from a browser — Safari's File, then Add to Dock.
 | Kiwix | `kiwix.<tailnet>.ts.net` | `make media` |
 | qBittorrent | `torrent.<tailnet>.ts.net` | `make torrent` — off by default |
 | Photos | `photos.<tailnet>.ts.net` | `make photos` |
+| ArchiveBox | `archivebox.<tailnet>.ts.net` | `make archivebox` |
 
 `make media` also moves every app's files into the layout above: settings on the
 SSD under `1) Archive/Apps/`, content on the 6TB. It replaced local-path volumes,
@@ -571,6 +572,90 @@ on an idle board.
 
 </details>
 
+<details>
+<summary><strong>ArchiveBox — a self-hosted internet archive</strong></summary>
+
+```bash
+make archivebox
+```
+
+ArchiveBox on pi2 at `https://archivebox.<tailnet>.ts.net`. Feed it URLs —
+one at a time, a browser history export, or an RSS feed — and it saves full
+copies: HTML snapshots, PDFs, screenshots, media, git repos. It uses wget,
+yt-dlp, and a headless browser under the hood.
+
+The same SSD/6TB split. The SQLite index lives on the SSD for fast random
+reads; the archived content lives on the 6TB for capacity. The installer
+symlinks the database from the 6TB back to the SSD so ArchiveBox sees one
+directory while the files sit on two drives.
+
+`make archivebox` asks for an admin password on the first run. It needs
+`make uptime` first for the Tailscale operator.
+
+</details>
+
+<details>
+<summary><strong>Watchdog — Jellyfin circuit breaker</strong></summary>
+
+```bash
+make watchdog
+```
+
+A systemd timer on pi2 that runs every 60 seconds and protects the board
+from Jellyfin overload. The admin account is never touched.
+
+**Quiet hours (midnight–6 AM).** Non-admin Jellyfin users are disabled
+regardless of load. The HDD stays silent, nobody can stream, and the
+board rests. Users are re-enabled automatically at 6 AM.
+
+**Outside quiet hours**, four checks run. Any one exceeding its threshold
+disables all non-admin users for 15 minutes:
+
+| | default |
+|---|---|
+| Active streams | > 4 |
+| CPU load | > 3.5 (of 4 cores) |
+| Memory | > 90% |
+| I/O wait | > 50% (HDD under stress) |
+
+`make watchdog` asks for a Jellyfin API key on the first run
+(Dashboard > API Keys > +). The key is stored on the board in
+`/etc/jellyfin-watchdog.conf` (root-only) and never committed to this repo.
+
+All thresholds and quiet hours are configurable in that file — changes take
+effect on the next tick.
+
+```bash
+journalctl -u jellyfin-watchdog --no-pager -n 20   # logs
+sudo /usr/local/lib/pi/jellyfin-watchdog            # run it once by hand
+```
+
+</details>
+
+<details>
+<summary><strong>Quiet hours — keeping maintenance out of the night</strong></summary>
+
+```bash
+make quiet
+```
+
+Reschedules OS-level maintenance timers out of midnight–6 AM so the board
+is quiet overnight:
+
+| | moved to |
+|---|---|
+| `apt-daily` | 07:00 ± 2h |
+| `apt-daily-upgrade` | 07:00 ± 2h |
+| `man-db` | Sunday 10:00 ± 2h |
+| `fstrim` | Monday 08:00 |
+
+This handles the OS timers. App-level schedules (Jellyfin library scans,
+Immich nightly tasks) are configured inside each app's own dashboard.
+The Jellyfin watchdog (`make watchdog`) handles user access during quiet
+hours separately.
+
+</details>
+
 ## Scope
 
 - **Kubernetes** — k3s on ARM, and where an orchestrator is not worth it
@@ -589,8 +674,10 @@ console's node card. `make sata NODE=pi2` reports the port, the controller and
 whether the controller is actually switched on — a hot-plugged drive once left
 it disabled while looking perfectly healthy — without changing anything.
 
-Jellyfin, Kiwix, Vaultwarden and Uptime Kuma are running, each on its own
-tailnet name, each with its settings on the SSD and its content on the 6TB.
+Jellyfin, Kiwix, Vaultwarden, Uptime Kuma, Immich, ArchiveBox and qBittorrent
+are running, each on its own tailnet name, each with its settings on the SSD
+and its content on the 6TB. The Jellyfin watchdog runs alongside them as a
+systemd timer, enforcing quiet hours and load limits.
 
 Everything is one disk deep. There is no backup of anything yet, the vault
 included, and that is the next thing worth solving.
