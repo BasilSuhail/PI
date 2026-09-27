@@ -126,8 +126,10 @@ jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
 
 disable_non_admin_users() {
   local label="$1"
-  local users_json
-  users_json=$(jf "$JF/Users") || { echo "cannot list users"; return 1; }
+  local users_json visible hidden
+  visible=$(jf "$JF/Users") || { echo "cannot list users"; return 1; }
+  hidden=$(jf "$JF/Users?isHidden=true" 2>/dev/null) || hidden="[]"
+  users_json=$(printf '%s\n%s' "$visible" "$hidden" | jq -s 'add | unique_by(.Id)')
 
   local targets
   targets=$(echo "$users_json" | jq -r \
@@ -153,6 +155,21 @@ disable_non_admin_users() {
   done <<< "$targets"
 
   echo "$(wc -l < "$DISABLED_USERS" | tr -d ' ') user(s) locked out ($label)"
+
+  # Stop active playback so disabled users don't keep streaming
+  local sessions
+  sessions=$(jf "$JF/Sessions" 2>/dev/null) || sessions="[]"
+  while IFS=$'\t' read -r uid name; do
+    [ -z "$uid" ] && continue
+    local sids
+    sids=$(echo "$sessions" | jq -r --arg id "$uid" \
+      '.[] | select(.UserId == $id) | .Id')
+    while IFS= read -r sid; do
+      [ -z "$sid" ] && continue
+      jf -X POST "$JF/Sessions/$sid/Playing/Stop" >/dev/null 2>&1 || true
+      echo "  stopped session for $name"
+    done <<< "$sids"
+  done < "$DISABLED_USERS"
 }
 
 reenable_users() {
@@ -306,6 +323,25 @@ TIMER
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now ${SERVICE}.timer
+
+# --- bypass-user command ---
+
+sudo tee /usr/local/bin/bypass-user >/dev/null <<'BYPASS'
+#!/usr/bin/env bash
+set -euo pipefail
+[ -z "${1:-}" ] && { echo "usage: bypass-user <name>"; exit 1; }
+. /etc/jellyfin-watchdog.conf
+JF_IP=$(k3s kubectl -n pi get svc jellyfin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
+uid=$(jf "http://$JF_IP/Users" | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
+[ -z "$uid" ] && uid=$(jf "http://$JF_IP/Users?isHidden=true" 2>/dev/null | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
+[ -z "$uid" ] && { echo "no user named '$1'"; exit 1; }
+policy=$(jf "http://$JF_IP/Users/$uid" | jq -c '.Policy')
+echo "$policy" | jq -c '.IsDisabled = false' | jf -X POST -H "Content-Type: application/json" -d @- "http://$JF_IP/Users/$uid/Policy" >/dev/null
+sed -i "/^$uid/d" /var/lib/jellyfin-watchdog/disabled_users 2>/dev/null || true
+echo "$1 is back in"
+BYPASS
+sudo chmod 755 /usr/local/bin/bypass-user
 
 # Source the config for the summary. The file is root-only, so read it
 # through sudo — the installer runs as the login user with sudo for
