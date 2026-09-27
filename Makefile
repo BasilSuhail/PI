@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet
+.PHONY: help dashboard dashboard-k8s uptime vault media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -59,6 +59,7 @@ help:
 	@echo "make wifi                  stop the wifi radio sleeping between packets, both boards"
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
+	@echo "make watchdog                  Jellyfin circuit breaker: locks out non-admin users under load"
 	@echo "make quiet                     midnight–6 AM: workloads down, disks sleep, back at six"
 	@echo "make sata NODE=pi2        report the PCIe port and the SATA HAT. Changes nothing."
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
@@ -158,6 +159,10 @@ samba:
 # board, and an agent that keeps the mounts in step with the tailnet.
 mounts:
 	STORAGE_NODES="$(STORAGE_NODES)" bash deploy/install-share-mounts.sh
+
+# Interactive: asks for the Jellyfin API key on the first run.
+watchdog:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-watchdog.sh'
 
 quiet:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-quiet-hours.sh'
