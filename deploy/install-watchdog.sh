@@ -66,6 +66,9 @@ COOLDOWN=900         # seconds (15 minutes)
 # The HDD stays silent. Set both to the same value to disable.
 QUIET_START=0        # hour (0 = midnight)
 QUIET_END=6          # hour (6 = 6:00 AM)
+
+# Kubernetes namespace where Jellyfin runs.
+JF_NAMESPACE=pi
 CONF
   sudo chmod 600 "$CONF"
   echo "  saved to $CONF (root-only)"
@@ -111,12 +114,13 @@ MAX_MEM_PCT="${MAX_MEM_PCT:-90}"
 MAX_IOWAIT="${MAX_IOWAIT:-50}"
 QUIET_START="${QUIET_START:-0}"
 QUIET_END="${QUIET_END:-6}"
+JF_NAMESPACE="${JF_NAMESPACE:-pi}"
 
 QUIET_FLAG="$STATE_DIR/quiet"
 
 # Resolve Jellyfin's cluster IP. If k3s or the service is not up, exit
 # quietly — there is nothing to protect and nothing to talk to.
-JF_IP=$(k3s kubectl -n pi get svc jellyfin \
+JF_IP=$(k3s kubectl -n "$JF_NAMESPACE" get svc jellyfin \
   -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || exit 0
 JF="http://${JF_IP}"
 
@@ -183,7 +187,7 @@ disable_non_admin_users() {
   # Restart Jellyfin to drop all TCP connections — the only guaranteed
   # way to stop an active stream. Disabled accounts can't reconnect;
   # the admin can.
-  k3s kubectl -n pi rollout restart deployment/jellyfin 2>/dev/null || true
+  k3s kubectl -n "$JF_NAMESPACE" rollout restart deployment/jellyfin 2>/dev/null || true
   echo "  restarted jellyfin — all streams dropped"
 }
 
@@ -227,7 +231,7 @@ if in_quiet_hours; then
   echo "quiet hours starting — shutting down jellyfin"
   rm -f "$DISABLED_AT"
   disable_non_admin_users "quiet hours until $(printf '%02d' "$QUIET_END"):00"
-  k3s kubectl -n pi scale deployment/jellyfin --replicas=0 2>/dev/null || true
+  k3s kubectl -n "$JF_NAMESPACE" scale deployment/jellyfin --replicas=0 2>/dev/null || true
   echo "  jellyfin scaled to 0 — no streams possible"
   touch "$QUIET_FLAG"
   exit 0
@@ -235,7 +239,7 @@ fi
 
 if [ -f "$QUIET_FLAG" ]; then
   echo "quiet hours ended — bringing jellyfin back"
-  k3s kubectl -n pi scale deployment/jellyfin --replicas=1 2>/dev/null || true
+  k3s kubectl -n "$JF_NAMESPACE" scale deployment/jellyfin --replicas=1 2>/dev/null || true
   echo "  jellyfin scaled to 1 — waiting for pod"
   sleep 15
   reenable_users
@@ -351,7 +355,7 @@ sudo tee /usr/local/bin/bypass-user >/dev/null <<'BYPASS'
 set -euo pipefail
 [ -z "${1:-}" ] && { echo "usage: bypass-user <name>"; exit 1; }
 . /etc/jellyfin-watchdog.conf
-JF_IP=$(k3s kubectl -n pi get svc jellyfin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+JF_IP=$(k3s kubectl -n "${JF_NAMESPACE:-pi}" get svc jellyfin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 jf() { curl -sf -m 5 -H "X-Emby-Token: $API_KEY" "$@"; }
 uid=$(jf "http://$JF_IP/Users" | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
 [ -z "$uid" ] && uid=$(jf "http://$JF_IP/Users?isHidden=true" 2>/dev/null | jq -r --arg n "$1" '.[] | select(.Name == $n) | .Id')
