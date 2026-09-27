@@ -307,10 +307,11 @@ TIMER
 sudo systemctl daemon-reload
 sudo systemctl enable --now ${SERVICE}.timer
 
-# Source the config for the summary, since it was written by an earlier
-# block and the variables are not in this shell.
+# Source the config for the summary. The file is root-only, so read it
+# through sudo — the installer runs as the login user with sudo for
+# privileged operations.
 # shellcheck source=/dev/null
-. "$CONF"
+eval "$(sudo cat "$CONF")"
 
 echo
 echo "==> Done"
