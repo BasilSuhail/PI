@@ -319,7 +319,7 @@ spec:
           # ARM NN would use the Pi's GPU for some of this, but it is a
           # different image and a separate experiment; CPU works today and the
           # board is idle.
-          image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
+          image: ghcr.io/immich-app/immich-machine-learning:v3.2.2
           ports:
             - name: http
               containerPort: 3003
@@ -413,7 +413,7 @@ spec:
         node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: server
-          image: ghcr.io/immich-app/immich-server:v3.1.0
+          image: ghcr.io/immich-app/immich-server:v3.2.2
           ports:
             - name: http
               containerPort: 2283
