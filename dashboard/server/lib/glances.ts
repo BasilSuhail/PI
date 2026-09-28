@@ -150,13 +150,18 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
     if (!seen || depth < (seen.mnt_point ?? '').split('/').length) byDisk.set(disk, d);
   }
 
-  return [...byDisk.values()].map((d) => ({
-    mount: d.mnt_point ?? '?',
-    device: d.device_name ?? '?',
-    totalBytes: d.size ?? 0,
-    usedBytes: d.used ?? 0,
-    usedPct: round(d.percent ?? 0),
-  }));
+  // Ordered by device, not by Glances' list order. The client numbers disks
+  // in array order (HDD1, HDD2), and Glances' order let a newly added empty
+  // drive take HDD1 from the one that had held the media for months.
+  return [...byDisk.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([, d]) => ({
+      mount: d.mnt_point ?? '?',
+      device: d.device_name ?? '?',
+      totalBytes: d.size ?? 0,
+      usedBytes: d.used ?? 0,
+      usedPct: round(d.percent ?? 0),
+    }));
 };
 
 export const fetchNet = async (host: string): Promise<NetStats[]> => {
