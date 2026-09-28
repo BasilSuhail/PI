@@ -60,7 +60,7 @@ help:
 	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make watchdog                  Jellyfin circuit breaker: locks out non-admin users under load"
-	@echo "make quiet                     midnight–6 AM: maintenance moved to daytime, Immich off"
+	@echo "make quiet                     midnight–6 AM: maintenance to daytime, Immich jobs paused"
 	@echo "make sata NODE=pi2        report the PCIe port and the SATA HAT. Changes nothing."
 	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
 	@echo
