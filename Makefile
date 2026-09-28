@@ -86,8 +86,9 @@ vault:
 
 # Jellyfin and Kiwix, plus the storage move for Vaultwarden and Uptime Kuma.
 # Override where things land:  make media DATA_DIR=/somewhere/else
+# Kiwix's .zim files on another disk:  make media WIKI_DIR=/srv/hdd2
 media:
-	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-media.sh'
+	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(DATA_DIR),DATA_DIR="$(DATA_DIR)" ,)$(if $(WIKI_DIR),WIKI_DIR="$(WIKI_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-media.sh'
 
 # Immich: the photo library, and what the phone backs up to. Four containers
 # and a Postgres of its own, so it wants the operator like the rest.
