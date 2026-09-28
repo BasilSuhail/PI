@@ -47,6 +47,9 @@ APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 # The 6TB, by its mount point rather than its device: a disk swapped for a
 # bigger one at the same path should need no edit here.
 DATA_DIR="${DATA_DIR:-/srv/storage}"
+# Kiwix's .zim files can live on a different disk from Jellyfin's films.
+WIKI_DIR="${WIKI_DIR:-$DATA_DIR}"
+data_dir_for() { if [ "$1" = Kiwix ]; then echo "$WIKI_DIR"; else echo "$DATA_DIR"; fi; }
 
 APPS=(Jellyfin Kiwix Vaultwarden Uptime)
 # Two apps are entirely on the SSD and have no half on the 6TB.
@@ -90,7 +93,7 @@ echo
 for app in "${APPS[@]}"; do
   printf '  %-12s %s\n' "$app" "$APPS_DIR/$app"
   case " ${DATA_APPS[*]} " in
-    *" $app "*) printf '  %-12s %s\n' "" "$DATA_DIR/$app" ;;
+    *" $app "*) printf '  %-12s %s\n' "" "$(data_dir_for "$app")/$app" ;;
     *)          printf '  %-12s %s\n' "" "(nothing on the 6TB — it is small)" ;;
   esac
 done
@@ -123,12 +126,19 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
   esac
 fi
 
+# The same guard for a separate wiki disk. No prompt: someone who passed
+# WIKI_DIR named a specific disk, and an unmounted one is never what they meant.
+if [ "$WIKI_DIR" != "$DATA_DIR" ] && ! mountpoint -q "$WIKI_DIR" 2>/dev/null; then
+  echo "$WIKI_DIR is not a mount point. Is the drive mounted? Check: findmnt $WIKI_DIR" >&2
+  exit 1
+fi
+
 echo "==> Creating the folders"
 for app in "${APPS[@]}"; do sudo mkdir -p "$APPS_DIR/$app"; done
 # These apps take ownership of everything inside their mount, so their data
 # sits one level below the app folder and the note stays outside it.
 for app in "${APPS_WITH_DATA_SUBDIR[@]}"; do sudo mkdir -p "$APPS_DIR/$app/data"; done
-for app in "${DATA_APPS[@]}"; do sudo mkdir -p "$DATA_DIR/$app"; done
+for app in "${DATA_APPS[@]}"; do sudo mkdir -p "$(data_dir_for "$app")/$app"; done
 # Jellyfin's brain on the SSD, its films on the 6TB.
 sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
               "$DATA_DIR/Jellyfin/Media/Movies" "$DATA_DIR/Jellyfin/Media/Shows"
@@ -153,7 +163,7 @@ sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
 # Vaultwarden still runs as root and can write to anything, so its folder is
 # deliberately left alone rather than given away to a user it does not use.
 sudo chown -R "$OWNER_UID:$OWNER_GID" \
-  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$DATA_DIR/Kiwix"
+  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$WIKI_DIR/Kiwix"
 
 # A note in each app's SSD folder, because a folder holding only a config file
 # does not explain itself six months later.
@@ -161,7 +171,7 @@ for app in "${APPS[@]}"; do
   # Only the split apps get a second half. Writing the same note for all four
   # sent Uptime Kuma's to /srv/storage/Uptime, a path that has never existed.
   case " ${DATA_APPS[*]} " in
-    *" $app "*) content="  Its content      $DATA_DIR/$app
+    *" $app "*) content="  Its content      $(data_dir_for "$app")/$app
                    the big files. Films and .zim archives." ;;
     *)          content="  Its content      is in this folder too. This app is small enough
                    to live entirely on the SSD, and has nothing on the 6TB." ;;
@@ -244,6 +254,7 @@ echo "==> Applying manifests"
 render() {
   sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
       -e "s|__DATA_DIR__|${DATA_DIR}|g" \
+      -e "s|__WIKI_DIR__|${WIKI_DIR}|g" \
       -e "s|__UID__|${OWNER_UID}|g" \
       -e "s|__GID__|${OWNER_GID}|g" "$1"
 }
@@ -336,7 +347,7 @@ Jellyfin
 
 Kiwix
   Serving an empty catalogue until there is something to serve. Download a
-  .zim from https://download.kiwix.org/zim/ into ${DATA_DIR}/Kiwix, then:
+  .zim from https://download.kiwix.org/zim/ into ${WIKI_DIR}/Kiwix, then:
 
     sudo k3s kubectl -n pi rollout restart deployment/kiwix
 

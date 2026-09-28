@@ -5,7 +5,7 @@
 # for why these are hostPath directories and not PersistentVolumeClaims.
 #
 #   the app     __APPS_DIR__/Kiwix   the library index. Tiny.
-#   the data    __DATA_DIR__/Kiwix   the .zim files. Wikipedia with images is
+#   the data    __WIKI_DIR__/Kiwix   the .zim files. Wikipedia with images is
 #                                    about 100GB, which is the whole reason
 #                                    this lives on the 6TB.
 #
@@ -110,7 +110,7 @@ spec:
             type: Directory
         - name: data
           hostPath:
-            path: __DATA_DIR__/Kiwix
+            path: __WIKI_DIR__/Kiwix
             type: Directory
 ---
 apiVersion: v1
