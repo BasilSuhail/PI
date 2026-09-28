@@ -151,11 +151,14 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory }: {
   // fills up is exactly as interesting as a boot disk that does, and a board
   // whose second drive is invisible cannot tell you it has gone.
   //
-  // The boot disk leads, then the rest by mount point, so the order is stable
+  // The boot disk leads, then the rest by device, so the order is stable
   // between polls rather than following whatever the fleet poll happened to
-  // return first.
+  // return first. Device rather than mount point: by mount, a new drive at
+  // /srv/hdd2 sorted ahead of /srv/storage and took HDD1 from the disk that
+  // had held the media for months.
   const disks = [...node.disks].sort((a, b) =>
-    (a.mount === '/' ? 0 : 1) - (b.mount === '/' ? 0 : 1) || a.mount.localeCompare(b.mount),
+    (a.mount === '/' ? 0 : 1) - (b.mount === '/' ? 0 : 1)
+    || a.device.localeCompare(b.device, undefined, { numeric: true }),
   );
   const labels = diskLabels(disks);
   // Swap and the thumbnail cache are files on the boot disk, not drives. They
