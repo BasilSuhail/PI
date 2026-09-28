@@ -162,8 +162,16 @@ sudo mkdir -p "$APPS_DIR/Jellyfin/data" "$APPS_DIR/Jellyfin/cache" \
 #
 # Vaultwarden still runs as root and can write to anything, so its folder is
 # deliberately left alone rather than given away to a user it does not use.
+#
+# Only this script's own app folders, never all of APPS_DIR. Other apps keep
+# their state there too, and Immich's Postgres data must stay owned by uid 999:
+# a recursive chown of APPS_DIR handed it to the login user under a running
+# database, which crashed and came back unable to find its last checkpoint.
+OWN_APP_DIRS=()
+for app in "${APPS[@]}"; do OWN_APP_DIRS+=("$APPS_DIR/$app"); done
+sudo chown "$OWNER_UID:$OWNER_GID" "$APPS_DIR"
 sudo chown -R "$OWNER_UID:$OWNER_GID" \
-  "$APPS_DIR" "$DATA_DIR/Jellyfin" "$WIKI_DIR/Kiwix"
+  "${OWN_APP_DIRS[@]}" "$DATA_DIR/Jellyfin" "$WIKI_DIR/Kiwix"
 
 # A note in each app's SSD folder, because a folder holding only a config file
 # does not explain itself six months later.
@@ -189,7 +197,7 @@ Written by deploy/install-media.sh. Change the split by re-running it with
 APPS_DIR= or DATA_DIR= set.
 NOTE
 done
-sudo chown -R "$OWNER_UID:$OWNER_GID" "$APPS_DIR"
+sudo chown -R "$OWNER_UID:$OWNER_GID" "${OWN_APP_DIRS[@]}"
 
 # The vault, if it is still on the 6TB.
 #
