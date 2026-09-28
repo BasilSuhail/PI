@@ -69,6 +69,9 @@ QUIET_END=6          # hour (6 = 6:00 AM)
 
 # Kubernetes namespace where Jellyfin runs.
 JF_NAMESPACE=pi
+
+# Discord webhook for lockout notices (quiet hours, overload). Optional.
+#DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
 CONF
   sudo chmod 600 "$CONF"
   echo "  saved to $CONF (root-only)"
@@ -115,8 +118,17 @@ MAX_IOWAIT="${MAX_IOWAIT:-50}"
 QUIET_START="${QUIET_START:-0}"
 QUIET_END="${QUIET_END:-6}"
 JF_NAMESPACE="${JF_NAMESPACE:-pi}"
+DISCORD_WEBHOOK="${DISCORD_WEBHOOK:-}"
 
 QUIET_FLAG="$STATE_DIR/quiet"
+
+# A failed notice must never stop a lockout or a re-enable.
+notify() {
+  [ -n "$DISCORD_WEBHOOK" ] || return 0
+  jq -n --arg c "$1" '{content: $c}' |
+    curl -sf -m 10 -H "Content-Type: application/json" -d @- \
+      "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+}
 
 # Resolve Jellyfin's cluster IP. If k3s or the service is not up, exit
 # quietly — there is nothing to protect and nothing to talk to.
@@ -239,12 +251,14 @@ if in_quiet_hours; then
   rm -f "$DISABLED_AT"
   disable_non_admin_users "quiet hours until $(printf '%02d' "$QUIET_END"):00"
   touch "$QUIET_FLAG"
+  notify "Jellyfin quiet hours started: family accounts locked until $(printf '%02d' "$QUIET_END"):00."
   exit 0
 fi
 
 if [ -f "$QUIET_FLAG" ]; then
   echo "quiet hours ended — re-enabling users"
   reenable_users
+  notify "Jellyfin quiet hours over: family accounts back on."
   echo "done"
   exit 0
 fi
@@ -262,6 +276,7 @@ if [ -f "$DISABLED_AT" ] && [ -s "$DISABLED_AT" ]; then
 
   echo "cooldown expired — re-enabling users"
   reenable_users
+  notify "Jellyfin load back to normal: family accounts back on."
   echo "done"
   exit 0
 fi
@@ -320,6 +335,7 @@ fi
 echo "OVERLOADED: $reason"
 disable_non_admin_users "cooldown ${COOLDOWN}s"
 date +%s > "$DISABLED_AT"
+notify "Jellyfin overloaded ($reason): family accounts locked for $((COOLDOWN / 60)) min."
 WATCHDOG
 sudo chmod 755 "$SCRIPT"
 
