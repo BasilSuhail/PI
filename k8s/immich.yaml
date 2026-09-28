@@ -60,14 +60,14 @@
 # rather than promised by the app:
 #
 #              CPU limit    memory limit
-#   server       1500m          2Gi
+#   server       1500m          4Gi
 #   ml           1000m          3Gi
 #   postgres      500m          1Gi
 #   valkey        100m        256Mi
 #   ------------------------------------
-#   total         3100m       6.25Gi   of 4000m and 15.8GB
+#   total         3100m       8.25Gi   of 4000m and 15.8GB
 #
-# That leaves roughly nine tenths of a core and 9.5GB that Immich cannot touch,
+# That leaves roughly nine tenths of a core and 7.5GB that Immich cannot touch,
 # no matter what it does, which is what k3s, the metrics agent, the console,
 # Jellyfin and Kiwix keep running out of. A runaway indexing job is a slow
 # indexing job here, not an unusable board.
@@ -450,7 +450,12 @@ spec:
             requests:
               memory: 512Mi
               cpu: 100m
-            # 2Gi, and deliberately not more.
+            # 4Gi. 2Gi was tried first and was too small: this one process
+            # also runs the job workers, and a library backfill — thumbnails
+            # and video transcodes for 7,000+ assets — was OOMKilled at 2Gi
+            # mid-run, taking the web interface down with it each time.
+            #
+            # Deliberately not more than 4Gi, because of the bug below.
             #
             # immich-app/immich#26162 is open and unfixed: the api process
             # grows until the cgroup kills it at 95-97% of whatever limit it
@@ -474,7 +479,7 @@ spec:
             # OOMKilled as the last state, on a board that is otherwise idle.
             # That is the bug, not a misconfiguration here.
             limits:
-              memory: 2Gi
+              memory: 4Gi
               # 1.5 cores. More generous than the ML container because this one
               # answers the phone and the browser, and a throttled request is a
               # request that feels slow. Still a hard ceiling: thumbnailing and
@@ -489,8 +494,10 @@ spec:
             httpGet: { path: /api/server/ping, port: http }
             # The first start runs database migrations against an empty
             # Postgres, on ARM. Slow, and killing it half way leaves a schema
-            # that is neither the old one nor the new one.
-            initialDelaySeconds: 300
+            # that is neither the old one nor the new one. 300s was not enough
+            # on pi2 — the api worker initialises websockets and then sits in
+            # migration I/O for minutes more before binding port 2283.
+            initialDelaySeconds: 600
             periodSeconds: 30
             timeoutSeconds: 10
       volumes:
