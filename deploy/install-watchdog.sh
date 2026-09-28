@@ -192,17 +192,24 @@ disable_non_admin_users() {
 }
 
 reenable_users() {
-  if [ -f "$DISABLED_USERS" ]; then
-    while IFS=$'\t' read -r uid name; do
-      [ -z "$uid" ] && continue
-      local policy
-      policy=$(jf "$JF/Users/$uid" 2>/dev/null | jq -c '.Policy' 2>/dev/null) || continue
-      echo "$policy" | jq -c '.IsDisabled = false' |
-        jf -X POST -H "Content-Type: application/json" \
-          -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1 || true
-      echo "  enabled ${name:-$uid}"
-    done < "$DISABLED_USERS"
-  fi
+  local visible hidden users_json
+  visible=$(jf "$JF/Users") || visible="[]"
+  hidden=$(jf "$JF/Users?isHidden=true" 2>/dev/null) || hidden="[]"
+  users_json=$(printf '%s\n%s' "$visible" "$hidden" | jq -s 'add | unique_by(.Id)')
+
+  echo "$users_json" | jq -r \
+    '.[] | select(.Policy.IsAdministrator != true and .Policy.IsDisabled == true)
+         | [.Id, .Name] | @tsv' |
+  while IFS=$'\t' read -r uid name; do
+    [ -z "$uid" ] && continue
+    local policy
+    policy=$(echo "$users_json" | jq -c --arg id "$uid" \
+      '.[] | select(.Id == $id) | .Policy')
+    echo "$policy" | jq -c '.IsDisabled = false' |
+      jf -X POST -H "Content-Type: application/json" \
+        -d @- "$JF/Users/$uid/Policy" >/dev/null 2>&1 || true
+    echo "  enabled ${name:-$uid}"
+  done
   rm -f "$DISABLED_AT" "$DISABLED_USERS" "$QUIET_FLAG"
 }
 
