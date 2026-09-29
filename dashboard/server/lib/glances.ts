@@ -159,30 +159,61 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
   }));
 };
 
-export const fetchNet = async (host: string): Promise<NetStats[]> => {
+export const fetchNet = async (host: string, now: number = Date.now()): Promise<NetStats[]> => {
   const net = await get<Array<{
     interface_name?: string;
-    bytes_recv_rate_per_sec?: number;
-    bytes_sent_rate_per_sec?: number;
+    bytes_recv_gauge?: number;
+    bytes_sent_gauge?: number;
   }>>(host, 'network');
   if (!Array.isArray(net)) return [];
 
   return net
     .filter((n) => n.interface_name && isRealInterface(n.interface_name))
-    .map((n) => ({
-      iface: n.interface_name as string,
-      rxBps: saneRate(n.bytes_recv_rate_per_sec),
-      txBps: saneRate(n.bytes_sent_rate_per_sec),
-    }));
+    .map((n) => {
+      const iface = n.interface_name as string;
+      const { rxBps, txBps } = netRate(`${host}/${iface}`, n.bytes_recv_gauge, n.bytes_sent_gauge, now);
+      return { iface, rxBps, txBps };
+    });
 };
 
-// Glances derives a rate from two readings of a byte counter. When the counter
-// resets, the difference is negative or the whole counter in one interval: the
-// card showed -159 KB/s and 629.9 GB/s. Nothing here moves more than a gigabit,
-// so a reading outside 0..10 Gbit/s is a bad sample, not traffic.
-const MAX_BPS = 1.25e9;
-export const saneRate = (v: number | undefined): number =>
-  v !== undefined && Number.isFinite(v) && v >= 0 && v <= MAX_BPS ? Math.round(v) : 0;
+// Rates are worked out here from Glances' cumulative byte counters rather than
+// taken from its *_rate_per_sec fields. Glances computes those over the time
+// since its last refresh, and each of the card's concurrent plugin requests can
+// trigger one, so the network request often lands milliseconds after another
+// refresh: nothing moved (0 B/s), or a few KB over a sliver of time
+// (629.9 GB/s). Here the window is the gap between this server's own polls.
+type NetSample = { t: number; rx: number; tx: number; rxBps: number; txBps: number };
+const netSamples = new Map<string, NetSample>();
+const MAX_BPS = 1.25e9; // 10 Gbit/s; nothing here moves more than a gigabit
+const STALE_MS = 15_000;
+
+export const netRate = (
+  key: string,
+  rx: number | undefined,
+  tx: number | undefined,
+  now: number,
+): { rxBps: number; txBps: number } => {
+  if (typeof rx !== 'number' || typeof tx !== 'number') return { rxBps: 0, txBps: 0 };
+  const prev = netSamples.get(key);
+  if (!prev || now <= prev.t || rx < prev.rx || tx < prev.tx) {
+    // First sight, a clock step, or a counter reset: nothing to compare with.
+    netSamples.set(key, { t: now, rx, tx, rxBps: 0, txBps: 0 });
+    return { rxBps: 0, txBps: 0 };
+  }
+  if (rx === prev.rx && tx === prev.tx && now - prev.t < STALE_MS) {
+    // Glances has not refreshed since the last poll and is serving the same
+    // counters, so repeat the last rate rather than report a false zero.
+    return { rxBps: prev.rxBps, txBps: prev.txBps };
+  }
+  const secs = (now - prev.t) / 1000;
+  const bps = (bytes: number) => {
+    const v = Math.round(bytes / secs);
+    return v <= MAX_BPS ? v : 0;
+  };
+  const next = { t: now, rx, tx, rxBps: bps(rx - prev.rx), txBps: bps(tx - prev.tx) };
+  netSamples.set(key, next);
+  return { rxBps: next.rxBps, txBps: next.txBps };
+};
 
 /**
  * Glances returns uptime as a human string, not a number:
