@@ -162,8 +162,9 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
 export const fetchNet = async (host: string, now: number = Date.now()): Promise<NetStats[]> => {
   const net = await get<Array<{
     interface_name?: string;
-    bytes_recv_gauge?: number;
-    bytes_sent_gauge?: number;
+    bytes_recv?: number;
+    bytes_sent?: number;
+    time_since_update?: number;
   }>>(host, 'network');
   if (!Array.isArray(net)) return [];
 
@@ -171,48 +172,47 @@ export const fetchNet = async (host: string, now: number = Date.now()): Promise<
     .filter((n) => n.interface_name && isRealInterface(n.interface_name))
     .map((n) => {
       const iface = n.interface_name as string;
-      const { rxBps, txBps } = netRate(`${host}/${iface}`, n.bytes_recv_gauge, n.bytes_sent_gauge, now);
+      const { rxBps, txBps } = netRate(
+        `${host}/${iface}`, n.bytes_recv, n.bytes_sent, n.time_since_update, now,
+      );
       return { iface, rxBps, txBps };
     });
 };
 
-// Rates are worked out here from Glances' cumulative byte counters rather than
-// taken from its *_rate_per_sec fields. Glances computes those over the time
-// since its last refresh, and each of the card's concurrent plugin requests can
-// trigger one, so the network request often lands milliseconds after another
-// refresh: nothing moved (0 B/s), or a few KB over a sliver of time
-// (629.9 GB/s). Here the window is the gap between this server's own polls.
-type NetSample = { t: number; rx: number; tx: number; rxBps: number; txBps: number };
-const netSamples = new Map<string, NetSample>();
+// Glances reports the bytes moved since its previous refresh and how long ago
+// that was. Every plugin request can trigger a refresh, and the card sends
+// several at once, so the network read often lands a few milliseconds after
+// another one: no bytes in that sliver read as 0 B/s, a few KB over it as
+// 629.9 GB/s. A window under a second is noise; the last good rate stands in
+// for it. (Its *_gauge totals are not since-boot counters — pi2 reported 9.9 TB
+// sent in a day — so they cannot be used instead.)
+type NetSample = { t: number; rxBps: number; txBps: number };
+const lastGoodNet = new Map<string, NetSample>();
+const MIN_WINDOW_S = 1;
 const MAX_BPS = 1.25e9; // 10 Gbit/s; nothing here moves more than a gigabit
 const STALE_MS = 15_000;
 
 export const netRate = (
   key: string,
-  rx: number | undefined,
-  tx: number | undefined,
+  rxBytes: number | undefined,
+  txBytes: number | undefined,
+  windowS: number | undefined,
   now: number,
 ): { rxBps: number; txBps: number } => {
-  if (typeof rx !== 'number' || typeof tx !== 'number') return { rxBps: 0, txBps: 0 };
-  const prev = netSamples.get(key);
-  if (!prev || now <= prev.t || rx < prev.rx || tx < prev.tx) {
-    // First sight, a clock step, or a counter reset: nothing to compare with.
-    netSamples.set(key, { t: now, rx, tx, rxBps: 0, txBps: 0 });
-    return { rxBps: 0, txBps: 0 };
+  const usable =
+    typeof rxBytes === 'number' && typeof txBytes === 'number' &&
+    typeof windowS === 'number' && windowS >= MIN_WINDOW_S &&
+    rxBytes >= 0 && txBytes >= 0;
+  if (usable) {
+    const rxBps = Math.round(rxBytes / windowS);
+    const txBps = Math.round(txBytes / windowS);
+    if (rxBps <= MAX_BPS && txBps <= MAX_BPS) {
+      lastGoodNet.set(key, { t: now, rxBps, txBps });
+      return { rxBps, txBps };
+    }
   }
-  if (rx === prev.rx && tx === prev.tx && now - prev.t < STALE_MS) {
-    // Glances has not refreshed since the last poll and is serving the same
-    // counters, so repeat the last rate rather than report a false zero.
-    return { rxBps: prev.rxBps, txBps: prev.txBps };
-  }
-  const secs = (now - prev.t) / 1000;
-  const bps = (bytes: number) => {
-    const v = Math.round(bytes / secs);
-    return v <= MAX_BPS ? v : 0;
-  };
-  const next = { t: now, rx, tx, rxBps: bps(rx - prev.rx), txBps: bps(tx - prev.tx) };
-  netSamples.set(key, next);
-  return { rxBps: next.rxBps, txBps: next.txBps };
+  const last = lastGoodNet.get(key);
+  return last && now - last.t < STALE_MS ? { rxBps: last.rxBps, txBps: last.txBps } : { rxBps: 0, txBps: 0 };
 };
 
 /**
