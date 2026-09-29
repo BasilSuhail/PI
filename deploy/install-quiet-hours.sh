@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Quiet hours: reschedule system maintenance out of midnight–6 AM, and pause
-# Immich's background jobs for those hours. The Immich app stays up.
+# Quiet hours: reschedule system maintenance out of midnight–6 AM, pause
+# Immich's background jobs for those hours (the app stays up), and slow
+# torrents to a crawl so seeding does not keep HDD1 reading all night.
 #
 # The apps have their own scheduling (Jellyfin's Scheduled Tasks, Immich's
 # job settings) and those are configured in their own dashboards. This
@@ -191,12 +192,35 @@ UNIT
   fi
 fi
 
+
+# Torrents slowed to 1 KiB/s overnight by qBittorrent's own scheduler: seeding
+# otherwise reads HDD1 all night. The schedule lives in qBittorrent's config,
+# so it keeps working even if this board's timers do not, and it only has to
+# be set once, while the client is running. Same API route as
+# deploy/install-torrent.sh: localhost inside the pod, where no login is needed.
+torrent_quiet="no qBittorrent installed"
+if sudo k3s kubectl -n pi get deploy qbittorrent >/dev/null 2>&1; then
+  echo "==> Torrents slowed to 1 KiB/s 00:00–06:00"
+  QB_PREFS='{"alt_dl_limit":1024,"alt_up_limit":1024,"scheduler_enabled":true,"schedule_from_hour":0,"schedule_from_min":0,"schedule_to_hour":6,"schedule_to_min":0,"scheduler_days":0}'
+  qb() { sudo k3s kubectl -n pi exec deploy/qbittorrent -c qbittorrent -- curl -sf -m 10 "$@"; }
+  qb -X POST "http://localhost:8080/api/v2/app/setPreferences" \
+     --data-urlencode "json=$QB_PREFS" >/dev/null 2>&1 || true
+  got=$(qb "http://localhost:8080/api/v2/app/preferences" 2>/dev/null \
+        | jq -r '"\(.scheduler_enabled) \(.schedule_from_hour) \(.schedule_to_hour) \(.alt_up_limit)"' 2>/dev/null || true)
+  if [ "$got" = "true 0 6 1024" ]; then
+    torrent_quiet="set (qBittorrent scheduler)"
+  else
+    torrent_quiet="not set: the client is off. Re-run 'make quiet' while it is running"
+  fi
+fi
+
 echo
 echo "==> Done"
 echo "  apt-daily            07:00 ± 2h"
 echo "  apt-daily-upgrade    07:00 ± 2h"
 echo "  man-db               Sunday 10:00 ± 2h"
 echo "  fstrim               Monday 08:00"
+echo "  torrents             1 KiB/s 00:00–06:00, $torrent_quiet"
 if [ "$immich_quiet" = true ]; then
   echo "  immich               jobs + uploads paused 00:00–06:00 (app stays up)"
 fi
