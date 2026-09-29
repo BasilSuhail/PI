@@ -171,10 +171,18 @@ export const fetchNet = async (host: string): Promise<NetStats[]> => {
     .filter((n) => n.interface_name && isRealInterface(n.interface_name))
     .map((n) => ({
       iface: n.interface_name as string,
-      rxBps: Math.round(n.bytes_recv_rate_per_sec ?? 0),
-      txBps: Math.round(n.bytes_sent_rate_per_sec ?? 0),
+      rxBps: saneRate(n.bytes_recv_rate_per_sec),
+      txBps: saneRate(n.bytes_sent_rate_per_sec),
     }));
 };
+
+// Glances derives a rate from two readings of a byte counter. When the counter
+// resets, the difference is negative or the whole counter in one interval: the
+// card showed -159 KB/s and 629.9 GB/s. Nothing here moves more than a gigabit,
+// so a reading outside 0..10 Gbit/s is a bad sample, not traffic.
+const MAX_BPS = 1.25e9;
+export const saneRate = (v: number | undefined): number =>
+  v !== undefined && Number.isFinite(v) && v >= 0 && v <= MAX_BPS ? Math.round(v) : 0;
 
 /**
  * Glances returns uptime as a human string, not a number:
