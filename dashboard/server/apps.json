@@ -42,6 +42,18 @@
     "icon": "/app-icons/photos.svg"
   },
   {
+    "name": "Nextcloud",
+    "url": "https://cloud.<tailnet>.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/cloud.svg"
+  },
+  {
+    "name": "ArchiveBox",
+    "url": "https://archivebox.<tailnet>.ts.net/",
+    "nodeId": "jug2",
+    "icon": "/app-icons/archivebox.svg"
+  },
+  {
     "name": "Jellyfin",
     "url": "https://jellyfin.<tailnet>.ts.net/",
     "nodeId": "jug2",

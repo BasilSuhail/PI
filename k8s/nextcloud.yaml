@@ -14,8 +14,10 @@
 #   __APPS_DIR__/Nextcloud/db     Postgres (SSD: thousands of small reads)
 #   __POOL_DIR__/Nextcloud/data   everyone's files, plain files per user, on
 #                                 the mergerfs pool (deploy/setup-pool.sh)
-#   __MEDIA_DIR__                 Jellyfin's films and shows, mounted read-only
-#                                 and shown to the admin as /Jellyfin
+#   __HDD1_DIR__, __HDD2_DIR__    both HDDs whole, admin only: writable
+#                                 except the app folders
+#   __ARCHIVE_DIR__               the SSD archive, admin only: writable
+#                                 except Apps
 #
 # Versions are pinned by tag AND digest, as Immich's Postgres is: nothing
 # changes until a PR changes it. 34 is supported until 2027-06; take its patch
@@ -246,8 +248,42 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            - name: media
-              mountPath: /mnt/jellyfin
+            # The admin's three disks (install-nextcloud.sh attaches them as
+            # external storage for the admin only). The HDDs are writable
+            # except the app folders, each mounted read-only on top at its
+            # real place: Jellyfin's library, torrents still seeding, Immich,
+            # other accounts' Nextcloud files, ArchiveBox, Kiwix and the vault
+            # backups. The SSD archive the same way, with Apps (every app's
+            # settings and database) read-only.
+            - name: hdd1
+              mountPath: /mnt/hdd1
+            - name: hdd1-jellyfin
+              mountPath: /mnt/hdd1/Jellyfin
+              readOnly: true
+            - name: hdd1-downloads
+              mountPath: /mnt/hdd1/Downloads
+              readOnly: true
+            - name: hdd2
+              mountPath: /mnt/hdd2
+            - name: hdd2-immich
+              mountPath: /mnt/hdd2/Immich
+              readOnly: true
+            - name: hdd2-nextcloud
+              mountPath: /mnt/hdd2/Nextcloud
+              readOnly: true
+            - name: hdd2-archivebox
+              mountPath: /mnt/hdd2/ArchiveBox
+              readOnly: true
+            - name: hdd2-kiwix
+              mountPath: /mnt/hdd2/Kiwix
+              readOnly: true
+            - name: hdd2-backups
+              mountPath: /mnt/hdd2/Backups
+              readOnly: true
+            - name: ssd1
+              mountPath: /mnt/ssd1
+            - name: ssd1-apps
+              mountPath: /mnt/ssd1/Apps
               readOnly: true
           resources:
             requests:
@@ -308,8 +344,42 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            - name: media
-              mountPath: /mnt/jellyfin
+            # The admin's three disks (install-nextcloud.sh attaches them as
+            # external storage for the admin only). The HDDs are writable
+            # except the app folders, each mounted read-only on top at its
+            # real place: Jellyfin's library, torrents still seeding, Immich,
+            # other accounts' Nextcloud files, ArchiveBox, Kiwix and the vault
+            # backups. The SSD archive the same way, with Apps (every app's
+            # settings and database) read-only.
+            - name: hdd1
+              mountPath: /mnt/hdd1
+            - name: hdd1-jellyfin
+              mountPath: /mnt/hdd1/Jellyfin
+              readOnly: true
+            - name: hdd1-downloads
+              mountPath: /mnt/hdd1/Downloads
+              readOnly: true
+            - name: hdd2
+              mountPath: /mnt/hdd2
+            - name: hdd2-immich
+              mountPath: /mnt/hdd2/Immich
+              readOnly: true
+            - name: hdd2-nextcloud
+              mountPath: /mnt/hdd2/Nextcloud
+              readOnly: true
+            - name: hdd2-archivebox
+              mountPath: /mnt/hdd2/ArchiveBox
+              readOnly: true
+            - name: hdd2-kiwix
+              mountPath: /mnt/hdd2/Kiwix
+              readOnly: true
+            - name: hdd2-backups
+              mountPath: /mnt/hdd2/Backups
+              readOnly: true
+            - name: ssd1
+              mountPath: /mnt/ssd1
+            - name: ssd1-apps
+              mountPath: /mnt/ssd1/Apps
               readOnly: true
           resources:
             requests:
@@ -330,9 +400,49 @@ spec:
           hostPath:
             path: __POOL_DIR__/Nextcloud/data
             type: Directory
-        - name: media
+        - name: hdd1
           hostPath:
-            path: __MEDIA_DIR__
+            path: __HDD1_DIR__
+            type: Directory
+        - name: hdd2
+          hostPath:
+            path: __HDD2_DIR__
+            type: Directory
+        - name: hdd1-jellyfin
+          hostPath:
+            path: __HDD1_DIR__/Jellyfin
+            type: Directory
+        - name: hdd1-downloads
+          hostPath:
+            path: __HDD1_DIR__/Downloads
+            type: Directory
+        - name: hdd2-immich
+          hostPath:
+            path: __HDD2_DIR__/Immich
+            type: Directory
+        - name: hdd2-nextcloud
+          hostPath:
+            path: __HDD2_DIR__/Nextcloud
+            type: Directory
+        - name: hdd2-archivebox
+          hostPath:
+            path: __HDD2_DIR__/ArchiveBox
+            type: Directory
+        - name: hdd2-kiwix
+          hostPath:
+            path: __HDD2_DIR__/Kiwix
+            type: Directory
+        - name: hdd2-backups
+          hostPath:
+            path: __HDD2_DIR__/Backups
+            type: Directory
+        - name: ssd1
+          hostPath:
+            path: __ARCHIVE_DIR__
+            type: Directory
+        - name: ssd1-apps
+          hostPath:
+            path: __APPS_DIR__
             type: Directory
 ---
 # Its own tailnet machine: https://cloud.<tailnet>.ts.net with a real

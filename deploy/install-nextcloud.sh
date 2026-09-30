@@ -5,14 +5,27 @@
 #
 #   APPS_DIR   the SSD: Nextcloud's code, config and Postgres.
 #   POOL_DIR   the mergerfs pool: everyone's files.
-#   MEDIA_DIR  Jellyfin's library, shown to the admin read-only.
+#   HDD1_DIR / HDD2_DIR  both HDDs whole, shown to the admin writable,
+#                        except the app folders (PROTECTED below).
+#   ARCHIVE_DIR  the SSD archive, shown to the admin writable, except
+#                APPS_DIR (PROTECTED below).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 POOL_DIR="${POOL_DIR:-/srv/pool}"
-MEDIA_DIR="${MEDIA_DIR:-/srv/storage/Jellyfin/Media}"
+HDD1_DIR="${HDD1_DIR:-/srv/storage}"
+HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
+ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
+OWNER="${OWNER:-$(id -un)}"
+OWNER_UID="$(id -u "$OWNER")"
+
+# The app folders, read-only in Nextcloud. Must match the read-only mounts
+# in k8s/nextcloud.yaml.
+PROTECTED=("$APPS_DIR" "$HDD1_DIR/Jellyfin" "$HDD1_DIR/Downloads"
+           "$HDD2_DIR/Immich" "$HDD2_DIR/Nextcloud" "$HDD2_DIR/ArchiveBox"
+           "$HDD2_DIR/Kiwix" "$HDD2_DIR/Backups")
 
 PG_UID=999      # the official postgres image
 WEB_UID=33      # www-data in the nextcloud image
@@ -33,17 +46,22 @@ if ! mountpoint -q "$POOL_DIR"; then
   echo "$POOL_DIR is not mounted. Run 'make pool' first." >&2
   exit 1
 fi
-if [ ! -d "$MEDIA_DIR" ]; then
-  echo "$MEDIA_DIR does not exist. Is the Jellyfin disk mounted? findmnt /srv/storage" >&2
-  exit 1
-fi
+for disk in "$HDD1_DIR" "$HDD2_DIR"; do
+  if ! mountpoint -q "$disk"; then
+    echo "$disk is not mounted. The admin's disk views need it: findmnt $disk" >&2
+    exit 1
+  fi
+done
 command -v jq >/dev/null || sudo apt-get install -y jq >/dev/null
 
 echo "==> Layout"
 printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "database    (SSD)" "$APPS_DIR/Nextcloud/db" \
                       "files      (pool)" "$POOL_DIR/Nextcloud/data" \
-                      "Jellyfin (read-only)" "$MEDIA_DIR"
+                      "HDD1 (editable)" "$HDD1_DIR" \
+                      "HDD2 (editable)" "$HDD2_DIR" \
+                      "SSD1 (editable)" "$ARCHIVE_DIR" \
+                      "  but read-only" "${PROTECTED[*]}"
 
 sudo mkdir -p "$APPS_DIR/Nextcloud/html" "$APPS_DIR/Nextcloud/db" "$POOL_DIR/Nextcloud/data"
 sudo chown "$PG_UID:$PG_UID" "$APPS_DIR/Nextcloud/db"
@@ -51,6 +69,34 @@ sudo chmod 700 "$APPS_DIR/Nextcloud/db"
 sudo chown "$WEB_UID:$WEB_UID" "$APPS_DIR/Nextcloud/html" "$POOL_DIR/Nextcloud/data"
 # Nextcloud refuses a data directory other users can read.
 sudo chmod 770 "$POOL_DIR/Nextcloud/data"
+
+# The admin's editable folders stay owned by the login user, so Finder works as
+# before; an ACL gives Nextcloud (www-data) write access alongside. The default
+# ACLs apply the same to anything created later, from either side.
+command -v setfacl >/dev/null || sudo apt-get install -y acl >/dev/null
+# grant [-R] dir. setfacl wants its options before the path.
+grant() {
+  local r=""; if [ "$1" = -R ]; then r=-R; shift; fi
+  sudo setfacl $r -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX" "$1"
+}
+# Each read-only mount needs its folder to exist, or the pod will not start.
+for d in "${PROTECTED[@]}"; do
+  [ -d "$d" ] || sudo install -d -o "$OWNER" -g "$OWNER" "$d"
+done
+# The disk tops, not recursively: new folders can be made there, and the app
+# folders keep their permissions. Then every other top-level folder, whole.
+is_protected() { local p; for p in "${PROTECTED[@]}"; do [ "$1" = "$p" ] && return 0; done; return 1; }
+for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR"; do
+  grant "$disk"
+  for d in "$disk"/*/; do
+    d="${d%/}"
+    [ -d "$d" ] || continue
+    is_protected "$d" && continue
+    [ "$(basename "$d")" = lost+found ] && continue
+    grant -R "$d"
+    printf '  %-18s %s\n' "editable" "$d"
+  done
+done
 
 sudo tee "$APPS_DIR/Nextcloud/WHERE-IS-MY-DATA.txt" >/dev/null <<NOTE
 Nextcloud keeps its halves on two kinds of disk.
@@ -94,10 +140,12 @@ POD_CIDRS="$(kube get nodes -o jsonpath='{.items[*].spec.podCIDR}')"
 echo "==> Manifests"
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__POOL_DIR__|${POOL_DIR}|g" \
-    -e "s|__MEDIA_DIR__|${MEDIA_DIR}|g" \
     -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__TZ__|${TZ_NAME}|g" \
     -e "s|__POD_CIDRS__|${POD_CIDRS}|g" \
+    -e "s|__HDD1_DIR__|${HDD1_DIR}|g" \
+    -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
+    -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
     "${REPO_ROOT}/k8s/nextcloud.yaml" | kube apply -f -
 
 echo "==> Waiting for the database and cache"
@@ -124,19 +172,62 @@ echo "==> Settings"
 occ background:cron >/dev/null
 occ config:system:set maintenance_window_start --type=integer --value=19 >/dev/null
 echo "  background jobs  every 5 min, paused 00:00–06:00"
+# New accounts start empty: no sample documents, photos or templates.
+occ config:system:set skeletondirectory --value= >/dev/null
+occ config:system:set templatedirectory --value= >/dev/null
+echo "  new accounts     start empty"
 
-# Jellyfin's library for the admin only, read-only twice over: the mount is
-# read-only in the pod, and the external storage is flagged read-only too.
+# Storage only. Everything below is a feature, not storage, and each one is
+# something a family member can open and get lost in. Kept: files, previews,
+# deleted files, versions, sharing between accounts, external storage, the
+# security apps, and the provisioning API the phone and desktop apps log in
+# through. Apps Nextcloud will not let go of are left as they are.
+for app in activity app_api circles comments contactsinteraction dashboard \
+           federation files_downloadlimit files_reminders firstrunwizard \
+           nextcloud_announcements photos privacy recommendations \
+           related_resources sharebymail support survey_client systemtags \
+           updatenotification user_status weather_status webhook_listeners; do
+  occ app:disable "$app" >/dev/null 2>&1 || true
+done
+# With the dashboard gone, a login lands on the files.
+occ config:system:set defaultapp --value=files >/dev/null
+echo "  apps             storage only; opens straight to Files"
+
+# The admin's three disks, as external storage visible to the admin only.
+# What is read-only is decided in the pod (read-only mounts over the app
+# folders), so none are flagged read-only in Nextcloud, which would block the
+# whole disk. Names have no spaces: they pass through a shell inside the pod.
 ADMIN_USER="$(kube -n pi get secret nextcloud-admin -o jsonpath='{.data.username}' | base64 -d)"
 occ app:enable files_external >/dev/null
-if occ files_external:list --output=json 2>/dev/null | jq -e 'any(.[]; .mount_point == "/Jellyfin")' >/dev/null; then
-  echo "  /Jellyfin        already mounted for the admin"
-else
-  id=$(occ files_external:create /Jellyfin local null::null -c datadir=/mnt/jellyfin | grep -o '[0-9]\+' | tail -1)
+existing=$(occ files_external:list --output=json 2>/dev/null || echo '[]')
+attach() { # mount point, path in the pod, ro|rw
+  local id
+  id=$(jq -r --arg m "$1" 'first(.[] | select(.mount_point == $m) | .mount_id) // empty' <<<"$existing")
+  if [ -n "$id" ]; then
+    # Earlier versions of this script flagged the HDDs read-only.
+    occ files_external:option "$id" readonly "$([ "$3" = ro ] && echo true || echo false)" >/dev/null 2>&1 || true
+    printf '  %-16s already attached\n' "$1"
+    return 0
+  fi
+  id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
   occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
-  occ files_external:option "$id" readonly true >/dev/null 2>&1 || true
-  echo "  /Jellyfin        mounted read-only for $ADMIN_USER"
-fi
+  if [ "$3" = ro ]; then occ files_external:option "$id" readonly true >/dev/null 2>&1 || true; fi
+  printf '  %-16s attached for %s\n' "$1" "$ADMIN_USER"
+}
+# Views from earlier versions of this script, now inside HDD1 and SSD1.
+detach() { # mount point
+  local id
+  for id in $(jq -r --arg m "$1" '.[] | select(.mount_point == $m) | .mount_id' <<<"$existing"); do
+    occ files_external:delete --yes "$id" >/dev/null
+    printf '  %-16s removed (now inside %s)\n' "$1" "$2"
+  done
+}
+detach /Jellyfin    HDD1
+detach /Mac-backups SSD1
+detach /Pictures    SSD1
+attach /HDD1 /mnt/hdd1 rw
+attach /HDD2 /mnt/hdd2 rw
+attach /SSD1 /mnt/ssd1 rw
 
 echo
 echo "==> Done"
