@@ -14,11 +14,10 @@
 #   __APPS_DIR__/Nextcloud/db     Postgres (SSD: thousands of small reads)
 #   __POOL_DIR__/Nextcloud/data   everyone's files, plain files per user, on
 #                                 the mergerfs pool (deploy/setup-pool.sh)
-#   __MEDIA_DIR__                 Jellyfin's films and shows, mounted read-only
-#                                 and shown to the admin as /Jellyfin
 #   __HDD1_DIR__, __HDD2_DIR__    both HDDs whole, read-only, admin only
-#   __ARCHIVE_DIR__/{macbook-backups,Pictures}
-#                                 the admin's own SSD folders, writable
+#   __ARCHIVE_DIR__               the SSD archive, read-only, admin only, with
+#                                 the admin's own macbook-backups and Pictures
+#                                 folders writable inside it
 #
 # Versions are pinned by tag AND digest, as Immich's Postgres is: nothing
 # changes until a PR changes it. 34 is supported until 2027-06; take its patch
@@ -249,23 +248,25 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            - name: media
-              mountPath: /mnt/jellyfin
-              readOnly: true
-            # The admin's view of the disks (install-nextcloud.sh attaches
-            # them as external storage for the admin only). Whole HDDs are
-            # read-only: they hold Immich's library, seeding torrents and
-            # other apps' data. The admin's own SSD folders are writable.
+            # The admin's three disks (install-nextcloud.sh attaches them as
+            # external storage for the admin only). All read-only: the HDDs
+            # hold Immich's library, seeding torrents and other apps' data,
+            # and the SSD archive holds app databases. The two folders that
+            # are the admin's own are mounted writable on top of the
+            # read-only SSD view, at their real place inside it.
             - name: hdd1
               mountPath: /mnt/hdd1
               readOnly: true
             - name: hdd2
               mountPath: /mnt/hdd2
               readOnly: true
+            - name: ssd1
+              mountPath: /mnt/ssd1
+              readOnly: true
             - name: mac-backups
-              mountPath: /mnt/mac-backups
+              mountPath: /mnt/ssd1/macbook-backups
             - name: pictures
-              mountPath: /mnt/pictures
+              mountPath: /mnt/ssd1/Pictures
           resources:
             requests:
               memory: 256Mi
@@ -325,23 +326,25 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            - name: media
-              mountPath: /mnt/jellyfin
-              readOnly: true
-            # The admin's view of the disks (install-nextcloud.sh attaches
-            # them as external storage for the admin only). Whole HDDs are
-            # read-only: they hold Immich's library, seeding torrents and
-            # other apps' data. The admin's own SSD folders are writable.
+            # The admin's three disks (install-nextcloud.sh attaches them as
+            # external storage for the admin only). All read-only: the HDDs
+            # hold Immich's library, seeding torrents and other apps' data,
+            # and the SSD archive holds app databases. The two folders that
+            # are the admin's own are mounted writable on top of the
+            # read-only SSD view, at their real place inside it.
             - name: hdd1
               mountPath: /mnt/hdd1
               readOnly: true
             - name: hdd2
               mountPath: /mnt/hdd2
               readOnly: true
+            - name: ssd1
+              mountPath: /mnt/ssd1
+              readOnly: true
             - name: mac-backups
-              mountPath: /mnt/mac-backups
+              mountPath: /mnt/ssd1/macbook-backups
             - name: pictures
-              mountPath: /mnt/pictures
+              mountPath: /mnt/ssd1/Pictures
           resources:
             requests:
               memory: 64Mi
@@ -361,10 +364,6 @@ spec:
           hostPath:
             path: __POOL_DIR__/Nextcloud/data
             type: Directory
-        - name: media
-          hostPath:
-            path: __MEDIA_DIR__
-            type: Directory
         - name: hdd1
           hostPath:
             path: __HDD1_DIR__
@@ -372,6 +371,10 @@ spec:
         - name: hdd2
           hostPath:
             path: __HDD2_DIR__
+            type: Directory
+        - name: ssd1
+          hostPath:
+            path: __ARCHIVE_DIR__
             type: Directory
         - name: mac-backups
           hostPath:
