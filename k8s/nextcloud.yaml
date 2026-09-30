@@ -16,9 +16,8 @@
 #                                 the mergerfs pool (deploy/setup-pool.sh)
 #   __HDD1_DIR__, __HDD2_DIR__    both HDDs whole, admin only: writable
 #                                 except the app folders
-#   __ARCHIVE_DIR__               the SSD archive, read-only, admin only, with
-#                                 the admin's own macbook-backups and Pictures
-#                                 folders writable inside it
+#   __ARCHIVE_DIR__               the SSD archive, admin only: writable
+#                                 except Apps
 #
 # Versions are pinned by tag AND digest, as Immich's Postgres is: nothing
 # changes until a PR changes it. 34 is supported until 2027-06; take its patch
@@ -254,8 +253,8 @@ spec:
             # except the app folders, each mounted read-only on top at its
             # real place: Jellyfin's library, torrents still seeding, Immich,
             # other accounts' Nextcloud files, ArchiveBox, Kiwix and the vault
-            # backups. The SSD archive is the reverse: read-only (it holds
-            # app databases), with the admin's own two folders writable.
+            # backups. The SSD archive the same way, with Apps (every app's
+            # settings and database) read-only.
             - name: hdd1
               mountPath: /mnt/hdd1
             - name: hdd1-jellyfin
@@ -283,11 +282,9 @@ spec:
               readOnly: true
             - name: ssd1
               mountPath: /mnt/ssd1
+            - name: ssd1-apps
+              mountPath: /mnt/ssd1/Apps
               readOnly: true
-            - name: mac-backups
-              mountPath: /mnt/ssd1/macbook-backups
-            - name: pictures
-              mountPath: /mnt/ssd1/Pictures
           resources:
             requests:
               memory: 256Mi
@@ -352,8 +349,8 @@ spec:
             # except the app folders, each mounted read-only on top at its
             # real place: Jellyfin's library, torrents still seeding, Immich,
             # other accounts' Nextcloud files, ArchiveBox, Kiwix and the vault
-            # backups. The SSD archive is the reverse: read-only (it holds
-            # app databases), with the admin's own two folders writable.
+            # backups. The SSD archive the same way, with Apps (every app's
+            # settings and database) read-only.
             - name: hdd1
               mountPath: /mnt/hdd1
             - name: hdd1-jellyfin
@@ -381,11 +378,9 @@ spec:
               readOnly: true
             - name: ssd1
               mountPath: /mnt/ssd1
+            - name: ssd1-apps
+              mountPath: /mnt/ssd1/Apps
               readOnly: true
-            - name: mac-backups
-              mountPath: /mnt/ssd1/macbook-backups
-            - name: pictures
-              mountPath: /mnt/ssd1/Pictures
           resources:
             requests:
               memory: 64Mi
@@ -445,13 +440,9 @@ spec:
           hostPath:
             path: __ARCHIVE_DIR__
             type: Directory
-        - name: mac-backups
+        - name: ssd1-apps
           hostPath:
-            path: __ARCHIVE_DIR__/macbook-backups
-            type: Directory
-        - name: pictures
-          hostPath:
-            path: __ARCHIVE_DIR__/Pictures
+            path: __APPS_DIR__
             type: Directory
 ---
 # Its own tailnet machine: https://cloud.<tailnet>.ts.net with a real

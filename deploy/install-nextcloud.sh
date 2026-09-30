@@ -7,8 +7,8 @@
 #   POOL_DIR   the mergerfs pool: everyone's files.
 #   HDD1_DIR / HDD2_DIR  both HDDs whole, shown to the admin writable,
 #                        except the app folders (PROTECTED below).
-#   ARCHIVE_DIR  the SSD archive, shown to the admin read-only, except its
-#                macbook-backups and Pictures folders, which are writable.
+#   ARCHIVE_DIR  the SSD archive, shown to the admin writable, except
+#                APPS_DIR (PROTECTED below).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,9 +21,9 @@ ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
 OWNER="${OWNER:-$(id -un)}"
 OWNER_UID="$(id -u "$OWNER")"
 
-# The app folders on the HDDs, read-only in Nextcloud. Must match the
-# read-only mounts in k8s/nextcloud.yaml.
-PROTECTED=("$HDD1_DIR/Jellyfin" "$HDD1_DIR/Downloads"
+# The app folders, read-only in Nextcloud. Must match the read-only mounts
+# in k8s/nextcloud.yaml.
+PROTECTED=("$APPS_DIR" "$HDD1_DIR/Jellyfin" "$HDD1_DIR/Downloads"
            "$HDD2_DIR/Immich" "$HDD2_DIR/Nextcloud" "$HDD2_DIR/ArchiveBox"
            "$HDD2_DIR/Kiwix" "$HDD2_DIR/Backups")
 
@@ -60,10 +60,8 @@ printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "files      (pool)" "$POOL_DIR/Nextcloud/data" \
                       "HDD1 (editable)" "$HDD1_DIR" \
                       "HDD2 (editable)" "$HDD2_DIR" \
-                      "  but read-only" "${PROTECTED[*]}" \
-                      "SSD1 (read-only)" "$ARCHIVE_DIR" \
-                      "  but editable" "$ARCHIVE_DIR/macbook-backups" \
-                      "  but editable" "$ARCHIVE_DIR/Pictures"
+                      "SSD1 (editable)" "$ARCHIVE_DIR" \
+                      "  but read-only" "${PROTECTED[*]}"
 
 sudo mkdir -p "$APPS_DIR/Nextcloud/html" "$APPS_DIR/Nextcloud/db" "$POOL_DIR/Nextcloud/data"
 sudo chown "$PG_UID:$PG_UID" "$APPS_DIR/Nextcloud/db"
@@ -81,18 +79,14 @@ grant() {
   local r=""; if [ "$1" = -R ]; then r=-R; shift; fi
   sudo setfacl $r -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX" "$1"
 }
-for d in "$ARCHIVE_DIR/macbook-backups" "$ARCHIVE_DIR/Pictures"; do
-  sudo mkdir -p "$d"
-  grant -R "$d"
-done
 # Each read-only mount needs its folder to exist, or the pod will not start.
 for d in "${PROTECTED[@]}"; do
   [ -d "$d" ] || sudo install -d -o "$OWNER" -g "$OWNER" "$d"
 done
-# The HDD tops, not recursively: new folders can be made there, and the app
+# The disk tops, not recursively: new folders can be made there, and the app
 # folders keep their permissions. Then every other top-level folder, whole.
 is_protected() { local p; for p in "${PROTECTED[@]}"; do [ "$1" = "$p" ] && return 0; done; return 1; }
-for disk in "$HDD1_DIR" "$HDD2_DIR"; do
+for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR"; do
   grant "$disk"
   for d in "$disk"/*/; do
     d="${d%/}"
