@@ -168,18 +168,17 @@ spec:
 # Its own tailnet machine, the same shape as Uptime and Vault: a root path and
 # a real certificate, because Jellyfin's clients assume they own the root.
 #
-# Funnel makes this reachable from the public internet, not just the tailnet.
-# Chromecast has no Tailscale client, so without Funnel the cast receiver
-# cannot stream: the phone tells it "fetch from jellyfin.<tailnet>.ts.net"
-# and the Chromecast, on plain WiFi, gets nothing back. Jellyfin's own login
-# still gates access — Funnel only opens the door to the login page.
+# Tailnet only: reachable by this tailnet and the users the machine is shared
+# with, never the public internet. The cost is Chromecast, which has no
+# Tailscale client — the phone tells it "fetch from jellyfin.<tailnet>.ts.net"
+# and the Chromecast, on plain WiFi, gets nothing back. Casting would need
+# Funnel (the annotation tailscale.com/funnel: "true"), which puts the login
+# page on the open internet; it is off on purpose (#179).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: jellyfin
   namespace: pi
-  annotations:
-    tailscale.com/funnel: "true"
 spec:
   ingressClassName: tailscale
   defaultBackend:
