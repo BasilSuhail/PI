@@ -5,7 +5,8 @@
 #
 #   APPS_DIR   the SSD: Nextcloud's code, config and Postgres.
 #   POOL_DIR   the mergerfs pool: everyone's files.
-#   HDD1_DIR / HDD2_DIR  both HDDs whole, shown to the admin read-only.
+#   HDD1_DIR / HDD2_DIR  both HDDs whole, shown to the admin writable,
+#                        except the app folders (PROTECTED below).
 #   ARCHIVE_DIR  the SSD archive, shown to the admin read-only, except its
 #                macbook-backups and Pictures folders, which are writable.
 set -euo pipefail
@@ -19,6 +20,12 @@ HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
 OWNER="${OWNER:-$(id -un)}"
 OWNER_UID="$(id -u "$OWNER")"
+
+# The app folders on the HDDs, read-only in Nextcloud. Must match the
+# read-only mounts in k8s/nextcloud.yaml.
+PROTECTED=("$HDD1_DIR/Jellyfin" "$HDD1_DIR/Downloads"
+           "$HDD2_DIR/Immich" "$HDD2_DIR/Nextcloud" "$HDD2_DIR/ArchiveBox"
+           "$HDD2_DIR/Kiwix" "$HDD2_DIR/Backups")
 
 PG_UID=999      # the official postgres image
 WEB_UID=33      # www-data in the nextcloud image
@@ -51,8 +58,9 @@ echo "==> Layout"
 printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "database    (SSD)" "$APPS_DIR/Nextcloud/db" \
                       "files      (pool)" "$POOL_DIR/Nextcloud/data" \
-                      "HDD1 (read-only)" "$HDD1_DIR" \
-                      "HDD2 (read-only)" "$HDD2_DIR" \
+                      "HDD1 (editable)" "$HDD1_DIR" \
+                      "HDD2 (editable)" "$HDD2_DIR" \
+                      "  but read-only" "${PROTECTED[*]}" \
                       "SSD1 (read-only)" "$ARCHIVE_DIR" \
                       "  but editable" "$ARCHIVE_DIR/macbook-backups" \
                       "  but editable" "$ARCHIVE_DIR/Pictures"
@@ -64,13 +72,32 @@ sudo chown "$WEB_UID:$WEB_UID" "$APPS_DIR/Nextcloud/html" "$POOL_DIR/Nextcloud/d
 # Nextcloud refuses a data directory other users can read.
 sudo chmod 770 "$POOL_DIR/Nextcloud/data"
 
-# The admin's two SSD folders stay owned by the login user, so Finder works as
+# The admin's editable folders stay owned by the login user, so Finder works as
 # before; an ACL gives Nextcloud (www-data) write access alongside. The default
 # ACLs apply the same to anything created later, from either side.
 command -v setfacl >/dev/null || sudo apt-get install -y acl >/dev/null
+grant() { sudo setfacl "$@" -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX"; }
 for d in "$ARCHIVE_DIR/macbook-backups" "$ARCHIVE_DIR/Pictures"; do
   sudo mkdir -p "$d"
-  sudo setfacl -R -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX" "$d"
+  grant -R "$d"
+done
+# Each read-only mount needs its folder to exist, or the pod will not start.
+for d in "${PROTECTED[@]}"; do
+  [ -d "$d" ] || sudo install -d -o "$OWNER" -g "$OWNER" "$d"
+done
+# The HDD tops, not recursively: new folders can be made there, and the app
+# folders keep their permissions. Then every other top-level folder, whole.
+is_protected() { local p; for p in "${PROTECTED[@]}"; do [ "$1" = "$p" ] && return 0; done; return 1; }
+for disk in "$HDD1_DIR" "$HDD2_DIR"; do
+  grant "$disk"
+  for d in "$disk"/*/; do
+    d="${d%/}"
+    [ -d "$d" ] || continue
+    is_protected "$d" && continue
+    [ "$(basename "$d")" = lost+found ] && continue
+    grant -R "$d"
+    printf '  %-18s %s\n' "editable" "$d"
+  done
 done
 
 sudo tee "$APPS_DIR/Nextcloud/WHERE-IS-MY-DATA.txt" >/dev/null <<NOTE
@@ -169,19 +196,21 @@ occ config:system:set defaultapp --value=files >/dev/null
 echo "  apps             storage only; opens straight to Files"
 
 # The admin's three disks, as external storage visible to the admin only.
-# HDD1 and HDD2 are read-only twice over: in the pod and in Nextcloud. SSD1 is
-# read-only in the pod except the admin's two folders mounted writable inside
-# it, so it is not flagged read-only in Nextcloud, which would block those
-# too. Names have no spaces: they pass through a shell inside the pod.
+# What is read-only is decided in the pod (read-only mounts over the app
+# folders), so none are flagged read-only in Nextcloud, which would block the
+# whole disk. Names have no spaces: they pass through a shell inside the pod.
 ADMIN_USER="$(kube -n pi get secret nextcloud-admin -o jsonpath='{.data.username}' | base64 -d)"
 occ app:enable files_external >/dev/null
 existing=$(occ files_external:list --output=json 2>/dev/null || echo '[]')
 attach() { # mount point, path in the pod, ro|rw
-  if jq -e --arg m "$1" 'any(.[]; .mount_point == $m)' <<<"$existing" >/dev/null; then
+  local id
+  id=$(jq -r --arg m "$1" 'first(.[] | select(.mount_point == $m) | .mount_id) // empty' <<<"$existing")
+  if [ -n "$id" ]; then
+    # Earlier versions of this script flagged the HDDs read-only.
+    occ files_external:option "$id" readonly "$([ "$3" = ro ] && echo true || echo false)" >/dev/null 2>&1 || true
     printf '  %-16s already attached\n' "$1"
     return 0
   fi
-  local id
   id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
   occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
   if [ "$3" = ro ]; then occ files_external:option "$id" readonly true >/dev/null 2>&1 || true; fi
@@ -198,8 +227,8 @@ detach() { # mount point
 detach /Jellyfin    HDD1
 detach /Mac-backups SSD1
 detach /Pictures    SSD1
-attach /HDD1 /mnt/hdd1 ro
-attach /HDD2 /mnt/hdd2 ro
+attach /HDD1 /mnt/hdd1 rw
+attach /HDD2 /mnt/hdd2 rw
 attach /SSD1 /mnt/ssd1 rw
 
 echo
