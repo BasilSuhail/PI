@@ -31,6 +31,8 @@ PG_UID=999      # the official postgres image
 WEB_UID=33      # www-data in the nextcloud image
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 if ! sudo systemctl is-active --quiet k3s; then
   echo "k3s is not running on this board. This installs into the cluster." >&2
@@ -146,7 +148,7 @@ sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__HDD1_DIR__|${HDD1_DIR}|g" \
     -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
     -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
-    "${REPO_ROOT}/k8s/nextcloud.yaml" | kube apply -f -
+    "${REPO_ROOT}/k8s/nextcloud.yaml" | apply_guarded
 
 echo "==> Waiting for the database and cache"
 kube -n pi rollout status deployment/nextcloud-postgres --timeout=300s

@@ -39,6 +39,8 @@ if ! sudo systemctl is-active --quiet k3s; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 if ! kube -n tailscale get secret operator-oauth >/dev/null 2>&1; then
   echo "The Tailscale operator is not installed — run 'make uptime' first." >&2
@@ -271,7 +273,7 @@ render() {
 # re-run it would stop a download in progress, so whatever the deployment is
 # set to now is put back afterwards.
 WAS=$(kube -n pi get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || true)
-render "${REPO_ROOT}/k8s/qbittorrent.yaml" | kube apply -f -
+render "${REPO_ROOT}/k8s/qbittorrent.yaml" | apply_guarded
 if [ -n "$WAS" ] && [ "$WAS" != "0" ]; then
   kube -n pi scale deployment/qbittorrent --replicas="$WAS" >/dev/null
   echo "  it was running, so it has been left running"

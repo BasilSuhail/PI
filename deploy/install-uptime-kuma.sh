@@ -18,6 +18,8 @@ if ! sudo systemctl is-active --quiet k3s; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 echo "==> Tailscale operator"
 if kube -n "$TS_NS" get secret "$OP_SECRET" >/dev/null 2>&1; then
@@ -83,7 +85,7 @@ case "$HOST_ALIASES" in
   ""|"[]") echo "Could not list tailnet machines from tailscaled. Is it up?" >&2; exit 1 ;;
 esac
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" -e "s|__HOST_ALIASES__|${HOST_ALIASES}|g" \
-  "${REPO_ROOT}/k8s/uptime-kuma.yaml" | kube apply -f -
+  "${REPO_ROOT}/k8s/uptime-kuma.yaml" | apply_guarded
 kube -n pi rollout status deployment/uptime-kuma --timeout=300s
 
 echo "==> Waiting for its tailnet name"

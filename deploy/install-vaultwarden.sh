@@ -15,6 +15,8 @@ if ! sudo systemctl is-active --quiet k3s; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 if ! kube get ingressclass tailscale >/dev/null 2>&1; then
   echo "No tailscale IngressClass. Run 'make uptime' first, which installs the" >&2
@@ -55,7 +57,7 @@ echo "==> Manifests"
 # deploy/install-media.sh does. Applied raw, the pod would mount a path that
 # does not exist and the running vault would be replaced by one that cannot start.
 APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
-sed -e "s|__APPS_DIR__|${APPS_DIR}|g" "${REPO_ROOT}/k8s/vaultwarden.yaml" | kube apply -f -
+sed -e "s|__APPS_DIR__|${APPS_DIR}|g" "${REPO_ROOT}/k8s/vaultwarden.yaml" | apply_guarded
 kube -n pi rollout status deployment/vaultwarden --timeout=300s
 
 echo "==> Waiting for its tailnet name"
