@@ -260,14 +260,31 @@ bind() { # source, destination
 }
 
 
+# Disks in a stable order, oldest filesystem first. Two disks can share a
+# name (two 6TB HDDs): the older keeps "HDD-6TB" and the newer is "HDD-6TB-2",
+# on every boot. The array above has no order of its own, and device names
+# (sdb, sdc) can swap between boots, so neither can decide which disk keeps
+# the plain name. A filesystem with no creation date (not ext4) sorts last.
+created_at() {
+  local src t
+  src=$(findmnt -nfo SOURCE --target "$1" 2>/dev/null | head -1)
+  t=$(sudo tune2fs -l "$src" 2>/dev/null | sed -n 's/^Filesystem created: *//p')
+  { [ -n "$t" ] && date -d "$t" +%s 2>/dev/null; } || echo 9999999999
+}
+mapfile -t ordered < <(
+  for d in "${!disk_root[@]}"; do printf '%s %s\n' "$(created_at "${disk_root[$d]}")" "$d"; done |
+    sort -k1,1n -k2,2 | awk '{print $2}'
+)
+
 declare -A disk_folder=()
-for disk in "${!disk_root[@]}"; do
+for disk in "${ordered[@]}"; do
   read -r size rotational < <(disk_facts "$disk")
   # A drive somebody plugged in is known by what is written on it. "PHOTOS"
   # says more than "SSD-32GB", and it is the name they gave it.
   name=${disk_label[$disk]:-}
   [ -n "$name" ] || name=$(name_for "/$(kind_of "$rotational" "$disk") $(capacity_of "$size")")
-  while [ -n "${used_names[$name]:-}" ]; do name="${name}-${disk}"; done
+  base=$name; n=2
+  while [ -n "${used_names[$name]:-}" ]; do name="${base}-${n}"; n=$((n + 1)); done
   used_names[$name]=1
   disk_folder[$disk]=$name
 
