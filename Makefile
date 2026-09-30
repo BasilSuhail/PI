@@ -36,7 +36,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -44,6 +44,8 @@ help:
 	@echo "make uptime          Uptime Kuma on its own tailnet name, asks for an OAuth client once"
 	@echo "make vault           Vaultwarden on its own tailnet name, needs make uptime first"
 	@echo "make vault-backup    daily 12:00 vault backup: SSD, then HDD2"
+	@echo "make pool            join the data disks into one folder (mergerfs), /srv/pool"
+	@echo "make cloud           Nextcloud: family files with per-person limits, needs make pool"
 	@echo "make media           Jellyfin and Kiwix, and moves all four apps' data onto the 6TB"
 	@echo "make photos          Immich on its own tailnet name. The phone backs up to it"
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
@@ -88,6 +90,16 @@ vault:
 # Override the HDD copy's disk:  make vault-backup BACKUP_MOUNT=/srv/other
 vault-backup:
 	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(BACKUP_MOUNT),BACKUP_MOUNT="$(BACKUP_MOUNT)" ,)bash ~/$(REPO_DIR)/deploy/install-vault-backup.sh'
+
+# Joins the data disks into one folder. Add a disk later:
+#   make pool POOL_BRANCHES=/srv/hdd2:/srv/hdd3
+pool:
+	ssh -t $(DASH_NODE) '$(SYNC) && $(if $(POOL_BRANCHES),POOL_BRANCHES="$(POOL_BRANCHES)" ,)bash ~/$(REPO_DIR)/deploy/setup-pool.sh'
+
+# Nextcloud on the pool. Override where things land:
+#   make cloud POOL_DIR=/srv/pool APPS_DIR=/somewhere/else
+cloud:
+	ssh $(DASH_NODE) '$(SYNC) && $(if $(APPS_DIR),APPS_DIR="$(APPS_DIR)" ,)$(if $(POOL_DIR),POOL_DIR="$(POOL_DIR)" ,)bash ~/$(REPO_DIR)/deploy/install-nextcloud.sh'
 
 # Jellyfin and Kiwix, plus the storage move for Vaultwarden and Uptime Kuma.
 # Override where things land:  make media DATA_DIR=/somewhere/else
