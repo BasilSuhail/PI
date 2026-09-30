@@ -76,7 +76,11 @@ sudo chmod 770 "$POOL_DIR/Nextcloud/data"
 # before; an ACL gives Nextcloud (www-data) write access alongside. The default
 # ACLs apply the same to anything created later, from either side.
 command -v setfacl >/dev/null || sudo apt-get install -y acl >/dev/null
-grant() { sudo setfacl "$@" -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX"; }
+# grant [-R] dir. setfacl wants its options before the path.
+grant() {
+  local r=""; if [ "$1" = -R ]; then r=-R; shift; fi
+  sudo setfacl $r -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX" "$1"
+}
 for d in "$ARCHIVE_DIR/macbook-backups" "$ARCHIVE_DIR/Pictures"; do
   sudo mkdir -p "$d"
   grant -R "$d"
