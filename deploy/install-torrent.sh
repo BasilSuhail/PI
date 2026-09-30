@@ -303,8 +303,13 @@ fi
 # survived. The API is what qBittorrent's own settings page uses, it applies
 # immediately, and it answers whether it worked.
 #
-# Run from inside the pod against localhost, which is exempt from the web
-# interface's own authentication and needs no credentials.
+# Sent from the board to the Service's cluster IP. That traffic arrives from the
+# cluster network, which the WebUI's AuthSubnetWhitelist lets in without a
+# login. Two routes that do not work: localhost inside the pod is not on that
+# list and answers 403, and a cluster DNS name does not resolve in the pod,
+# because gluetun owns its DNS. The earlier localhost call used curl without
+# -f, so the 403 still exited 0 and this reported settings it never applied;
+# the settings are now read back and compared.
 if [ "$(kube -n pi get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)" != "0" ]; then
   echo "==> Peer settings"
   kube -n pi rollout status deployment/qbittorrent --timeout=180s >/dev/null 2>&1 || true
@@ -345,14 +350,28 @@ if [ "$(kube -n pi get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/
     echo "  at startup and stops dead when it does not." >&2
   fi
   PREFS="{\"upnp\":false${FWD_PORT:+,\"listen_port\":$FWD_PORT},\"random_port\":false${TUN_ADDR:+,\"current_network_interface\":\"tun0\",\"current_interface_address\":\"$TUN_ADDR\"}}"
-  if kube -n pi exec deploy/qbittorrent -c qbittorrent -- \
-       curl -s -m 10 -X POST "http://localhost:8080/api/v2/app/setPreferences" \
-       --data-urlencode "json=$PREFS" >/dev/null 2>&1; then
+  command -v jq >/dev/null || sudo apt-get install -y jq >/dev/null
+  QIP=$(kube -n pi get svc qbittorrent -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+           "http://$QIP/api/v2/app/setPreferences" --data-urlencode "json=$PREFS" || true)
+  applied=false
+  if [ "$code" = 200 ]; then
+    got=$(curl -s -m 10 "http://$QIP/api/v2/app/preferences" || true)
+    applied=true
+    [ "$(jq -r '.upnp' <<<"$got" 2>/dev/null)" = false ] || applied=false
+    if [ -n "$FWD_PORT" ] && [ "$(jq -r '.listen_port' <<<"$got" 2>/dev/null)" != "$FWD_PORT" ]; then
+      applied=false
+    fi
+    if [ -n "$TUN_ADDR" ] && [ "$(jq -r '.current_interface_address' <<<"$got" 2>/dev/null)" != "$TUN_ADDR" ]; then
+      applied=false
+    fi
+  fi
+  if [ "$applied" = true ]; then
     printf '  %-16s %s\n' "listening on" "${TUN_ADDR:-every interface}:${FWD_PORT:-unchanged}"
     printf '  %-16s %s\n' "upnp" "off — nothing on a tunnel to negotiate with"
   else
-    echo "  Could not reach the client's API to apply these. It may still be" >&2
-    echo "  starting; re-run this in a minute." >&2
+    echo "  qBittorrent did not take these settings (HTTP ${code:-no answer})." >&2
+    echo "  It may still be starting; re-run this in a minute." >&2
   fi
 fi
 
