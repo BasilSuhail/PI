@@ -54,10 +54,12 @@ NOTE
 API_KEY=$api_key
 
 # Thresholds. Any ONE being exceeded triggers the lockout.
-MAX_STREAMS=4        # total active playback sessions (admin included)
-MAX_LOAD=3.5         # 1-minute load average (board has 4 cores)
+MAX_STREAMS=8        # total active playback sessions (admin included)
+MAX_LOAD=16          # 1-minute load average: 4x the cores. Other apps
+                     # (Immich processing, torrents) push it past 5 routinely
+                     # without hurting playback, since Jellyfin has CPU priority
 MAX_MEM_PCT=90       # percent of total RAM in use
-MAX_IOWAIT=50        # percent of CPU time spent waiting on disk I/O
+MAX_IOWAIT=80        # percent of CPU time spent waiting on disk I/O
 
 # How long non-admin users stay locked out after a trigger.
 COOLDOWN=900         # seconds (15 minutes)
@@ -111,10 +113,10 @@ DISABLED_USERS="$STATE_DIR/disabled_users"
 . "$CONF"
 
 COOLDOWN="${COOLDOWN:-900}"
-MAX_STREAMS="${MAX_STREAMS:-4}"
-MAX_LOAD="${MAX_LOAD:-3.5}"
+MAX_STREAMS="${MAX_STREAMS:-8}"
+MAX_LOAD="${MAX_LOAD:-16}"
 MAX_MEM_PCT="${MAX_MEM_PCT:-90}"
-MAX_IOWAIT="${MAX_IOWAIT:-50}"
+MAX_IOWAIT="${MAX_IOWAIT:-80}"
 QUIET_START="${QUIET_START:-0}"
 QUIET_END="${QUIET_END:-6}"
 JF_NAMESPACE="${JF_NAMESPACE:-pi}"
@@ -399,10 +401,10 @@ echo "  timer      ${SERVICE}.timer (every 60s, starting 2m after boot)"
 echo "  state      $STATE_DIR"
 echo
 echo "  Thresholds (any one triggers the lockout):"
-echo "    streams  > ${MAX_STREAMS:-4}"
-echo "    load     > ${MAX_LOAD:-3.5}"
+echo "    streams  > ${MAX_STREAMS:-8}"
+echo "    load     > ${MAX_LOAD:-16}"
 echo "    memory   > ${MAX_MEM_PCT:-90}%"
-echo "    iowait   > ${MAX_IOWAIT:-50}%"
+echo "    iowait   > ${MAX_IOWAIT:-80}%"
 echo "  Cooldown     $((${COOLDOWN:-900} / 60)) minutes"
 echo "  Quiet hours  $(printf '%02d' "${QUIET_START:-0}"):00–$(printf '%02d' "${QUIET_END:-6}"):00 (non-admin users disabled, HDD stays silent)"
 echo

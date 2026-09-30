@@ -88,13 +88,18 @@ spec:
             - name: media
               mountPath: /media
           resources:
+            # Jellyfin comes first on this board. A CPU request is the share a
+            # container is guaranteed when the CPU is contended, so two cores
+            # here means Immich's processing, torrents and the rest are what
+            # slow down, not playback. No CPU limit: with the board idle it can
+            # still use all four.
             requests:
-              memory: 256Mi
-              cpu: 100m
+              memory: 1Gi
+              cpu: "2"
             # Idles near 300MB with a small library. The ceiling is for a
             # runaway scan, not a target.
             limits:
-              memory: 3Gi
+              memory: 4Gi
           # Jellyfin runs migrations and a library scan on a cold start, so the
           # first readiness check has to be patient.
           readinessProbe:
