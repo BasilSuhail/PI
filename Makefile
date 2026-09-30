@@ -1,17 +1,19 @@
 # Deploys. Each target is one command that takes the board to whatever is on
 # main — the board pulls, builds, and installs itself. `make` lists them.
 #
-# First time on a node:  make bootstrap NODE=pi2
+# First time on a node:  make bootstrap NODE=jug2
 # Every time after:      make dashboard
 
-NODE ?= pi2
-DASH_NODE ?= pi2
-AGENT_NODES ?= pi pi2
-# Boards with disks worth exposing. Same list today; kept separate because a
+# jug2 only by default. The other board, jug, runs OSINT and is left alone
+# unless it is named: AGENT_NODES="jug jug2", STORAGE_NODES="jug jug2".
+NODE ?= jug2
+DASH_NODE ?= jug2
+AGENT_NODES ?= jug2
+# Boards with disks worth exposing. Kept separate from AGENT_NODES because a
 # node can run an agent without holding anything you want to browse.
-STORAGE_NODES ?= pi pi2
+STORAGE_NODES ?= jug2
 REPO_DIR ?= PI
-DASH_URL ?= https://pi2.<tailnet>.ts.net
+DASH_URL ?= https://jug2.<tailnet>.ts.net
 
 # Take the node's checkout to exactly origin/main. Deterministic on purpose:
 # what is on the board afterwards is what is on main, anything edited on the
@@ -52,20 +54,20 @@ help:
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
 	@echo "make archivebox      ArchiveBox on its own tailnet name. Asks for an admin password once"
-	@echo "make agents          agent/ changed — both boards"
+	@echo "make agents          agent/ changed — AGENT_NODES (jug2)"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
 	@echo "make logs            last 40 lines from the dashboard, systemd or k3s"
-	@echo "make archive               create "/1) Archive" on both boards, once"
+	@echo "make archive               create "/1) Archive" on STORAGE_NODES (jug2), once"
 	@echo "make automount             plugged-in drives mount themselves, once"
-	@echo "make browse                rebuild /srv/browse on both boards"
-	@echo "make wifi                  stop the wifi radio sleeping between packets, both boards"
-	@echo "make samba NODE=pi2       share that board's disks over SMB, asks for a password"
+	@echo "make browse                rebuild /srv/browse on STORAGE_NODES (jug2)"
+	@echo "make wifi                  stop the wifi radio sleeping between packets, STORAGE_NODES"
+	@echo "make samba NODE=jug2      share that board's disks over SMB, asks for a password"
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make watchdog                  Jellyfin circuit breaker: locks out non-admin users under load"
 	@echo "make quiet                     midnight–6 AM: maintenance to daytime, Immich jobs + torrents paused"
-	@echo "make sata NODE=pi2        report the PCIe port and the SATA HAT. Changes nothing."
-	@echo "make bootstrap NODE=pi2   once per node: deploy key + checkout"
+	@echo "make sata NODE=jug2       report the PCIe port and the SATA HAT. Changes nothing."
+	@echo "make bootstrap NODE=jug2  once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
 
@@ -145,8 +147,7 @@ deploy: dashboard-k8s agents
 # systemd unit or as a Deployment depending on which target was last used, and
 # neither target records which — so the board is asked rather than assumed.
 check:
-	@ssh pi2 'systemctl is-active glances pi-metrics' || true
-	@ssh pi  'systemctl is-active glances pi-metrics' || true
+	@for node in $(AGENT_NODES); do echo "$$node:"; ssh $$node 'systemctl is-active glances pi-metrics' || true; done
 	@ssh $(DASH_NODE) 'bash ~/$(REPO_DIR)/deploy/dashboard-status.sh status' \
 	  || echo "dashboard: could not ask $(DASH_NODE) — is its checkout current?"
 	@curl -s -o /dev/null -w 'dashboard url: %{http_code}\n' $(DASH_URL)/api/nodes

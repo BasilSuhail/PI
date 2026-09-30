@@ -24,7 +24,7 @@ set -uo pipefail
 # Deliberately not -e: one board being unreachable must not skip the other, and
 # unmounting a mount that is already gone is an expected failure.
 
-NODES="${STORAGE_NODES:-pi pi2}"
+NODES="${STORAGE_NODES:-jug2}"
 SHARE_USERS="${SHARE_USERS:-}"
 # NetFS names the mount after the share, puts it under /Volumes, and cannot be
 # told otherwise — so the share on each board is named after the board. See
@@ -107,7 +107,8 @@ fi
 # itself, and the actual cause is this file. It cost an evening to find once.
 #
 # The interface list answers the same question, costs nothing, and starts
-# nothing. A tunnel holding a 100.64.0.0/10 address is the backend running.
+# nothing. A tunnel holding an address in Tailscale's range (the
+# carrier-grade NAT block) is the backend running.
 # No such address is the backend stopped — which is the honest answer, and the
 # one that lets the stale-mount path below unmount what can no longer be
 # reached instead of waking a VPN to ask.

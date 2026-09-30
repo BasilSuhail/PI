@@ -23,7 +23,7 @@ set -euo pipefail
 
 [ "$(uname -s)" = "Darwin" ] || { echo "This one runs on the Mac, not on a board." >&2; exit 1; }
 
-NODES="${STORAGE_NODES:-pi pi2}"
+NODES="${STORAGE_NODES:-jug2}"
 LABEL="pi.share-mounts"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

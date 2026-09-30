@@ -50,6 +50,8 @@ if ! sudo systemctl is-active --quiet k3s; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 if ! kube get ingressclass tailscale >/dev/null 2>&1; then
   echo "No tailscale IngressClass. Run 'make uptime' first, which installs the" >&2
@@ -138,7 +140,7 @@ echo "==> Manifests"
 # one of them contains a space and a bracket.
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__DATA_DIR__|${DATA_DIR}|g" \
-    "${REPO_ROOT}/k8s/immich.yaml" | kube apply -f -
+    "${REPO_ROOT}/k8s/immich.yaml" | apply_guarded
 
 echo "==> Waiting for the database"
 kube -n pi rollout status deployment/immich-postgres --timeout=300s

@@ -75,6 +75,8 @@ if ! sudo systemctl is-active --quiet k3s; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 if ! kube -n tailscale get secret operator-oauth >/dev/null 2>&1; then
   echo "The Tailscale operator is not installed — run 'make uptime' first." >&2
@@ -279,7 +281,7 @@ render() {
 }
 
 for manifest in jellyfin kiwix vaultwarden uptime-kuma; do
-  render "${REPO_ROOT}/k8s/${manifest}.yaml" | kube apply -f -
+  render "${REPO_ROOT}/k8s/${manifest}.yaml" | apply_guarded
 done
 
 # The old PVCs are deliberately left in place. Vaultwarden is empty and Kuma's

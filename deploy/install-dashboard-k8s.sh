@@ -34,6 +34,8 @@ if [ ! -S "$CONTAINERD_SOCK" ]; then
 fi
 
 kube() { sudo k3s kubectl "$@"; }
+# Refuses to install over a second copy of an app; see the file.
+. "${REPO_ROOT}/deploy/lib/guard.sh"
 
 echo "==> buildkit ${BUILDKIT_VERSION}"
 # Only the daemon and the client are wanted; the rest of the tarball is the
@@ -165,7 +167,7 @@ else
   echo "  (replace it with: sudo k3s kubectl -n pi delete secret pi-console-tailscale, then re-run)"
 fi
 
-sed "s/__TAG__/${TAG}/" "${REPO_ROOT}/k8s/dashboard.yaml" | kube apply -f -
+sed "s/__TAG__/${TAG}/" "${REPO_ROOT}/k8s/dashboard.yaml" | apply_guarded
 
 echo "==> Waiting for the rollout"
 kube -n pi rollout status deployment/pi-console --timeout=180s
