@@ -159,21 +159,60 @@ export const fetchDisks = async (host: string): Promise<DiskStats[]> => {
   }));
 };
 
-export const fetchNet = async (host: string): Promise<NetStats[]> => {
+export const fetchNet = async (host: string, now: number = Date.now()): Promise<NetStats[]> => {
   const net = await get<Array<{
     interface_name?: string;
-    bytes_recv_rate_per_sec?: number;
-    bytes_sent_rate_per_sec?: number;
+    bytes_recv?: number;
+    bytes_sent?: number;
+    time_since_update?: number;
   }>>(host, 'network');
   if (!Array.isArray(net)) return [];
 
   return net
     .filter((n) => n.interface_name && isRealInterface(n.interface_name))
-    .map((n) => ({
-      iface: n.interface_name as string,
-      rxBps: Math.round(n.bytes_recv_rate_per_sec ?? 0),
-      txBps: Math.round(n.bytes_sent_rate_per_sec ?? 0),
-    }));
+    .map((n) => {
+      const iface = n.interface_name as string;
+      const { rxBps, txBps } = netRate(
+        `${host}/${iface}`, n.bytes_recv, n.bytes_sent, n.time_since_update, now,
+      );
+      return { iface, rxBps, txBps };
+    });
+};
+
+// Glances reports the bytes moved since its previous refresh and how long ago
+// that was. Every plugin request can trigger a refresh, and the card sends
+// several at once, so the network read often lands a few milliseconds after
+// another one: no bytes in that sliver read as 0 B/s, a few KB over it as
+// 629.9 GB/s. A window under a second is noise; the last good rate stands in
+// for it. (Its *_gauge totals are not since-boot counters — pi2 reported 9.9 TB
+// sent in a day — so they cannot be used instead.)
+type NetSample = { t: number; rxBps: number; txBps: number };
+const lastGoodNet = new Map<string, NetSample>();
+const MIN_WINDOW_S = 1;
+const MAX_BPS = 1.25e9; // 10 Gbit/s; nothing here moves more than a gigabit
+const STALE_MS = 15_000;
+
+export const netRate = (
+  key: string,
+  rxBytes: number | undefined,
+  txBytes: number | undefined,
+  windowS: number | undefined,
+  now: number,
+): { rxBps: number; txBps: number } => {
+  const usable =
+    typeof rxBytes === 'number' && typeof txBytes === 'number' &&
+    typeof windowS === 'number' && windowS >= MIN_WINDOW_S &&
+    rxBytes >= 0 && txBytes >= 0;
+  if (usable) {
+    const rxBps = Math.round(rxBytes / windowS);
+    const txBps = Math.round(txBytes / windowS);
+    if (rxBps <= MAX_BPS && txBps <= MAX_BPS) {
+      lastGoodNet.set(key, { t: now, rxBps, txBps });
+      return { rxBps, txBps };
+    }
+  }
+  const last = lastGoodNet.get(key);
+  return last && now - last.t < STALE_MS ? { rxBps: last.rxBps, txBps: last.txBps } : { rxBps: 0, txBps: 0 };
 };
 
 /**

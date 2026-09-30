@@ -177,13 +177,19 @@ const buildNode = async (
   // See dial.ts — a board cannot always reach its own tailnet address.
   const host = dialHost(ip);
 
-  const [cpu, mem, disks, net, system, shim, topProcesses, cache] = await Promise.all([
+  // Network first and alone. Any Glances request can trigger a refresh, and
+  // the network figures cover only the time since the previous one; fired
+  // alongside the rest, this read landed milliseconds after another refresh on
+  // every poll and read 0 B/s. First, it is the refresh, and its window is the
+  // gap since the last poll.
+  const net = await fetchNet(host);
+
+  const [cpu, mem, disks, system, shim, topProcesses, cache] = await Promise.all([
     fetchCpu(host),
     fetchMem(host),
     // Both held between polls. See SYSTEM_TTL_MS and DISKS_TTL_MS — the point
     // is the requests pi1 never has to answer.
     cached(`disks:${device.id}`, DISKS_TTL_MS, () => fetchDisks(host), (d) => d.length > 0),
-    fetchNet(host),
     cached(
       `system:${device.id}`,
       SYSTEM_TTL_MS,

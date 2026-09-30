@@ -181,8 +181,19 @@ sudo tailscale serve status
 
 echo
 echo "==> Probing through the ingress"
-curl -sf --max-time 20 -o /dev/null -w "  localhost:80 -> HTTP %{http_code}\n" http://localhost/ \
-  || echo "  ingress did not answer — sudo k3s kubectl -n pi logs deploy/pi-console"
+# Retried: the pod reports Ready a few seconds before the ingress routes to it,
+# and a single attempt in that gap printed 503 after every good deploy.
+code=000
+for _ in $(seq 1 15); do
+  code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" http://localhost/ || true)
+  case "$code" in 2*|3*) break ;; esac
+  sleep 2
+done
+echo "  localhost:80 -> HTTP $code"
+case "$code" in
+  2*|3*) ;;
+  *) echo "  ingress did not answer — sudo k3s kubectl -n pi logs deploy/pi-console" ;;
+esac
 kube -n pi get pods -o wide
 
 echo

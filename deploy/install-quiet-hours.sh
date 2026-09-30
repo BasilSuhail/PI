@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Quiet hours: reschedule system maintenance out of midnight–6 AM, and pause
-# Immich's background jobs for those hours. The Immich app stays up.
+# Quiet hours: reschedule system maintenance out of midnight–6 AM, pause
+# Immich's background jobs for those hours (the app stays up), and slow
+# torrents to a crawl so seeding does not keep HDD1 reading all night.
 #
 # The apps have their own scheduling (Jellyfin's Scheduled Tasks, Immich's
 # job settings) and those are configured in their own dashboards. This
@@ -191,12 +192,41 @@ UNIT
   fi
 fi
 
+
+# Torrents slowed to 1 KiB/s overnight by qBittorrent's own scheduler: seeding
+# otherwise reads HDD1 all night. The schedule lives in qBittorrent's config,
+# so it keeps working even if this board's timers do not, and it only has to
+# be set once, while the client is running.
+#
+# Called from the board to the Service's cluster IP. That traffic leaves
+# through the CNI bridge, so it arrives from the cluster network the WebUI's
+# AuthSubnetWhitelist lets in without a login. Two routes that do not work:
+# localhost inside the pod is not on that list (403), and a cluster DNS name
+# does not resolve in the pod because gluetun owns its DNS.
+torrent_quiet="no qBittorrent installed"
+if sudo k3s kubectl -n pi get deploy qbittorrent >/dev/null 2>&1; then
+  echo "==> Torrents slowed to 1 KiB/s 00:00–06:00"
+  QB_PREFS='{"alt_dl_limit":1024,"alt_up_limit":1024,"scheduler_enabled":true,"schedule_from_hour":0,"schedule_from_min":0,"schedule_to_hour":6,"schedule_to_min":0,"scheduler_days":0}'
+  QIP=$(sudo k3s kubectl -n pi get svc qbittorrent -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  qb() { curl -sf -m 10 "$@"; }
+  qb -X POST "http://$QIP/api/v2/app/setPreferences" \
+     --data-urlencode "json=$QB_PREFS" >/dev/null 2>&1 || true
+  got=$(qb "http://$QIP/api/v2/app/preferences" 2>/dev/null \
+        | jq -r '"\(.scheduler_enabled) \(.schedule_from_hour) \(.schedule_to_hour) \(.alt_up_limit)"' 2>/dev/null || true)
+  if [ "$got" = "true 0 6 1024" ]; then
+    torrent_quiet="set (qBittorrent scheduler)"
+  else
+    torrent_quiet="NOT set: qBittorrent's API did not accept it (is the torrent stack on?). Re-run 'make quiet' while it is running"
+  fi
+fi
+
 echo
 echo "==> Done"
 echo "  apt-daily            07:00 ± 2h"
 echo "  apt-daily-upgrade    07:00 ± 2h"
 echo "  man-db               Sunday 10:00 ± 2h"
 echo "  fstrim               Monday 08:00"
+echo "  torrents             1 KiB/s 00:00–06:00, $torrent_quiet"
 if [ "$immich_quiet" = true ]; then
   echo "  immich               jobs + uploads paused 00:00–06:00 (app stays up)"
 fi

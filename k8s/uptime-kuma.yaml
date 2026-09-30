@@ -53,12 +53,12 @@ spec:
       # records for proxies the operator created, and the boards are ordinary
       # tailnet machines. Proper name resolution for those would mean an egress
       # proxy per board plus a CoreDNS stub, which is four moving parts and two
-      # extra pods to save editing two lines when a board is added.
-      hostAliases:
-        - ip: "<pi-tailscale-ip>"
-          hostnames: ["pi.<tailnet>.ts.net"]
-        - ip: "<pi2-tailscale-ip>"
-          hostnames: ["pi2.<tailnet>.ts.net"]
+      # extra pods.
+      #
+      # Filled in by the installer from `tailscale status`, one entry per
+      # tailnet machine, so no machine name or address is written into this
+      # repository — and a board added later is picked up on the next install.
+      hostAliases: __HOST_ALIASES__
       containers:
         - name: uptime-kuma
           image: louislam/uptime-kuma:1.23.16

@@ -73,7 +73,17 @@ done
 kube -n "$TS_NS" rollout status deployment/operator --timeout=300s
 
 echo "==> Uptime Kuma"
-kube apply -f "${REPO_ROOT}/k8s/uptime-kuma.yaml"
+# Same substitutions as deploy/install-media.sh, which also applies this file.
+APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
+HOST_ALIASES="$(sudo tailscale status --json 2>/dev/null | jq -c '
+  [.Self, (.Peer // {} | .[])]
+  | map(select((.DNSName // "") != "" and ((.TailscaleIPs // []) | length) > 0))
+  | map({ip: .TailscaleIPs[0], hostnames: [.DNSName | rtrimstr(".")]})')" || HOST_ALIASES=""
+case "$HOST_ALIASES" in
+  ""|"[]") echo "Could not list tailnet machines from tailscaled. Is it up?" >&2; exit 1 ;;
+esac
+sed -e "s|__APPS_DIR__|${APPS_DIR}|g" -e "s|__HOST_ALIASES__|${HOST_ALIASES}|g" \
+  "${REPO_ROOT}/k8s/uptime-kuma.yaml" | kube apply -f -
 kube -n pi rollout status deployment/uptime-kuma --timeout=300s
 
 echo "==> Waiting for its tailnet name"
@@ -150,7 +160,7 @@ First visit asks you to create an admin account. Then, in this order:
 
 One trap worth knowing when adding a monitor. MagicDNS does not resolve inside a pod, so
 a monitor cannot simply be given a service's .ts.net name. The hostAliases in
-k8s/uptime-kuma.yaml work around it for pi and pi2 and for nothing else,
+k8s/uptime-kuma.yaml, filled in from tailscale status, cover every tailnet machine,
 which is why the board-level monitors can use those two names and the
 cluster's own services cannot. Those are checked on their in-cluster names
 instead, which also tests the app rather than the tailnet round trip to it.
