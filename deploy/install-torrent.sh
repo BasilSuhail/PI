@@ -375,16 +375,27 @@ if [ "$(kube -n pi get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/
   fi
 fi
 
+# Said from the deployment as it now is: a re-run leaves a running client
+# running, and the summary must not then report it stopped.
+if [ "$(kube -n pi get deploy qbittorrent -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)" != "0" ]; then
+  STATE=running
+  POWER="It is running. The qBittorrent tile in the console's Apps tab has a power
+switch to stop it."
+else
+  STATE=stopped
+  POWER="Start it from the console's Apps tab — the qBittorrent tile has a power
+switch."
+fi
+
 cat <<NEXT
 
-==> Installed, and stopped.
+==> Installed, and ${STATE}.
 
-Start it from the console's Apps tab — the qBittorrent tile has a power
-switch. The VPN comes up first and the client cannot send a packet until it
+${POWER} The VPN comes up first and the client cannot send a packet until it
 has, because they share one network namespace and gluetun owns the routing.
 Stopping puts both away and gives the memory back.
 
-Before downloading anything, prove the tunnel is up. Start it, then:
+Before downloading anything, prove the tunnel is up. With it running:
 
   sudo k3s kubectl -n pi exec deploy/qbittorrent -c gluetun -- \\
     wget -qO- https://ipinfo.io/ip
