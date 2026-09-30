@@ -6,6 +6,9 @@
 #   APPS_DIR   the SSD: Nextcloud's code, config and Postgres.
 #   POOL_DIR   the mergerfs pool: everyone's files.
 #   MEDIA_DIR  Jellyfin's library, shown to the admin read-only.
+#   HDD1_DIR / HDD2_DIR  both HDDs whole, shown to the admin read-only.
+#   ARCHIVE_DIR  the SSD archive; its macbook-backups and Pictures folders
+#                are shown to the admin and are writable.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,6 +16,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 POOL_DIR="${POOL_DIR:-/srv/pool}"
 MEDIA_DIR="${MEDIA_DIR:-/srv/storage/Jellyfin/Media}"
+HDD1_DIR="${HDD1_DIR:-/srv/storage}"
+HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
+ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
+OWNER="${OWNER:-$(id -un)}"
+OWNER_UID="$(id -u "$OWNER")"
 
 PG_UID=999      # the official postgres image
 WEB_UID=33      # www-data in the nextcloud image
@@ -37,13 +45,23 @@ if [ ! -d "$MEDIA_DIR" ]; then
   echo "$MEDIA_DIR does not exist. Is the Jellyfin disk mounted? findmnt /srv/storage" >&2
   exit 1
 fi
+for disk in "$HDD1_DIR" "$HDD2_DIR"; do
+  if ! mountpoint -q "$disk"; then
+    echo "$disk is not mounted. The admin's disk views need it: findmnt $disk" >&2
+    exit 1
+  fi
+done
 command -v jq >/dev/null || sudo apt-get install -y jq >/dev/null
 
 echo "==> Layout"
 printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "database    (SSD)" "$APPS_DIR/Nextcloud/db" \
                       "files      (pool)" "$POOL_DIR/Nextcloud/data" \
-                      "Jellyfin (read-only)" "$MEDIA_DIR"
+                      "Jellyfin (read-only)" "$MEDIA_DIR" \
+                      "HDD1 (read-only)" "$HDD1_DIR" \
+                      "HDD2 (read-only)" "$HDD2_DIR" \
+                      "Mac-backups (editable)" "$ARCHIVE_DIR/macbook-backups" \
+                      "Pictures (editable)" "$ARCHIVE_DIR/Pictures"
 
 sudo mkdir -p "$APPS_DIR/Nextcloud/html" "$APPS_DIR/Nextcloud/db" "$POOL_DIR/Nextcloud/data"
 sudo chown "$PG_UID:$PG_UID" "$APPS_DIR/Nextcloud/db"
@@ -51,6 +69,15 @@ sudo chmod 700 "$APPS_DIR/Nextcloud/db"
 sudo chown "$WEB_UID:$WEB_UID" "$APPS_DIR/Nextcloud/html" "$POOL_DIR/Nextcloud/data"
 # Nextcloud refuses a data directory other users can read.
 sudo chmod 770 "$POOL_DIR/Nextcloud/data"
+
+# The admin's two SSD folders stay owned by the login user, so Finder works as
+# before; an ACL gives Nextcloud (www-data) write access alongside. The default
+# ACLs apply the same to anything created later, from either side.
+command -v setfacl >/dev/null || sudo apt-get install -y acl >/dev/null
+for d in "$ARCHIVE_DIR/macbook-backups" "$ARCHIVE_DIR/Pictures"; do
+  sudo mkdir -p "$d"
+  sudo setfacl -R -m "u:$WEB_UID:rwX" -m "d:u:$WEB_UID:rwX" -m "d:u:$OWNER_UID:rwX" "$d"
+done
 
 sudo tee "$APPS_DIR/Nextcloud/WHERE-IS-MY-DATA.txt" >/dev/null <<NOTE
 Nextcloud keeps its halves on two kinds of disk.
@@ -98,6 +125,9 @@ sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__DOMAIN__|${DOMAIN}|g" \
     -e "s|__TZ__|${TZ_NAME}|g" \
     -e "s|__POD_CIDRS__|${POD_CIDRS}|g" \
+    -e "s|__HDD1_DIR__|${HDD1_DIR}|g" \
+    -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
+    -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
     "${REPO_ROOT}/k8s/nextcloud.yaml" | kube apply -f -
 
 echo "==> Waiting for the database and cache"
@@ -124,19 +154,34 @@ echo "==> Settings"
 occ background:cron >/dev/null
 occ config:system:set maintenance_window_start --type=integer --value=19 >/dev/null
 echo "  background jobs  every 5 min, paused 00:00–06:00"
+# New accounts start empty: no sample documents, photos or templates.
+occ config:system:set skeletondirectory --value= >/dev/null
+occ config:system:set templatedirectory --value= >/dev/null
+echo "  new accounts     start empty"
 
-# Jellyfin's library for the admin only, read-only twice over: the mount is
-# read-only in the pod, and the external storage is flagged read-only too.
+# The admin's view of the disks, as external storage visible to the admin only.
+# Read-only ones are read-only twice over: the mount is read-only in the pod,
+# and the storage is flagged read-only in Nextcloud. Names have no spaces:
+# they pass through a shell inside the pod.
 ADMIN_USER="$(kube -n pi get secret nextcloud-admin -o jsonpath='{.data.username}' | base64 -d)"
 occ app:enable files_external >/dev/null
-if occ files_external:list --output=json 2>/dev/null | jq -e 'any(.[]; .mount_point == "/Jellyfin")' >/dev/null; then
-  echo "  /Jellyfin        already mounted for the admin"
-else
-  id=$(occ files_external:create /Jellyfin local null::null -c datadir=/mnt/jellyfin | grep -o '[0-9]\+' | tail -1)
+existing=$(occ files_external:list --output=json 2>/dev/null || echo '[]')
+attach() { # mount point, path in the pod, ro|rw
+  if jq -e --arg m "$1" 'any(.[]; .mount_point == $m)' <<<"$existing" >/dev/null; then
+    printf '  %-16s already attached\n' "$1"
+    return 0
+  fi
+  local id
+  id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
   occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
-  occ files_external:option "$id" readonly true >/dev/null 2>&1 || true
-  echo "  /Jellyfin        mounted read-only for $ADMIN_USER"
-fi
+  if [ "$3" = ro ]; then occ files_external:option "$id" readonly true >/dev/null 2>&1 || true; fi
+  printf '  %-16s attached for %s (%s)\n' "$1" "$ADMIN_USER" "$([ "$3" = ro ] && echo read-only || echo editable)"
+}
+attach /Jellyfin    /mnt/jellyfin    ro
+attach /HDD1        /mnt/hdd1        ro
+attach /HDD2        /mnt/hdd2        ro
+attach /Mac-backups /mnt/mac-backups rw
+attach /Pictures    /mnt/pictures    rw
 
 echo
 echo "==> Done"

@@ -16,6 +16,9 @@
 #                                 the mergerfs pool (deploy/setup-pool.sh)
 #   __MEDIA_DIR__                 Jellyfin's films and shows, mounted read-only
 #                                 and shown to the admin as /Jellyfin
+#   __HDD1_DIR__, __HDD2_DIR__    both HDDs whole, read-only, admin only
+#   __ARCHIVE_DIR__/{macbook-backups,Pictures}
+#                                 the admin's own SSD folders, writable
 #
 # Versions are pinned by tag AND digest, as Immich's Postgres is: nothing
 # changes until a PR changes it. 34 is supported until 2027-06; take its patch
@@ -249,6 +252,20 @@ spec:
             - name: media
               mountPath: /mnt/jellyfin
               readOnly: true
+            # The admin's view of the disks (install-nextcloud.sh attaches
+            # them as external storage for the admin only). Whole HDDs are
+            # read-only: they hold Immich's library, seeding torrents and
+            # other apps' data. The admin's own SSD folders are writable.
+            - name: hdd1
+              mountPath: /mnt/hdd1
+              readOnly: true
+            - name: hdd2
+              mountPath: /mnt/hdd2
+              readOnly: true
+            - name: mac-backups
+              mountPath: /mnt/mac-backups
+            - name: pictures
+              mountPath: /mnt/pictures
           resources:
             requests:
               memory: 256Mi
@@ -311,6 +328,20 @@ spec:
             - name: media
               mountPath: /mnt/jellyfin
               readOnly: true
+            # The admin's view of the disks (install-nextcloud.sh attaches
+            # them as external storage for the admin only). Whole HDDs are
+            # read-only: they hold Immich's library, seeding torrents and
+            # other apps' data. The admin's own SSD folders are writable.
+            - name: hdd1
+              mountPath: /mnt/hdd1
+              readOnly: true
+            - name: hdd2
+              mountPath: /mnt/hdd2
+              readOnly: true
+            - name: mac-backups
+              mountPath: /mnt/mac-backups
+            - name: pictures
+              mountPath: /mnt/pictures
           resources:
             requests:
               memory: 64Mi
@@ -333,6 +364,22 @@ spec:
         - name: media
           hostPath:
             path: __MEDIA_DIR__
+            type: Directory
+        - name: hdd1
+          hostPath:
+            path: __HDD1_DIR__
+            type: Directory
+        - name: hdd2
+          hostPath:
+            path: __HDD2_DIR__
+            type: Directory
+        - name: mac-backups
+          hostPath:
+            path: __ARCHIVE_DIR__/macbook-backups
+            type: Directory
+        - name: pictures
+          hostPath:
+            path: __ARCHIVE_DIR__/Pictures
             type: Directory
 ---
 # Its own tailnet machine: https://cloud.<tailnet>.ts.net with a real
