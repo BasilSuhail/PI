@@ -193,12 +193,35 @@ UNIT
   fi
 fi
 
+# Torrents are not part of quiet hours. Earlier versions of this script put an
+# overnight limit into qBittorrent's own scheduler, which outlives the script,
+# so it is switched off here, along with the slow mode if it is on right now.
+# Sent to the Service's cluster IP from the board, the route the WebUI lets in
+# without a login (see install-torrent.sh).
+torrent_quiet="not part of quiet hours"
+if sudo k3s kubectl -n pi get deploy qbittorrent >/dev/null 2>&1; then
+  QIP=$(sudo k3s kubectl -n pi get svc qbittorrent -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  qb() { curl -sf -m 10 "$@"; }
+  qb -X POST "http://$QIP/api/v2/app/setPreferences" \
+     --data-urlencode 'json={"scheduler_enabled":false}' >/dev/null 2>&1 || true
+  [ "$(qb "http://$QIP/api/v2/transfer/speedLimitsMode" 2>/dev/null || true)" = 1 ] &&
+    { qb -X POST "http://$QIP/api/v2/transfer/toggleSpeedLimitsMode" >/dev/null 2>&1 || true; }
+  sched=$(qb "http://$QIP/api/v2/app/preferences" 2>/dev/null | jq -r '.scheduler_enabled' 2>/dev/null || true)
+  mode=$(qb "http://$QIP/api/v2/transfer/speedLimitsMode" 2>/dev/null || true)
+  if [ "$sched" = false ] && [ "$mode" = 0 ]; then
+    torrent_quiet="no limits day or night (old overnight schedule off)"
+  else
+    torrent_quiet="could not confirm the old overnight schedule is off (is qBittorrent running?). Re-run 'make quiet' while it is"
+  fi
+fi
+
 echo
 echo "==> Done"
 echo "  apt-daily            07:00 ± 2h"
 echo "  apt-daily-upgrade    07:00 ± 2h"
 echo "  man-db               Sunday 10:00 ± 2h"
 echo "  fstrim               Monday 08:00"
+echo "  torrents             $torrent_quiet"
 if [ "$immich_quiet" = true ]; then
   echo "  immich               jobs + uploads paused 00:00–06:00 (app stays up)"
 fi
