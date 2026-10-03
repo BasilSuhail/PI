@@ -38,7 +38,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -66,6 +66,7 @@ help:
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make watchdog                  Jellyfin circuit breaker: locks out non-admin users under load"
 	@echo "make quiet                     midnight–6 AM: maintenance to daytime, Immich jobs paused"
+	@echo "make hw-watchdog               the board reboots itself if it hangs (Pi hardware watchdog)"
 	@echo "make sata NODE=jug2       report the PCIe port and the SATA HAT. Changes nothing."
 	@echo "make bootstrap NODE=jug2  once per node: deploy key + checkout"
 	@echo
@@ -185,6 +186,9 @@ watchdog:
 
 quiet:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-quiet-hours.sh'
+
+hw-watchdog:
+	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-hw-watchdog.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
