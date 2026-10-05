@@ -181,11 +181,16 @@ parent=\$(lsblk -no pkname "\$dev" 2>/dev/null | head -1)
   read -r removable < "/sys/block/\$parent/removable" || true
 if [ "\${ID_BUS:-}" = usb ]; then removable=1; fi
 
+# --fsck=no on both. systemd-mount checks a filesystem before mounting it by
+# default, and the check runs in repair mode: an exFAT SSD plugged into jug2
+# came back with 352 entries deleted or renamed, without anyone asking (#191).
+# A drive plugged in to be read is not written to. A disk that needs checking
+# is checked by a person, on purpose.
 mkdir -p "\$point"
 if [ "\$removable" = 1 ]; then
-  exec systemd-mount --no-block --collect -o "\$opts" "\$dev" "\$point"
+  exec systemd-mount --no-block --collect --fsck=no -o "\$opts" "\$dev" "\$point"
 else
-  exec systemd-mount --no-block --automount=yes --collect -o "\$opts" "\$dev" "\$point"
+  exec systemd-mount --no-block --automount=yes --collect --fsck=no -o "\$opts" "\$dev" "\$point"
 fi
 HELPER_BODY
 sudo chmod 0755 "$HELPER"
