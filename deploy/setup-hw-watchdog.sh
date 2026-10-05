@@ -61,5 +61,8 @@ if [ -z "$runtime" ] || [ "$runtime" = 0 ] || [ "$runtime" = infinity ]; then
   echo "  systemd is not using the watchdog. Check: journalctl -b _PID=1 | grep -i watchdog" >&2
   exit 1
 fi
-# systemd says which timer it opened and the timeout the hardware accepted.
-sudo journalctl -b _PID=1 --no-pager 2>/dev/null | grep -i "watchdog" | tail -2 | sed 's/^/  /' || true
+# The timer itself: which chip, the timeout it accepted, and the time left.
+# Time left below the timeout means systemd is patting it. (Not the journal:
+# systemd's wording varies, and a grep for "watchdog" catches the Jellyfin
+# watchdog's service lines instead.)
+sudo wdctl /dev/watchdog0 2>/dev/null | grep -E "^(Identity|Timeout|Timeleft):" | sed 's/^/  /' || true
