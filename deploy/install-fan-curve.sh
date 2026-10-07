@@ -23,9 +23,12 @@ sudo install -d /usr/local/lib/pi
 sudo install -m 755 "$REPO_ROOT/deploy/fan-curve.py" "$BIN"
 
 echo "==> Config"
-if [ -f "$CONF" ]; then
+# A config in an older shape is moved aside and replaced, since the controller
+# would read it wrongly; one in the current shape is someone's tuning and stays.
+if [ -f "$CONF" ] && grep -q '"version": 2' "$CONF"; then
   echo "  $CONF already present — leaving it alone"
 else
+  [ -f "$CONF" ] && sudo mv "$CONF" "$CONF.old" && echo "  older config kept as $CONF.old"
   "$BIN" --default-config | sudo tee "$CONF" >/dev/null
   echo "  written to $CONF"
 fi

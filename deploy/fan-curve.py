@@ -33,17 +33,26 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # Headers as identified on the PC: pwm2, pwm3 and pwm4 each stopped one case
 # fan at 0%; pwm1 drives the CPU cooler, which bottoms out near 800 rpm and
 # never stops. Duty is 0-255.
+# Each case fan answers only to the heat it can move: the bottom intake blows
+# across the hard drives and is the only one that comes on for them; CPU and
+# GPU heat brings all three. `version` lets install-fan-curve.sh replace a
+# config written in an older shape.
 DEFAULT = {
+    "version": 2,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
-        "pwms": {"pwm2": "Rear exhaust", "pwm3": "Front intake, bottom", "pwm4": "Front intake, top"},
+        "pwms": {
+            "pwm2": {"label": "Rear exhaust", "watch": ["cpu", "gpu"]},
+            "pwm3": {"label": "Front intake, bottom", "watch": ["cpu", "gpu", "drive"]},
+            "pwm4": {"label": "Front intake, top", "watch": ["cpu", "gpu"]},
+        },
         # A stopped fan needs a push to start, then holds a lower duty.
         "start": 102,
         "max": 255,
-        "on": {"cpu": 60, "gpu": 60, "drive": 45},
+        "on": {"cpu": 60, "gpu": 60, "drive": 40},
         # Lower than "on", so a reading hovering at the threshold does not
-        # switch the fans on and off every few seconds.
-        "off": {"cpu": 55, "gpu": 55, "drive": 42},
+        # switch a fan on and off every few seconds.
+        "off": {"cpu": 55, "gpu": 55, "drive": 37},
         "full": {"cpu": 80, "gpu": 80, "drive": 50},
     },
 }
@@ -167,7 +176,9 @@ def release(conf=None):
 def publish(conf, duties, case_on, temps):
     """What the dashboard shows: a name per fan, and that it is managed."""
     fans = {}
-    for p, label in [(conf["cpu"]["pwm"], conf["cpu"]["label"]), *conf["case"]["pwms"].items()]:
+    named = [(conf["cpu"]["pwm"], conf["cpu"]["label"])]
+    named += [(p, f["label"]) for p, f in conf["case"]["pwms"].items()]
+    for p, label in named:
         fans["fan" + p[3:]] = {"label": label, "duty": duties.get(p), "managed": True}
     tmp = STATE + ".tmp"
     with open(tmp, "w") as f:
@@ -181,25 +192,24 @@ def step(conf, path, state):
         raise RuntimeError("no CPU temperature")
 
     c = conf["case"]
-    hot = lambda lim: cpu >= lim["cpu"] or (gpu is not None and gpu >= lim["gpu"]) or (drive is not None and drive >= lim["drive"])
-    if not state["case_on"] and hot(c["on"]):
-        state["case_on"] = True
-        log("case fans on: cpu %.0f° gpu %s drive %s" % (cpu, gpu, drive))
-    elif state["case_on"] and not hot(c["off"]):
-        state["case_on"] = False
-        log("case fans off: cpu %.0f° gpu %s drive %s" % (cpu, gpu, drive))
+    readings = {"cpu": cpu, "gpu": gpu, "drive": drive}
 
     k = conf["cpu"]
     duties = {k["pwm"]: ramp(cpu, k["from"], k["to"], k["min"], k["max"])}
-    case_duty = 0
-    if state["case_on"]:
-        case_duty = max(
-            ramp(cpu, c["on"]["cpu"], c["full"]["cpu"], c["start"], c["max"]),
-            ramp(gpu, c["on"]["gpu"], c["full"]["gpu"], c["start"], c["max"]) if gpu is not None else 0,
-            ramp(drive, c["on"]["drive"], c["full"]["drive"], c["start"], c["max"]) if drive is not None else 0,
-        )
-    for p in c["pwms"]:
-        duties[p] = case_duty
+    for p, fan in c["pwms"].items():
+        watched = {src: readings[src] for src in fan["watch"] if readings[src] is not None}
+        hot = lambda lim: any(t >= lim[src] for src, t in watched.items())
+        on = state["case_on"].get(p, False)
+        if not on and hot(c["on"]):
+            on = True
+            log("%s on: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
+        elif on and not hot(c["off"]):
+            on = False
+            log("%s off: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
+        state["case_on"][p] = on
+        duties[p] = max(
+            [ramp(t, c["on"][src], c["full"][src], c["start"], c["max"]) for src, t in watched.items()]
+        ) if on else 0
 
     kicks = []
     for p, duty in duties.items():
@@ -241,7 +251,7 @@ def run(once=False):
         write(os.path.join(path, p + "_enable"), 1)
     log("controlling %s" % ", ".join(headers(conf)))
 
-    state = {"case_on": False, "last": {}}
+    state = {"case_on": {}, "last": {}}
     while True:
         try:
             step(conf, path, state)
