@@ -264,6 +264,9 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 
 /* ── Process table inside the card ── */
+/* The old card had a spacer above the table; the two-column body does not,
+   so the gap is set here. */
+.c-body+.ptable{margin-top:16px}
 .ptable{border:1px solid var(--panel-edge);border-radius:5px;background:var(--panel);
   overflow:hidden;box-shadow:inset 0 1px var(--gloss-soft)}
 .pscroll{overflow-x:auto}
