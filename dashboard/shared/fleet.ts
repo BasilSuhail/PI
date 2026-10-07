@@ -88,7 +88,8 @@ export interface HwStats {
   cpuModel: string | null;
   /** CPU package power. Needs root to read on current kernels, so usually null. */
   cpuWatts: number | null;
-  fans: Array<{ label: string; rpm: number }>;
+  /** `managed`: the fan controller sets this one, so 0 rpm means switched off. */
+  fans: Array<{ label: string; rpm: number; managed?: boolean }>;
   /** Only rails the sensor driver has labelled, and therefore scaled. */
   volts: Array<{ label: string; volts: number }>;
   /** Keyed by block device: sda, nvme0n1. */

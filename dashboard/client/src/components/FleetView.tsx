@@ -234,7 +234,10 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   // agent also reports the labelled supply rails; they are not drawn, because
   // nobody watches a 3.3 V rail on a home server.
   const boardCells = [
-    ...(hw?.fans ?? []).map((f) => ({ k: f.label.toUpperCase(), v: f.rpm.toLocaleString(), u: 'rpm', spin: true })),
+    // A managed fan at 0 rpm was switched off by the controller, not lost.
+    ...(hw?.fans ?? []).map((f) => (f.rpm > 0
+      ? { k: f.label.toUpperCase(), v: f.rpm.toLocaleString(), u: 'rpm', spin: true }
+      : { k: f.label.toUpperCase(), v: 'off', u: '', spin: false })),
     ...(gpu?.fanPct != null ? [{ k: 'GPU FAN', v: String(Math.round(gpu.fanPct)), u: '%', spin: false }] : []),
   ];
   const wifi = hw?.wifi ?? [];
@@ -396,7 +399,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           {boardCells.length > 0 && (
             <>
-              <Sec title="FANS" note={`${boardCells.length} turning`} />
+              <Sec title="FANS" note={`${boardCells.filter((c) => c.v !== 'off').length} turning${hw?.fans.some((f) => f.managed) ? ' · by temperature' : ''}`} />
               <div class="board">
                 {boardCells.map((c) => (
                   <div class="bcell" key={c.k}>

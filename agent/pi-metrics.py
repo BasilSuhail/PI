@@ -392,16 +392,36 @@ def read_cpu_model():
     return None
 
 
+FANS_STATE = os.environ.get("FANS_STATE", "/run/pi-fans.json")
+
+
 def read_fans():
-    """Every fan the board can see turning. A header that reads 0 rpm has
-    nothing plugged into it on these boards, so it is left out rather than
-    shown as a stopped fan."""
+    """Every fan the board can see turning, plus every fan the fan controller
+    manages, which may be stopped on purpose.
+
+    A header reading 0 rpm usually has nothing plugged into it, so it is left
+    out, unless the controller (deploy/fan-curve.py) says it switched that fan
+    off. The controller also knows which header is which fan, so its names win
+    over the chip's "fan 2".
+    """
+    managed = {}
+    try:
+        with open(FANS_STATE) as f:
+            managed = json.load(f).get("fans", {})
+    except (OSError, ValueError):
+        pass
     fans = []
     for name, path in _hwmon_chips():
+        on_board = name.startswith("it8")
         for index, rpm, label in _sensor_inputs(path, "fan"):
-            if rpm <= 0:
+            known = managed.get("fan%d" % index) if on_board else None
+            if rpm <= 0 and not known:
                 continue
-            fans.append({"label": label or "fan %d" % index, "rpm": rpm})
+            fans.append({
+                "label": (known or {}).get("label") or label or "fan %d" % index,
+                "rpm": rpm,
+                "managed": bool(known),
+            })
     return fans
 
 
