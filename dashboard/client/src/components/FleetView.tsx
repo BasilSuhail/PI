@@ -280,10 +280,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             <div class="s-cell">
               <div class="s-head">
                 <span class="s-label">temperature</span>
-                {/* Both readings at headline size. The GPU's sat only in the
-                    legend under the graph, and that is where it went unseen. */}
-                <b>{celsius(node.temp?.cpuC)}</b>{gpu && <small class="s-sub">cpu</small>}
-                {gpu && <><b class="t-gpu">{celsius(gpu.tempC)}</b><small class="s-sub">gpu</small></>}
+                <b>{celsius(node.temp?.cpuC)}</b>
                 {(() => { const th = throttleState(node); return <em class={`chip ${th.cls}`}>{th.text}</em>; })()}
               </div>
               <MiniGraph series={tempHistory} series2={gpu ? gpuTempHistory : undefined} color="var(--aqua-2)" min={15} max={90} labelMax="90°" labelMin="15°" />
@@ -322,7 +319,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           {gpu && (
             <>
-              <Sec title="GRAPHICS" note={`${gpuShort(gpu.name)}${gpu.tempC != null ? ` · ${Math.round(gpu.tempC)}°` : ''}`} />
+              <Sec title="GRAPHICS" note={gpuShort(gpu.name)} />
               <div class="mrow">
                 <span class="lbl">GPU</span><Meter value={gpu.utilPct ?? 0} tone="gpu" />
                 <strong class="fig">{pct(gpu.utilPct)}</strong>
