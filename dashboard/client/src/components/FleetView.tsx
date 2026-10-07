@@ -302,6 +302,11 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                   <MiniGraph series={powerHistory} series2={gpu?.powerW != null ? gpuPowerHistory : undefined} color="var(--crit)" min={pw.min} max={pw.max} labelMax={`${pw.max.toFixed(0)}W`} labelMin={`${pw.min.toFixed(0)}W`} />
                 ); })()
               )}
+              {/* A card that reports no watts leaves the CPU package as the whole
+                  reading, and the legend says so rather than calling it total. */}
+              {gpu?.powerW == null && hw?.cpuWatts != null && (
+                <div class="legend"><span><i class="crit" />cpu package <em>{watts(hw.cpuWatts)}</em></span></div>
+              )}
               {gpu?.powerW != null && (
                 <div class="legend">
                   <span><i class="crit" />total <em>{watts(drawW)}</em></span>

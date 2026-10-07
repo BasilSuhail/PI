@@ -99,6 +99,21 @@ else
   echo "  drivetemp is not available on this kernel — drives show no temperature"
 fi
 
+# CPU package power comes from the RAPL energy counter, which the kernel makes
+# readable by root only (a side-channel fix, CVE-2020-8694). The shim is not
+# root, so the counter is opened to every local user: on a box with one login,
+# that user is the only one it opens it to. A udev rule rather than a one-off
+# chmod, because the file is recreated each time the driver loads.
+RAPL=/sys/class/powercap/intel-rapl:0
+if [ -e "$RAPL/energy_uj" ]; then
+  echo "==> CPU power"
+  echo 'ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:0", RUN+="/bin/chmod 0444 /sys%p/energy_uj"' \
+    | sudo tee /etc/udev/rules.d/99-pi-rapl.rules >/dev/null
+  sudo udevadm control --reload
+  sudo udevadm trigger --subsystem-match=powercap --action=add
+  echo "  energy counter readable: $(stat -c %A "$RAPL/energy_uj")"
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable glances.service pi-metrics.service
 
