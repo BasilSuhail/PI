@@ -101,21 +101,37 @@ export const useHistory = (nodes: FleetNode[] | null, cap = 40) => {
   return store.current;
 };
 
-export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => {
+/**
+ * What a machine draws, from whatever it can measure. A Pi's PMIC covers the
+ * whole board. A desktop has no such meter: the CPU package and the GPU are the
+ * two parts that report, so their sum is what is shown, and it is null rather
+ * than zero when neither does.
+ */
+export const nodeWatts = (node: FleetNode): number | null => {
+  if (node.power) return node.power.watts;
+  const parts = [node.hw?.cpuWatts, node.hw?.gpu?.powerW].filter((w): w is number => w != null);
+  return parts.length ? parts.reduce((a, w) => a + w, 0) : null;
+};
+
+/** A rolling series per node of any one reading. A null reading is skipped. */
+export const useSeries = (nodes: FleetNode[] | null, pick: (n: FleetNode) => number | null | undefined, cap = 40) => {
   const store = useRef(new Map<string, number[]>());
   useEffect(() => {
     if (!nodes) return;
     for (const node of nodes) {
-      const w = node.power?.watts;
-      if (w == null) continue;
+      const v = pick(node);
+      if (v == null) continue;
       const series = store.current.get(node.id) ?? [];
-      series.push(w);
+      series.push(v);
       if (series.length > cap) series.shift();
       store.current.set(node.id, series);
     }
+    // `pick` is a module-level function at every call site.
   }, [nodes, cap]);
   return store.current;
 };
+
+export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => useSeries(nodes, nodeWatts, cap);
 
 export const useNetHistory = (nodes: FleetNode[] | null, cap = 60) => {
   const store = useRef(new Map<string, Array<[number, number]>>());

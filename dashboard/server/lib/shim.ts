@@ -1,6 +1,6 @@
 /** Client for the pi-metrics shim — power and throttle state. */
 
-import type { PowerStats, ThrottleState } from '../../shared/fleet';
+import type { HwStats, PowerStats, ThrottleState } from '../../shared/fleet';
 
 export const SHIM_PORT = 9101;
 
@@ -15,6 +15,8 @@ interface ShimResponse {
   capabilities: string[];
   /** Absent on an agent older than the disk-naming change. */
   disks?: Array<{ device: string; sizeBytes: number; rotational: boolean; model: string | null }> | null;
+  /** Absent on an agent older than the desktop sensors. */
+  hw?: HwStats | null;
 }
 
 /**

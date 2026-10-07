@@ -4,7 +4,8 @@ import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView } from './components/FleetView';
 import { Alert, Box, Grid, Key, Moon, Power, Refresh, Sun, Thermo, Wifi } from './components/icons';
-import { getApps, getCredentials, getNodes, useHistory, useNetHistory, usePoll, usePowerHistory } from './lib/api';
+import { getApps, getCredentials, getNodes, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
+import type { FleetNode } from '../../shared/fleet';
 import { celsius, watts } from './lib/format';
 
 const POLL_MS = 3000;
@@ -19,6 +20,9 @@ type View = 'fleet' | 'detail' | 'apps' | 'files';
 const VIEWS: View[] = ['fleet', 'detail', 'apps', 'files'];
 const asView = (name: string): View | null =>
   (VIEWS as string[]).includes(name) ? (name as View) : null;
+
+const gpuTempOf = (n: FleetNode) => n.hw?.gpu?.tempC;
+const gpuPowerOf = (n: FleetNode) => n.hw?.gpu?.powerW;
 
 const isDark = () =>
   document.documentElement.dataset.theme
@@ -36,12 +40,14 @@ export default function App() {
   const history = useHistory(fleet.data);
   const powerHistory = usePowerHistory(fleet.data);
   const netHistory = useNetHistory(fleet.data);
+  const gpuTempHistory = useSeries(fleet.data, gpuTempOf);
+  const gpuPowerHistory = useSeries(fleet.data, gpuPowerOf);
 
   const nodes = useMemo(() => fleet.data ?? [], [fleet.data]);
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
   const liveNodes = nodes.filter((n) => n.online && !n.error);
-  const powered = liveNodes.filter((n) => n.power);
-  const totalW = powered.reduce((s, n) => s + (n.power?.watts ?? 0), 0);
+  const draws = liveNodes.map(nodeWatts).filter((w): w is number => w != null);
+  const totalW = draws.length ? draws.reduce((s, w) => s + w, 0) : null;
   const hot = liveNodes.reduce<typeof nodes[0] | null>((a, n) => ((n.temp?.cpuC ?? -1) > (a?.temp?.cpuC ?? -1) ? n : a), null);
   const tsKey = (creds.data ?? []).find((c) => /tailscale/i.test(c.name));
   const allOnline = nodes.length > 0 && nodes.every((n) => n.online && !n.error);
@@ -79,7 +85,7 @@ export default function App() {
 
         <div class="tb-center">
           <button class={`tbtn ${view === 'fleet' || view === 'detail' ? 'on' : ''}`} onClick={() => setView('fleet')}>
-            <Grid size={15} /> Fleet
+            <Grid size={15} /> {nodes.length === 1 ? 'Server' : 'Fleet'}
           </button>
           <button class={`tbtn ${view === 'apps' ? 'on' : ''}`} onClick={() => setView('apps')}>
             <Box size={15} /> Apps
@@ -121,6 +127,8 @@ export default function App() {
             tempHistory={history}
             powerHistory={powerHistory}
             netHistory={netHistory}
+            gpuTempHistory={gpuTempHistory}
+            gpuPowerHistory={gpuPowerHistory}
           />
         )}
         {view === 'apps' && (

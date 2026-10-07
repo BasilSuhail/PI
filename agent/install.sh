@@ -88,6 +88,17 @@ User=${SERVICE_USER}
 Environment="BROWSE_ROOTS=system=/,home=${SERVICE_HOME},1) Archive=/1) Archive"
 UNIT
 
+# SATA drives report their temperature through the drivetemp module, which the
+# kernel ships but does not load. Loaded now and at every boot; a kernel built
+# without it leaves the drives without a temperature, and nothing else changes.
+echo "==> Drive temperatures"
+if sudo modprobe drivetemp 2>/dev/null; then
+  echo drivetemp | sudo tee /etc/modules-load.d/drivetemp.conf >/dev/null
+  echo "  drivetemp loaded, and set to load at boot"
+else
+  echo "  drivetemp is not available on this kernel — drives show no temperature"
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable glances.service pi-metrics.service
 
