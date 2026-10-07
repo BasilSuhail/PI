@@ -61,6 +61,18 @@ const diskLabels = (disks: FleetNode['disks']): string[] => {
  * A sparkline with an optional second series drawn dashed on the same scale:
  * the GPU beside the CPU, so the two can be compared without a second graph.
  */
+/**
+ * A drive's place among its kind, from the number its mount point ends in:
+ * /srv/hdd2 is the second, and /srv/storage, with no number, the first. That
+ * is the convention the mounts were named by (and the pool's /srv/hdd3 after
+ * it), so HDD1 stays the disk that has always held the media. By plain name,
+ * /srv/hdd2 sorted ahead of /srv/storage and took its label.
+ */
+const mountRank = (mount: string): number => {
+  const n = mount.match(/(\d+)$/);
+  return n ? Number(n[1]) : 1;
+};
+
 const MiniGraph = ({ series, series2, color, color2 = 'var(--gpu-2)', min, max, labelMax, labelMin }: {
   series: number[]; series2?: number[]; color: string; color2?: string;
   min?: number; max?: number; labelMax?: string; labelMin?: string;
@@ -175,14 +187,15 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   // fills up is exactly as interesting as a boot disk that does, and a board
   // whose second drive is invisible cannot tell you it has gone.
   //
-  // The boot disk leads, then the rest by device, so the order is stable
-  // between polls rather than following whatever the fleet poll happened to
-  // return first. Device rather than mount point: by mount, a new drive at
-  // /srv/hdd2 sorted ahead of /srv/storage and took HDD1 from the disk that
-  // had held the media for months.
+  // The boot disk leads, then the rest by mount point, so the order is stable
+  // between polls and between boots. Not by device: on a PC the sdX letters
+  // are handed out in whatever order the SATA ports answer, and they changed
+  // across one reboot, which would swap HDD1 and HDD2. Mount points come from
+  // fstab by UUID and do not move.
   const disks = [...node.disks].sort((a, b) =>
     (a.mount === '/' ? 0 : 1) - (b.mount === '/' ? 0 : 1)
-    || a.device.localeCompare(b.device, undefined, { numeric: true }),
+    || mountRank(a.mount) - mountRank(b.mount)
+    || a.mount.localeCompare(b.mount),
   );
   const labels = diskLabels(disks);
   // Swap and the thumbnail cache are files on the boot disk, not drives. They
@@ -269,7 +282,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                 <b>{celsius(node.temp?.cpuC)}</b>
                 {(() => { const th = throttleState(node); return <em class={`chip ${th.cls}`}>{th.text}</em>; })()}
               </div>
-              <MiniGraph series={tempHistory} series2={gpu ? gpuTempHistory : undefined} color="var(--aqua-2)" min={25} max={90} labelMax="90°" labelMin="25°" />
+              <MiniGraph series={tempHistory} series2={gpu ? gpuTempHistory : undefined} color="var(--aqua-2)" min={15} max={90} labelMax="90°" labelMin="15°" />
               {gpu && (
                 <div class="legend">
                   <span><i />cpu <em>{celsius(node.temp?.cpuC)}</em></span>
