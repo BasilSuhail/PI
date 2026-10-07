@@ -230,11 +230,12 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
     node.stale ? 'holding last reading' : null,
   ].filter(Boolean);
   // A header with nothing plugged into it reads 0 rpm and is left out by the
-  // agent; the GPU's own fan joins the board's when the driver is in.
+  // agent; the GPU's own fan joins the board's when the driver is in. The
+  // agent also reports the labelled supply rails; they are not drawn, because
+  // nobody watches a 3.3 V rail on a home server.
   const boardCells = [
     ...(hw?.fans ?? []).map((f) => ({ k: f.label.toUpperCase(), v: f.rpm.toLocaleString(), u: 'rpm', spin: true })),
     ...(gpu?.fanPct != null ? [{ k: 'GPU FAN', v: String(Math.round(gpu.fanPct)), u: '%', spin: false }] : []),
-    ...(hw?.volts ?? []).map((r) => ({ k: r.label.toUpperCase(), v: r.volts.toFixed(2), u: 'V', spin: false })),
   ];
   const wifi = hw?.wifi ?? [];
   const wired = node.net.length > 0 && node.net.every((n) => !n.iface.startsWith('wl'));
@@ -395,7 +396,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           {boardCells.length > 0 && (
             <>
-              <Sec title="BOARD" note="fans and supply rails" />
+              <Sec title="FANS" note={`${boardCells.length} turning`} />
               <div class="board">
                 {boardCells.map((c) => (
                   <div class="bcell" key={c.k}>
