@@ -48,7 +48,12 @@ export default function App() {
   const liveNodes = nodes.filter((n) => n.online && !n.error);
   const draws = liveNodes.map(nodeWatts).filter((w): w is number => w != null);
   const totalW = draws.length ? draws.reduce((s, w) => s + w, 0) : null;
-  const hot = liveNodes.reduce<typeof nodes[0] | null>((a, n) => ((n.temp?.cpuC ?? -1) > (a?.temp?.cpuC ?? -1) ? n : a), null);
+  // The toolbar's one temperature: the average of every CPU and GPU reading,
+  // so the GPU counts toward it rather than living only inside the card.
+  const temps = liveNodes
+    .flatMap((n) => [n.temp?.cpuC, n.hw?.gpu?.tempC])
+    .filter((t): t is number => t != null);
+  const avgTemp = temps.length ? temps.reduce((a, t) => a + t, 0) / temps.length : null;
   const tsKey = (creds.data ?? []).find((c) => /tailscale/i.test(c.name));
   const allOnline = nodes.length > 0 && nodes.every((n) => n.online && !n.error);
 
@@ -72,8 +77,8 @@ export default function App() {
           <span class="tb-stat" title="fleet draw">
             <Power size={12} /><b>{watts(totalW)}</b>
           </span>
-          <span class="tb-stat" title="hottest board">
-            <Thermo size={12} /><b>{hot?.temp?.cpuC != null ? celsius(hot.temp.cpuC) : '—'}</b>
+          <span class="tb-stat" title="average of CPU and GPU">
+            <Thermo size={12} /><b>{celsius(avgTemp)}</b>
           </span>
           <span class={`tb-stat ${tsKey?.state === 'expired' ? 'crit' : tsKey?.state === 'soon' ? 'warn' : ''}`} title="Tailscale key expiry">
             <Key size={12} /><b>{tsKey?.daysLeft != null ? `${tsKey.daysLeft}d` : '—'}</b>
