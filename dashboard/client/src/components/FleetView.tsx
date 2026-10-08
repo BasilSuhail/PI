@@ -139,11 +139,15 @@ const throttleState = (node: FleetNode): { cls: string; text: string } => {
   return c >= 80 ? { cls: 'warn', text: 'hot' } : { cls: 'ok', text: 'ok' };
 };
 
+/**
+ * Whole watts at least two apart. A steady 13.2 W padded by a fraction gave a
+ * 13.1–13.3 scale whose two labels both rounded to the same number.
+ */
 const powerRange = (series: number[]): { min: number; max: number } => {
   if (!series.length) return { min: 0, max: 1 };
   const mn = Math.min(...series), mx = Math.max(...series);
-  const pad = (mx - mn || 0.5) * 0.2;
-  return { min: Math.max(0, mn - pad), max: mx + pad };
+  const min = Math.max(0, Math.floor(mn - 1));
+  return { min, max: Math.max(Math.ceil(mx + 1), min + 2) };
 };
 
 /** "NVIDIA GeForce GTX 1050 Ti" is a lot of words for "GTX 1050 Ti". */

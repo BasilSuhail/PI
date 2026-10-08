@@ -42,9 +42,10 @@ DEFAULT = {
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
-            "pwm2": {"label": "Rear exhaust", "watch": ["cpu", "gpu"]},
-            "pwm3": {"label": "Front intake, bottom", "watch": ["cpu", "gpu", "drive"]},
-            "pwm4": {"label": "Front intake, top", "watch": ["cpu", "gpu"]},
+            # Short enough to fit a dashboard cell; the docs give the long form.
+            "pwm2": {"label": "Exhaust", "watch": ["cpu", "gpu"]},
+            "pwm3": {"label": "Intake bottom", "watch": ["cpu", "gpu", "drive"]},
+            "pwm4": {"label": "Intake top", "watch": ["cpu", "gpu"]},
         },
         # A stopped fan needs a push to start, then holds a lower duty.
         "start": 102,
