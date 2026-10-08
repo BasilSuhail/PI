@@ -170,9 +170,10 @@ fi
 echo "==> Settings"
 # Background jobs come from the cron container, which sleeps through quiet
 # hours. The maintenance window (UTC) is when Nextcloud runs its heavy daily
-# jobs: 19:00 UTC is the 20:00–24:00 slot the other apps' schedules use.
+# jobs: 06:00 UTC, the morning slot every automatic job on the machine uses.
+# Nothing automatic runs at night or in the evening; people do.
 occ background:cron >/dev/null
-occ config:system:set maintenance_window_start --type=integer --value=19 >/dev/null
+occ config:system:set maintenance_window_start --type=integer --value=6 >/dev/null
 echo "  background jobs  every 5 min, paused 00:00–06:00"
 # New accounts start empty: no sample documents, photos or templates.
 occ config:system:set skeletondirectory --value= >/dev/null

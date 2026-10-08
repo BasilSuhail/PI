@@ -178,14 +178,15 @@ Next, in this order:
   1. Open the URL above. The first account you create is the admin, and
      Immich closes sign-up behind it on its own.
 
-  2. Move the three schedules off the middle of the night. All of them are in
-     Administration > Settings, and all of them default to midnight or 2am:
+  2. Move the three schedules to the morning, where every automatic job on
+     the machine runs. All are in Administration > Settings, and all default
+     to midnight or 2am:
 
-       Nightly Tasks     start time      00:00  ->  06:00
-       External Library  scan cron     0 0 * * *  ->  0 6 * * *
-       Backup            database cron 0 02 * * *  ->  off
+       Nightly Tasks     start time      00:00  ->  07:00
+       Backup            database cron 0 02 * * *  ->  0 8 * * *
+       External Library  scan cron     0 0 * * *  ->  0 9 * * *
 
-     The third is a scheduled database dump. Nothing else on these boards is
+     The backup is a scheduled database dump. Nothing else on these boards is
      backed up on a schedule, so it is a decision rather than a default. It
      dumps the database only — albums, faces and the search index, not the
      photos.
