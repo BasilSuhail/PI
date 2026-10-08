@@ -88,6 +88,12 @@ does not pass the interface through).
 The GTX 1050 Ti reports no power draw (`N/A`), and its fan cannot go below
 45%: both are set in the card's firmware.
 
+`make gpu` installs NVIDIA's container toolkit, restarts k3s so it registers
+the `nvidia` RuntimeClass, and gives the card to Jellyfin for NVENC/NVDEC.
+Hardware acceleration is then switched on in Jellyfin's own Transcoding page.
+The card decodes H.264, HEVC (8 and 10-bit), VP9 and older formats, and
+encodes H.264 and HEVC; it has no AV1.
+
 ---
 
 ## Fans

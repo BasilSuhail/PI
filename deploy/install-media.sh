@@ -283,6 +283,10 @@ render() {
 for manifest in jellyfin kiwix vaultwarden uptime-kuma; do
   render "${REPO_ROOT}/k8s/${manifest}.yaml" | apply_guarded
 done
+# The GPU, when deploy/setup-gpu.sh has given k3s one. A no-op on a board
+# without it.
+. "${REPO_ROOT}/deploy/lib/jellyfin-gpu.sh"
+jellyfin_gpu
 
 # The old PVCs are deliberately left in place. Vaultwarden is empty and Kuma's
 # heartbeat history is being started over, so neither is worth migrating — but
