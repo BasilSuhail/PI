@@ -1,11 +1,10 @@
 # The PC
 
-One x86 desktop replaces both boards. jug's OSINT stack and everything jug2
-runs under k3s move onto it, and both Pis retire. The open issues stay open
-until it is stable.
+One x86 desktop, jug3, replaced both boards. Everything jug2 ran under k3s
+runs on it now, and jug's OSINT stack moves over next. Both Pis are retired.
 
-Read off the machine under Windows before it was wiped, unless a row says
-otherwise.
+This page is the machine as built. Where it differs from the plan it replaced,
+the plan was wrong.
 
 ---
 
@@ -13,104 +12,113 @@ otherwise.
 
 | | | |
 |---|---|---|
-| Board | ASUS ROG STRIX B350-F GAMING | BIOS 6232, 2024-09-29, UEFI |
-| Secure Boot | on | Debian boots with it on. See the GPU row |
-| CPU | AMD Ryzen 5 1600 | 6 cores, 12 threads, 3.2 GHz base. **No integrated graphics** |
-| RAM | 24 GB, 4 of 4 slots | mixed sticks, running at 2133 MT/s. Stick sizes not read yet |
+| Board | ASUS ROG STRIX B350-F GAMING | BIOS 6232, UEFI |
+| CPU | AMD Ryzen 5 1600 | 6 cores, 12 threads. **No integrated graphics** |
+| RAM | 16 GB | |
 | GPU | NVIDIA GeForce GTX 1050 Ti, 4 GB | stays in: the CPU has no display output of its own |
-| PSU | Corsair CX600M | 600 W, semi-modular |
-| Wi-Fi | Ubit AX210S, PCIe x1 | Intel AX210: Wi-Fi 6E and Bluetooth 5.3. In-kernel `iwlwifi`, no vendor driver |
-| Ethernet | onboard, unused | no cable can reach where the PC sits |
-| Fans | 2 × Noctua 4-pin PWM, planned | CHA_FAN headers: bottom front intake, top rear exhaust |
+| PSU | Corsair CX600M | 600 W. No data link, so nothing can read its draw |
+| Wi-Fi | Intel AX210 on a PCIe card | `wlp7s0`, in-kernel `iwlwifi`. The only network: no cable reaches the PC |
+| Screen | none | jug3 runs headless. Everything is done over SSH |
 
 ---
 
 ## Disks
 
-The [disk layout](../README.md#the-disks) carries over: the OS and every app's
-settings on one fast drive, files you would recognise on the spinning ones.
-
-| Drive | Interface | Holds | Mount |
+| Drive | Model | Holds | Mount |
 |---|---|---|---|
-| 1 TB NVMe | M.2 slot, 2280 | the OS and `1) Archive/Apps` | `/` |
-| 1 TB SSD | SATA | OSINT, and room for anything else | not decided |
-| HDD1, 6 TB (Seagate ST6000VX009) | SATA | Jellyfin media, Kiwix, downloads | `/srv/storage`, as now |
-| HDD2 | SATA | the Nextcloud pool | `/srv/hdd2`, as now |
-| 1 TB HDD | SATA | backups | not decided |
+| SSD1, 250 GB | Samsung 860 EVO | Debian, and nothing else | `/` |
+| SSD2, 1 TB | Crucial BX500 | `1) Archive`: every app's settings and databases, and backups | `/srv/ssd`, bound to `/1) Archive` |
+| HDD1, 6 TB | Seagate ST6000VX009 | Jellyfin, Kiwix, downloads | `/srv/storage` |
+| HDD2, 6 TB | WD Purple WD64PURZ | Nextcloud, Immich, backups, ArchiveBox | `/srv/hdd2`, under the `/srv/pool` mergerfs pool |
 
-Mount points stay the same so every hostPath in `k8s/` works without edits.
+All four are mounted by UUID with `nofail`. The `sdX` letters move between
+boots on this board, so nothing may refer to a disk by them.
 
-Both HDDs move over as they are, with no reformat. They are ext4 and mounted
-by UUID, so Linux sees the same disks under the same names.
-
-Retired: the 512 GB SSD (its apps move to the NVMe), the Samsung 860 EVO
-250 GB that holds Windows, both Pis, the Waveshare SATA HAT and its 12V
-adapter. The PSU powers the drives directly, so the adapter failure in #146
-cannot happen again.
-
-Already in the PC: a WD Blue 1 TB HDD (WD10EZEX), 7200 rpm.
+SSD2 was jug2's root disk. Its old Pi system was archived to
+`/srv/hdd2/Backups/jug2-os.tgz` and removed, leaving only `1) Archive`. Its
+fstab line binds `/srv/ssd/1) Archive` to `/1) Archive`, which is where every
+install script looks, so no app needed a path changed. The OS lives on its own
+drive so it can be reinstalled without touching the apps.
 
 ---
 
-## BIOS, before installing
+## BIOS
 
-- **Advanced → AMD CBS → Power Supply Idle Control → Typical Current Idle.**
-  First-generation Ryzen can freeze on Linux when it sits idle in deep
-  C-states. A server is idle most of the time.
-- **Restore AC Power Loss → Power On.** It comes back by itself after a cut.
-- **Onboard Devices Configuration → RGB off.**
-- **Memory: leave at defaults.** Four mixed sticks on Zen 1 are already at the
-  slowest speed. Run memtest86+ for one full pass before trusting it.
-- **Boot order:** NVMe first, once the OS is on it.
+Set once, with a screen, and not to be revisited:
+
+- **Advanced → AMD CBS → CPU Common Options → Power Supply Idle Control → Typical Current Idle.**
+  First-generation Ryzen can freeze when idle without it.
+- **Restore AC Power Loss → Power On.**
+- **Wait For 'F1' If Error → Disabled.** A headless machine cannot press F1.
+- **Secure Boot: off.** `mokutil --sb-state` confirms it over SSH. The NVIDIA
+  and it87 modules are self-signed by DKMS, which only works with it off.
 
 ---
 
 ## OS
 
-Debian 13 (trixie), amd64, no desktop. It is the same Debian the Pis run, so
-the repo's `apt` and `systemd` scripts carry over.
+Debian 13 (trixie), amd64. The login user is `jug3`, with passwordless `sudo`
+because the `make` targets run `sudo` without a terminal.
 
-- Partitions: EFI plus a single ext4 root on the NVMe. No separate `/home`
-  and no LVM. `1) Archive` is a directory on that root, the same as on jug2.
-- Installer tasks: **SSH server** and **standard system utilities** only.
-- Wi-Fi firmware: `firmware-iwlwifi`. Since Debian 12 the official images
-  ship non-free firmware, so the installer can bring up the AX210 itself.
-  Confirm this on the download page before relying on it.
-- After the install: `amd64-microcode`, Tailscale, k3s and Docker, then the
-  `make` targets.
+The installer put GNOME on despite the task being unticked. Its login screen
+suspended the machine after twenty idle minutes, which looked like crashes.
+It is disabled, not removed (removal takes NetworkManager with it, and that is
+the Wi-Fi):
 
-## Wi-Fi
+```
+sudo systemctl disable --now gdm3
+sudo systemctl set-default multi-user.target
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
 
-- Regulatory domain GB.
-- Power save off. `make wifi` does this, but it defaults to `wlan0` and this
-  interface will have a different name, so pass `IFACE=`.
-- Prefer 5 GHz. 6 GHz on Linux depends on the regulatory domain, and 5 GHz is
-  the known-good band.
-- The connection must come up at boot with no one logged in.
-- Reserve the address in the router.
+Wi-Fi power saving is off (`IFACE=wlp7s0 bash deploy/tune-wifi.sh`; `make wifi`
+does not pass the interface through).
 
 ---
 
-## The GPU
+## Drivers
 
-A GTX 1050 Ti (Pascal) can encode and decode H.264 and HEVC, including
-10-bit HEVC, but not AV1. That covers Jellyfin transcoding and Immich's
-machine learning if they are ever moved onto it.
+| Driver | For | How |
+|---|---|---|
+| `nvidia-driver` 550 | GPU stats, NVENC | `contrib non-free` added in `/etc/apt/sources.list.d/nonfree.list`, then `apt install linux-headers-amd64 nvidia-driver nvidia-smi` and a reboot |
+| it87, community DKMS build | fans | `github.com/frankcrawford/it87`, `sudo ./dkms-install.sh`. The board's IT8665E chip has no in-kernel driver. Loaded with `options it87 ignore_resource_conflict=1` and listed in `/etc/modules-load.d/it87.conf`. No kernel boot option needed |
+| `drivetemp` | drive temperatures | loaded by `agent/install.sh` |
+| RAPL energy counter | CPU package power | root-only by default; `agent/install.sh` adds a udev rule that makes it readable |
 
-Using it needs the proprietary NVIDIA driver and the container toolkit. With
-Secure Boot on, the driver's module has to be signed and its key enrolled
-(MOK) at the next boot. Turning Secure Boot off is the other way.
-
-Until then the card only drives a screen. Nothing in the repo uses it.
+The GTX 1050 Ti reports no power draw (`N/A`), and its fan cannot go below
+45%: both are set in the card's firmware.
 
 ---
 
-## Not known yet
+## Fans
 
-- The make and model of the 1 TB NVMe.
-- HDD2's size and model.
-- The RAM stick sizes: `sudo dmidecode -t memory`.
-- Whether the 1 TB backup HDD is the WD Blue already in the PC.
-- What the B350-F's M.2 slot shares with the SATA ports. Five SATA drives
-  would be needed if the WD Blue stayed in as well. Check the manual before
-  cabling.
+`make fans` installs `deploy/fan-curve.py` as `pi-fans.service`. Config:
+`/etc/pi-fans.json`.
+
+| Header | Fan | Behaviour |
+|---|---|---|
+| pwm1 | CPU cooler | follows the CPU: slowest below 50°, full at 75°. It cannot stop (about 800 rpm minimum) |
+| pwm2 | rear exhaust | off until CPU or GPU reaches 60°; off again below 55° |
+| pwm3 | front intake, bottom | as above, and also on for any drive at 40° (off below 37°): it blows across the hard drives |
+| pwm4 | front intake, top | as the exhaust |
+| pwm6 | nothing | free, for a fan on the GPU heatsink |
+
+The three case fans stop fully at 0%. Stopping the service, or any failure,
+hands every header back to the BIOS curve.
+
+---
+
+## What moved, and what it cost
+
+- **Immich**: the database still held jug2's password while the new install
+  generated a fresh one. Fixed by setting the database's password to the new
+  secret with `ALTER USER`. Its library is on HDD2, so `install-immich.sh` now
+  defaults to `/srv/hdd2`.
+- **Nextcloud and Uptime Kuma**: re-running `make archive` over a populated
+  archive re-owned every app's files to the login user. Nextcloud lost write
+  access to its config; Kuma crashed on start. `setup-archive.sh` no longer
+  recurses.
+- **Uptime Kuma**: on a fresh cluster it needs the `pi` namespace, which used to
+  come from the dashboard install. It now creates it.
+- **Tailscale**: a new OAuth client for the operator, and a new API token for the
+  dashboard, which expires on 5 January 2027.

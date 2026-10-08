@@ -41,8 +41,11 @@ if [ -z "${APPS_DIR:-}" ]; then
 fi
 APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 
-# The 6TB, by its mount point rather than its device.
-DATA_DIR="${DATA_DIR:-/srv/storage}"
+# HDD2, by its mount point rather than its device. The library has lived at
+# /srv/hdd2/Immich since the second 6TB went in, and it moved with that disk
+# to the PC. Defaulting to /srv/storage pointed a migrated install at an empty
+# folder, and Immich refused to start for want of its own folder markers.
+DATA_DIR="${DATA_DIR:-/srv/hdd2}"
 
 if ! sudo systemctl is-active --quiet k3s; then
   echo "k3s is not running on this board. This installs into the cluster." >&2
