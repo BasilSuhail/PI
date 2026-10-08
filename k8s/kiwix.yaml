@@ -43,11 +43,18 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          # The library is rebuilt from whatever .zim files are present each
-          # time the pod starts. Drop a new one into the Kiwix folder on the
-          # 6TB and restart:
+          # The library is rebuilt from whatever .zim files are in the folder:
+          # once at start, then again whenever the folder changes. Drop a .zim
+          # into the Kiwix folder on the 6TB and it appears within a couple of
+          # minutes, with no restart.
           #
-          #   sudo k3s kubectl -n pi rollout restart deployment/kiwix
+          # A file still being copied or downloaded changes size from one look
+          # to the next, so nothing is rebuilt until the folder has held still
+          # for a full minute; a file kiwix-manage still cannot open is skipped
+          # and tried again on the next change. kiwix-serve reloads the library
+          # when it changes (--monitorLibrary). On a build without that flag
+          # the watcher restarts the container instead, which rebuilds the
+          # same way.
           #
           # A rebuild rather than a persisted index, because the folder is the
           # truth: a library file that disagrees with what is on the disk is a
@@ -55,14 +62,39 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              set -eu
+              set -u
               lib=/config/library.xml
-              printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<library version="20110515"/>' > "$lib"
-              for zim in /data/*.zim; do
-                [ -e "$zim" ] || continue
-                kiwix-manage "$lib" add "$zim" || echo "skipped $zim"
-              done
-              exec kiwix-serve --port 8080 --library "$lib"
+              build() {
+                printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<library version="20110515"/>' > "$1"
+                for zim in /data/*.zim; do
+                  [ -e "$zim" ] || continue
+                  kiwix-manage "$1" add "$zim" >/dev/null 2>&1 || echo "skipped $zim (incomplete or unreadable)"
+                done
+              }
+              sizes() {
+                for zim in /data/*.zim; do
+                  [ -e "$zim" ] && echo "$zim $(stat -c %s "$zim")"
+                done
+                true
+              }
+              build "$lib"
+              watch=--monitorLibrary
+              kiwix-serve --help 2>&1 | grep -q -- --monitorLibrary || watch=
+              loaded=$(sizes)
+              (
+                last=$loaded
+                while sleep 60; do
+                  now=$(sizes)
+                  if [ "$now" = "$last" ] && [ "$now" != "$loaded" ]; then
+                    build "$lib.new" && mv "$lib.new" "$lib"
+                    loaded=$now
+                    echo "library rebuilt"
+                    [ -n "$watch" ] || kill 1
+                  fi
+                  last=$now
+                done
+              ) &
+              exec kiwix-serve --port 8080 $watch --library "$lib"
           volumeMounts:
             - name: config
               mountPath: /config
