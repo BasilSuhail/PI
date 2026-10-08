@@ -327,14 +327,24 @@ done
 # container directly.
 echo
 echo "==> Can each app write to its data folder?"
-write_test() { # deployment, path inside the container
-  kube -n pi exec "deployment/$1" -- sh -c \
-    'd=$1; t="$d/.write-test.$$"; touch "$t" 2>/dev/null && rm -f "$t"' sh "$2" >/dev/null 2>&1
+# A third field names the uid the app really writes as, when that is not the
+# user an exec lands as. Uptime Kuma's container starts as root with every
+# capability but four dropped, then hands over to node (1000); root without
+# DAC_OVERRIDE cannot write into node's folder, so asking as root reported a
+# working app as broken.
+write_test() { # deployment, path inside the container, [uid]
+  if [ -n "${3:-}" ]; then
+    kube -n pi exec "deployment/$1" -- setpriv --reuid="$3" --regid="$3" --clear-groups sh -c \
+      'd=$1; t="$d/.write-test.$$"; touch "$t" 2>/dev/null && rm -f "$t"' sh "$2" >/dev/null 2>&1
+  else
+    kube -n pi exec "deployment/$1" -- sh -c \
+      'd=$1; t="$d/.write-test.$$"; touch "$t" 2>/dev/null && rm -f "$t"' sh "$2" >/dev/null 2>&1
+  fi
 }
 failed=0
-for pair in "jellyfin /data" "kiwix /config" "vaultwarden /data" "uptime-kuma /app/data"; do
+for pair in "jellyfin /data" "kiwix /config" "vaultwarden /data" "uptime-kuma /app/data 1000"; do
   set -- $pair
-  if write_test "$1" "$2"; then
+  if write_test "$1" "$2" "${3:-}"; then
     printf '  ok    %-14s %s\n' "$1" "$2"
   else
     printf '  FAIL  %-14s %s  <- cannot write\n' "$1" "$2"
@@ -366,18 +376,15 @@ Jellyfin
   and /media/Shows — those are ${DATA_DIR}/Jellyfin/Media/* from the board.
   Copy films in through the HDD-6TB folder in Finder.
 
-  This board direct-plays. It does not meaningfully transcode: a client that
-  needs the video re-encoded will stutter, and 4K will not work at all. Play
-  to something that handles the codec natively and it is fine.
+  Without a GPU this machine direct-plays and does not meaningfully transcode.
+  With one, run deploy/setup-gpu.sh (make gpu) and switch on NVENC in
+  Dashboard > Playback > Transcoding; conversions then run on the card.
 
 Kiwix
-  Serving an empty catalogue until there is something to serve. Download a
-  .zim from https://download.kiwix.org/zim/ into ${WIKI_DIR}/Kiwix, then:
-
-    sudo k3s kubectl -n pi rollout restart deployment/kiwix
-
-  The library is rebuilt from whatever is in that folder on every start, so
-  the folder is the truth and there is no index to keep in step with it.
+  Put a .zim from https://download.kiwix.org/zim/ into ${WIKI_DIR}/Kiwix. It
+  appears within a couple of minutes once the file has finished copying; no
+  restart. Removing a file takes it out the same way. The folder is the
+  truth, and there is no index to keep in step with it.
 
 Rollback:  sudo k3s kubectl -n pi delete -f ${REPO_ROOT}/k8s/jellyfin.yaml -f ${REPO_ROOT}/k8s/kiwix.yaml
 NEXT
