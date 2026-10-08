@@ -74,6 +74,22 @@ for spec in "dpkg-db-backup|*-*-* 07:30:00|07:30" \
   fi
 done
 
+# Two that are not on a clock at all, so moving OnCalendar is not enough.
+# systemd-tmpfiles-clean runs a day after it last ran, and drifts to whatever
+# hour the machine booted; fwupd-refresh adds a random delay of up to twelve
+# hours. Each gets a fixed morning time and loses its relative schedule.
+for spec in "systemd-tmpfiles-clean|07:30" "fwupd-refresh|10:00"; do
+  IFS='|' read -r timer at <<<"$spec"
+  if systemctl list-unit-files "${timer}.timer" --no-pager --no-legend \
+     2>/dev/null | grep -q .; then
+    override="/etc/systemd/system/${timer}.timer.d"
+    sudo mkdir -p "$override"
+    printf '[Timer]\nOnBootSec=\nOnUnitActiveSec=\nRandomizedDelaySec=0\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$at" \
+      | sudo tee "$override/quiet-hours.conf" >/dev/null
+    echo "  $timer → $at"
+  fi
+done
+
 sudo systemctl daemon-reload
 
 # Clean up the old version's systemd units if they exist.
@@ -246,6 +262,8 @@ echo "  fstrim               Monday 08:00"
 echo "  dpkg-db-backup       07:30"
 echo "  logrotate            07:30"
 echo "  e2scrub_all          Sunday 10:30"
+echo "  tmpfiles-clean       07:30"
+echo "  fwupd-refresh        10:00"
 echo "  torrents             $torrent_quiet"
 if [ "$immich_quiet" = true ]; then
   echo "  immich               jobs + uploads paused 00:00–06:00 (app stays up)"
