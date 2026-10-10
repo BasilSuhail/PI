@@ -2,8 +2,8 @@
 """Switches Jellyfin's public door (Tailscale Funnel) off when strangers knock.
 
 With Funnel on, Jellyfin's login page is on the internet. Family use it; bots
-find it. Every minute this reads Jellyfin's own activity log and switches
-Funnel off, posting to Discord, when:
+find it. Every minute this reads Jellyfin's server log for denied logins, and
+switches Funnel off, posting to Discord, when:
 
   someone tries usernames that are not Jellyfin accounts   (GUARD_UNKNOWN, 2 an hour)
   or there are many failed logins in a short time          (GUARD_FAILS, 5 in 15 minutes)
@@ -15,7 +15,8 @@ anything off, since it may be family on a new phone.
   --summary   the last 24 hours as lines, for the morning report
   --dry       say what would happen; change nothing, post nothing
 
-Reads jellyfin.db read-only. Config: /etc/pi-report/env (the Discord webhook
+Reads the server log through kubectl, and jellyfin.db read-only for the
+accounts and the devices they sign in from. Config: /etc/pi-report/env (the Discord webhook
 the morning report uses), optional /etc/jellyfin-guard.env. State:
 /var/lib/jellyfin-guard/state.json. Stdlib only.
 """
@@ -24,6 +25,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -35,9 +37,9 @@ REPORT_ENV = os.environ.get("REPORT_ENV", "/etc/pi-report/env")
 GUARD_ENV = os.environ.get("GUARD_ENV", "/etc/jellyfin-guard.env")
 APPS_DIR = os.environ.get("APPS_DIR", "/1) Archive/Apps")
 KUBECTL = ["k3s", "kubectl", "-n", "pi"]
+DENIED = re.compile(r"Authentication request for (.+?) has been denied")
 INGRESS = "jellyfin"
 FUNNEL = "tailscale.com/funnel"
-EMPTY_ID = "00000000-0000-0000-0000-000000000000"
 
 
 def env_file(path):
@@ -92,14 +94,16 @@ class Log:
             "select Id, Name, coalesce(UserId, ''), DateCreated from ActivityLogs "
             "where Type = ? and replace(DateCreated, 'T', ' ') >= ? order by Id", (kind, since)).fetchall()
 
-    def failures(self, since):
-        """[(username, known)] for failed logins since a UTC time."""
-        out = []
-        for _, name, uid, _ in self.rows("AuthenticationFailed", since):
-            who = after(name, " from ")
-            known = (uid and str(uid) != EMPTY_ID) or who.lower() in self.users
-            out.append((who, bool(known)))
-        return out
+    def failures(self, since_ts):
+        """[(username, known)] for failed logins since a Unix time.
+
+        From Jellyfin's server log, not the activity log: the activity log
+        leaves out tries with usernames that are not accounts, which is
+        exactly what a stranger sends."""
+        since = datetime.datetime.fromtimestamp(since_ts, datetime.timezone.utc)
+        out = subprocess.run(KUBECTL + ["logs", "deploy/jellyfin", "--since-time=" + since.strftime("%Y-%m-%dT%H:%M:%SZ")],
+                             capture_output=True, text=True, timeout=60).stdout
+        return [(who, who.lower() in self.users) for who in DENIED.findall(out)]
 
     def sessions(self, since):
         """[(id, username, device, time)] for 'X is online from Y' entries."""
@@ -170,9 +174,10 @@ def check(dry):
 
     # Strangers: only counted since Funnel last went off, so switching it back
     # on is not undone at once by the knocks that switched it off.
-    floor = state.get("off_at", "0000")
-    unknown = [w for w, k in log.failures(max(utc(60), floor)) if not k]
-    fails = log.failures(max(utc(FAILS_MIN), floor))
+    now_ts = time.time()
+    floor = state.get("off_ts", 0)
+    unknown = [w for w, k in log.failures(max(now_ts - 3600, floor)) if not k]
+    fails = log.failures(max(now_ts - FAILS_MIN * 60, floor))
     reason = None
     if len(unknown) >= UNKNOWN_PER_HOUR:
         reason = "%d login tries with usernames that are not accounts in the last hour (%s)" % (
@@ -186,7 +191,7 @@ def check(dry):
             print("would switch Funnel off: " + reason)
         else:
             funnel_off()
-            state["off_at"] = utc(0)
+            state["off_ts"] = now_ts
             state.setdefault("events", []).append([int(time.time()), reason])
             msgs.insert(0, ("🔒 **Jellyfin's public access is OFF.** %s.\nFamily on Tailscale are not affected. "
                             "Back on, from jug3:\n`sudo k3s kubectl -n pi annotate ingress jellyfin "
@@ -207,7 +212,7 @@ def summary():
     """Lines for the morning report: quiet when the day was quiet."""
     log, state = Log(db_path()), load()
     lines = []
-    fails = log.failures(utc(24 * 60))
+    fails = log.failures(time.time() - 86400)
     if fails:
         by = {}
         for who, known in fails:
