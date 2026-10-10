@@ -38,7 +38,7 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # GPU heat brings all three. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 3,
+    "version": 4,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
@@ -54,7 +54,7 @@ DEFAULT = {
         # Once on, a fan stays on at least this long, so a short burst of work
         # does not switch it on and off every minute. Read with a default, so
         # a config written before this existed keeps its tuning and gets it.
-        "min_on_sec": 120,
+        "min_on_sec": 60,
         "max": 255,
         "on": {"cpu": 60, "gpu": 60, "drive": 40},
         # Lower than "on", so a reading hovering at the threshold does not
@@ -207,7 +207,7 @@ def step(conf, path, state):
         watched = {src: readings[src] for src in fan["watch"] if readings[src] is not None}
         hot = lambda lim: any(t >= lim[src] for src, t in watched.items())
         on = state["case_on"].get(p, False)
-        held = time.time() - state["on_since"].get(p, 0) < c.get("min_on_sec", 120)
+        held = time.time() - state["on_since"].get(p, 0) < c.get("min_on_sec", 60)
         if not on and hot(c["on"]):
             on = True
             state["on_since"][p] = time.time()

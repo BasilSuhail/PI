@@ -25,7 +25,7 @@ sudo install -m 755 "$REPO_ROOT/deploy/fan-curve.py" "$BIN"
 echo "==> Config"
 # A config in an older shape is moved aside and replaced, since the controller
 # would read it wrongly; one in the current shape is someone's tuning and stays.
-if [ -f "$CONF" ] && grep -q '"version": 3' "$CONF"; then
+if [ -f "$CONF" ] && grep -q '"version": 4' "$CONF"; then
   echo "  $CONF already present — leaving it alone"
 else
   [ -f "$CONF" ] && sudo mv "$CONF" "$CONF.old" && echo "  older config kept as $CONF.old"
