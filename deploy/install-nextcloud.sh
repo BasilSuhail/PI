@@ -192,9 +192,14 @@ for app in activity app_api circles comments contactsinteraction dashboard \
            updatenotification user_status weather_status webhook_listeners; do
   occ app:disable "$app" >/dev/null 2>&1 || true
 done
+# Impersonate: the admin opens any account as that person, from the Users
+# page, to look after a family member's files. Changes go through Nextcloud,
+# so their own view stays in step, which the admin's whole-disk view of the
+# data folder cannot do. Only admins can impersonate.
+occ app:install impersonate >/dev/null 2>&1 || occ app:enable impersonate >/dev/null 2>&1 || true
 # With the dashboard gone, a login lands on the files.
 occ config:system:set defaultapp --value=files >/dev/null
-echo "  apps             storage only; opens straight to Files"
+echo "  apps             storage only; opens straight to Files; admin can impersonate"
 
 # The admin's three disks, as external storage visible to the admin only.
 # What is read-only is decided in the pod (read-only mounts over the app
