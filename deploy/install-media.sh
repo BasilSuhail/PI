@@ -376,6 +376,9 @@ Jellyfin
   and /media/Shows — those are ${DATA_DIR}/Jellyfin/Media/* from the board.
   Copy films in through the HDD-6TB folder in Finder.
 
+  At home without Tailscale (a TV): http://$(hostname -I | awk '{print $1}'):8096
+  — the house only; nothing outside can reach it.
+
   Without a GPU this machine direct-plays and does not meaningfully transcode.
   With one, run deploy/setup-gpu.sh (make gpu) and switch on NVENC in
   Dashboard > Playback > Transcoding; conversions then run on the card.
