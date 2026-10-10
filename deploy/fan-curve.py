@@ -38,7 +38,7 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # GPU heat brings all three. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 4,
+    "version": 5,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
@@ -49,17 +49,23 @@ DEFAULT = {
             "pwm3": {"label": "Intake top", "watch": ["cpu", "gpu"]},
             "pwm4": {"label": "Intake bottom", "watch": ["cpu", "gpu", "drive"]},
         },
-        # A stopped fan needs a push to start, then holds a lower duty.
-        "start": 102,
+        # A stopped fan needs a push to start, then holds a lower duty. 77/255
+        # (30%) is the lowest all three case fans kept turning at in
+        # deploy/fan-min-test.sh; at 25% two of them stalled.
+        "start": 77,
         # Once on, a fan stays on at least this long, so a short burst of work
         # does not switch it on and off every minute. Read with a default, so
         # a config written before this existed keeps its tuning and gets it.
         "min_on_sec": 60,
         "max": 255,
-        "on": {"cpu": 60, "gpu": 60, "drive": 40},
+        # Early and gentle: with the case closed there is no airflow at all
+        # while every case fan is off, so they come on at their slowest well
+        # before anything is hot, and ramp to full from there. The drive
+        # threshold matches the dashboard's red box (above 35).
+        "on": {"cpu": 45, "gpu": 45, "drive": 35},
         # Lower than "on", so a reading hovering at the threshold does not
         # switch a fan on and off every few seconds.
-        "off": {"cpu": 55, "gpu": 55, "drive": 37},
+        "off": {"cpu": 42, "gpu": 42, "drive": 33},
         "full": {"cpu": 80, "gpu": 80, "drive": 50},
     },
 }
