@@ -38,7 +38,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths report watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths report direct watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -71,6 +71,7 @@ help:
 	@echo "make gpu                       NVIDIA card into k3s; Jellyfin transcodes on it"
 	@echo "make paths                     watcher: does each family device reach the apps direct or by relay"
 	@echo "make report                    08:00 Discord report of what went wrong, silent on a quiet day"
+	@echo "make direct                    app proxies stop looking like a strict NAT, so family devices can go direct"
 	@echo "make sata NODE=jug2       report the PCIe port and the SATA HAT. Changes nothing."
 	@echo "make bootstrap NODE=jug3  once per node: deploy key + checkout"
 	@echo
@@ -209,6 +210,10 @@ paths:
 # What went wrong in the last 24 hours, to Discord at 08:00. Reuses Uptime Kuma's webhook.
 report:
 	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-daily-report.sh'
+
+# Pod UDP keeps its source port, so the app proxies can get direct paths.
+direct:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-easy-nat.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
