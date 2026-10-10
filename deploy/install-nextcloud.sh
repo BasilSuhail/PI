@@ -241,6 +241,8 @@ detach /Pictures    SSD1
 attach /HDD1 /mnt/hdd1 rw
 attach /HDD2 /mnt/hdd2 rw
 attach /SSD1 /mnt/ssd1 rw
+# The admin's own folder on HDD1 becomes their Personal files, so it counts.
+HDD1_DIR="$HDD1_DIR" POOL_DIR="$POOL_DIR" bash "$REPO_ROOT/deploy/nextcloud-admin-home.sh"
 
 echo
 echo "==> Done"
