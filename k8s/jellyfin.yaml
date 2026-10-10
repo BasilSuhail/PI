@@ -165,6 +165,27 @@ spec:
       port: 80
       targetPort: http
 ---
+# The home network, for a TV that has no Tailscale client. k3s's built-in load
+# balancer publishes this on port 8096 of the machine's own LAN address, so a
+# TV in the house opens http://<the machine's LAN address>:8096 — Jellyfin's
+# usual port, which its TV apps try first. Nothing outside the house can
+# reach it: the router forwards no port to it. This is not Funnel, which
+# would put the login page on the internet (#179). It is also the fastest
+# route for anyone at home, with nothing between the TV and the server.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin-lan
+  namespace: pi
+spec:
+  type: LoadBalancer
+  selector:
+    app: jellyfin
+  ports:
+    - name: http
+      port: 8096
+      targetPort: http
+---
 # Its own tailnet machine, the same shape as Uptime and Vault: a root path and
 # a real certificate, because Jellyfin's clients assume they own the root.
 #

@@ -1,19 +1,19 @@
 # Deploys. Each target is one command that takes the board to whatever is on
 # main — the board pulls, builds, and installs itself. `make` lists them.
 #
-# First time on a node:  make bootstrap NODE=jug2
-# Every time after:      make dashboard
+# First time on a node:  make bootstrap NODE=jug3
+# Every time after:      make dashboard-k8s
 
-# jug2 only by default. The other board, jug, runs OSINT and is left alone
-# unless it is named: AGENT_NODES="jug jug2", STORAGE_NODES="jug jug2".
-NODE ?= jug2
-DASH_NODE ?= jug2
-AGENT_NODES ?= jug2
+# jug3, the PC that replaced both boards, by default. Name another node to
+# reach it: NODE=..., AGENT_NODES="a b", STORAGE_NODES="a b".
+NODE ?= jug3
+DASH_NODE ?= jug3
+AGENT_NODES ?= jug3
 # Boards with disks worth exposing. Kept separate from AGENT_NODES because a
 # node can run an agent without holding anything you want to browse.
-STORAGE_NODES ?= jug2
+STORAGE_NODES ?= jug3
 REPO_DIR ?= PI
-DASH_URL ?= https://jug2.<tailnet>.ts.net
+DASH_URL ?= https://jug3.<tailnet>.ts.net
 
 # Take the node's checkout to exactly origin/main. Deterministic on purpose:
 # what is on the board afterwards is what is on main, anything edited on the
@@ -38,7 +38,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths report direct guard watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -54,21 +54,27 @@ help:
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
 	@echo "make archivebox      ArchiveBox on its own tailnet name. Asks for an admin password once"
-	@echo "make agents          agent/ changed — AGENT_NODES (jug2)"
+	@echo "make agents          agent/ changed — AGENT_NODES (jug3)"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
 	@echo "make logs            last 40 lines from the dashboard, systemd or k3s"
-	@echo "make archive               create "/1) Archive" on STORAGE_NODES (jug2), once"
+	@echo "make archive               create '/1) Archive' on STORAGE_NODES (jug3), once"
 	@echo "make automount             plugged-in drives mount themselves, once"
-	@echo "make browse                rebuild /srv/browse on STORAGE_NODES (jug2)"
+	@echo "make browse                rebuild /srv/browse on STORAGE_NODES (jug3)"
 	@echo "make wifi                  stop the wifi radio sleeping between packets, STORAGE_NODES"
-	@echo "make samba NODE=jug2      share that board's disks over SMB, asks for a password"
+	@echo "make samba NODE=jug3      share that board's disks over SMB, asks for a password"
 	@echo "make mounts                Mac only, once: shares mount while Tailscale is up"
 	@echo "make watchdog                  Jellyfin circuit breaker: locks out non-admin users under load"
 	@echo "make quiet                     midnight–6 AM: maintenance to daytime, Immich jobs paused"
-	@echo "make hw-watchdog               the board reboots itself if it hangs (Pi hardware watchdog)"
+	@echo "make hw-watchdog               the board reboots itself if it hangs (SP5100 on the PC)"
+	@echo "make fans                      fans by temperature instead of the BIOS floor (needs it87)"
+	@echo "make gpu                       NVIDIA card into k3s; Jellyfin transcodes on it"
+	@echo "make paths                     watcher: does each family device reach the apps direct or by relay"
+	@echo "make report                    08:00 Discord report of what went wrong, silent on a quiet day"
+	@echo "make direct                    app proxies stop looking like a strict NAT, so family devices can go direct"
+	@echo "make guard                     Jellyfin's public access off, with a Discord post, when strangers try to log in"
 	@echo "make sata NODE=jug2       report the PCIe port and the SATA HAT. Changes nothing."
-	@echo "make bootstrap NODE=jug2  once per node: deploy key + checkout"
+	@echo "make bootstrap NODE=jug3  once per node: deploy key + checkout"
 	@echo
 	@echo "Tailscale has to be up. Each target asks for the board's password once."
 
@@ -189,6 +195,30 @@ quiet:
 
 hw-watchdog:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-hw-watchdog.sh'
+
+# The NVIDIA card for containers, and Jellyfin transcoding on it.
+gpu:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/setup-gpu.sh'
+
+# The PC's fans by temperature instead of the BIOS floor. Needs the it87 driver.
+fans:
+	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-fan-curve.sh'
+
+# Every minute, how each family device in use reaches the apps: direct or relay.
+paths:
+	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-tailnet-paths.sh'
+
+# What went wrong in the last 24 hours, to Discord at 08:00. Reuses Uptime Kuma's webhook.
+report:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-daily-report.sh'
+
+# Pod UDP keeps its source port, so the app proxies can get direct paths.
+direct:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-easy-nat.sh'
+
+# Funnel off and a Discord post when strangers try Jellyfin's login. Needs make report.
+guard:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-jellyfin-guard.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)

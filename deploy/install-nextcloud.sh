@@ -170,9 +170,10 @@ fi
 echo "==> Settings"
 # Background jobs come from the cron container, which sleeps through quiet
 # hours. The maintenance window (UTC) is when Nextcloud runs its heavy daily
-# jobs: 19:00 UTC is the 20:00–24:00 slot the other apps' schedules use.
+# jobs: 06:00 UTC, the morning slot every automatic job on the machine uses.
+# Nothing automatic runs at night or in the evening; people do.
 occ background:cron >/dev/null
-occ config:system:set maintenance_window_start --type=integer --value=19 >/dev/null
+occ config:system:set maintenance_window_start --type=integer --value=6 >/dev/null
 echo "  background jobs  every 5 min, paused 00:00–06:00"
 # New accounts start empty: no sample documents, photos or templates.
 occ config:system:set skeletondirectory --value= >/dev/null
@@ -191,9 +192,19 @@ for app in activity app_api circles comments contactsinteraction dashboard \
            updatenotification user_status weather_status webhook_listeners; do
   occ app:disable "$app" >/dev/null 2>&1 || true
 done
+# Impersonate: the admin opens any account as that person, from the Users
+# page, to look after a family member's files. Changes go through Nextcloud,
+# so their own view stays in step, which the admin's whole-disk view of the
+# data folder cannot do. Only admins can impersonate.
+occ app:install impersonate >/dev/null 2>&1 || occ app:enable impersonate >/dev/null 2>&1 || true
 # With the dashboard gone, a login lands on the files.
 occ config:system:set defaultapp --value=files >/dev/null
-echo "  apps             storage only; opens straight to Files"
+# The vault's backups (on HDD2 and in the SSD's Apps) are not readable by
+# Nextcloud, on purpose. A folder it cannot open has no size, and that left
+# the whole disk showing "Pending". Leaving every folder named Vaultwarden out
+# of Nextcloud fixes the sizes and keeps the vault out of the file browser.
+occ config:system:set excluded_directories 0 --value=Vaultwarden >/dev/null
+echo "  apps             storage only; opens straight to Files; admin can impersonate"
 
 # The admin's three disks, as external storage visible to the admin only.
 # What is read-only is decided in the pod (read-only mounts over the app
@@ -208,7 +219,12 @@ attach() { # mount point, path in the pod, ro|rw
   if [ -n "$id" ]; then
     # Earlier versions of this script flagged the HDDs read-only.
     occ files_external:option "$id" readonly "$([ "$3" = ro ] && echo true || echo false)" >/dev/null 2>&1 || true
-    printf '  %-16s already attached\n' "$1"
+    # Who may see it is enforced on every run, not only when it is created. A
+    # mount carried over from another machine kept whatever it had, and one
+    # with no applicable user is visible to every account: a family member
+    # could browse the whole disk, backups included.
+    occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
+    printf '  %-16s already attached, admin only\n' "$1"
     return 0
   fi
   id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
@@ -230,6 +246,8 @@ detach /Pictures    SSD1
 attach /HDD1 /mnt/hdd1 rw
 attach /HDD2 /mnt/hdd2 rw
 attach /SSD1 /mnt/ssd1 rw
+# The admin's own folder on HDD2 becomes their Personal files, so it counts.
+HDD2_DIR="$HDD2_DIR" POOL_DIR="$POOL_DIR" bash "$REPO_ROOT/deploy/nextcloud-admin-home.sh"
 
 echo
 echo "==> Done"

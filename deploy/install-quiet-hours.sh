@@ -57,6 +57,39 @@ TIMERCONF
   echo "  fstrim → Monday 08:00"
 fi
 
+# Three more that Debian schedules around midnight and that the first version
+# missed: a backup of the package database, log rotation, and the weekly ext4
+# metadata check. Each is small, but "nothing automatic at night" means none.
+for spec in "dpkg-db-backup|*-*-* 07:30:00|07:30" \
+            "logrotate|*-*-* 07:30:00|07:30" \
+            "e2scrub_all|Sun *-*-* 10:30:00|Sunday 10:30"; do
+  IFS='|' read -r timer when label <<<"$spec"
+  if systemctl list-unit-files "${timer}.timer" --no-pager --no-legend \
+     2>/dev/null | grep -q .; then
+    override="/etc/systemd/system/${timer}.timer.d"
+    sudo mkdir -p "$override"
+    printf '[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$when" \
+      | sudo tee "$override/quiet-hours.conf" >/dev/null
+    echo "  $timer → $label"
+  fi
+done
+
+# Two that are not on a clock at all, so moving OnCalendar is not enough.
+# systemd-tmpfiles-clean runs a day after it last ran, and drifts to whatever
+# hour the machine booted; fwupd-refresh adds a random delay of up to twelve
+# hours. Each gets a fixed morning time and loses its relative schedule.
+for spec in "systemd-tmpfiles-clean|07:30" "fwupd-refresh|10:00"; do
+  IFS='|' read -r timer at <<<"$spec"
+  if systemctl list-unit-files "${timer}.timer" --no-pager --no-legend \
+     2>/dev/null | grep -q .; then
+    override="/etc/systemd/system/${timer}.timer.d"
+    sudo mkdir -p "$override"
+    printf '[Timer]\nOnBootSec=\nOnUnitActiveSec=\nRandomizedDelaySec=0\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$at" \
+      | sudo tee "$override/quiet-hours.conf" >/dev/null
+    echo "  $timer → $at"
+  fi
+done
+
 sudo systemctl daemon-reload
 
 # Clean up the old version's systemd units if they exist.
@@ -76,8 +109,13 @@ fi
 # indexing, library scans, database dumps) and no phone uploads. The app itself
 # stays up for browsing, and the queued work resumes at six. This goes through
 # the API, so it needs a key; without one this part is skipped.
+# The Immich pause stops every user uploading from midnight to six, so it is
+# opt-in: the services are meant to be usable all night, and only background
+# work moves to the morning. Ask for it with IMMICH_QUIET=1.
 immich_quiet=false
-if sudo k3s kubectl -n pi get deploy immich-server >/dev/null 2>&1; then
+if [ "${IMMICH_QUIET:-0}" != 1 ]; then
+  echo "==> Immich uploads stay open all night (IMMICH_QUIET=1 to pause them)"
+elif sudo k3s kubectl -n pi get deploy immich-server >/dev/null 2>&1; then
   if ! sudo test -s /etc/immich-api.key; then
     echo "==> Immich: no API key at /etc/immich-api.key — overnight pause skipped"
     echo "    Create one in Immich (Settings > API Keys), then:"
@@ -221,6 +259,11 @@ echo "  apt-daily            07:00 ± 2h"
 echo "  apt-daily-upgrade    07:00 ± 2h"
 echo "  man-db               Sunday 10:00 ± 2h"
 echo "  fstrim               Monday 08:00"
+echo "  dpkg-db-backup       07:30"
+echo "  logrotate            07:30"
+echo "  e2scrub_all          Sunday 10:30"
+echo "  tmpfiles-clean       07:30"
+echo "  fwupd-refresh        10:00"
 echo "  torrents             $torrent_quiet"
 if [ "$immich_quiet" = true ]; then
   echo "  immich               jobs + uploads paused 00:00–06:00 (app stays up)"

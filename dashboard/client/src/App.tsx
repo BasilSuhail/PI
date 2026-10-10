@@ -4,7 +4,8 @@ import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView } from './components/FleetView';
 import { Alert, Box, Grid, Key, Moon, Power, Refresh, Sun, Thermo, Wifi } from './components/icons';
-import { getApps, getCredentials, getNodes, useHistory, useNetHistory, usePoll, usePowerHistory } from './lib/api';
+import { getApps, getCredentials, getNodes, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
+import type { FleetNode } from '../../shared/fleet';
 import { celsius, watts } from './lib/format';
 
 const POLL_MS = 3000;
@@ -19,6 +20,9 @@ type View = 'fleet' | 'detail' | 'apps' | 'files';
 const VIEWS: View[] = ['fleet', 'detail', 'apps', 'files'];
 const asView = (name: string): View | null =>
   (VIEWS as string[]).includes(name) ? (name as View) : null;
+
+const gpuTempOf = (n: FleetNode) => n.hw?.gpu?.tempC;
+const gpuPowerOf = (n: FleetNode) => n.hw?.gpu?.powerW;
 
 const isDark = () =>
   document.documentElement.dataset.theme
@@ -36,13 +40,20 @@ export default function App() {
   const history = useHistory(fleet.data);
   const powerHistory = usePowerHistory(fleet.data);
   const netHistory = useNetHistory(fleet.data);
+  const gpuTempHistory = useSeries(fleet.data, gpuTempOf);
+  const gpuPowerHistory = useSeries(fleet.data, gpuPowerOf);
 
   const nodes = useMemo(() => fleet.data ?? [], [fleet.data]);
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
   const liveNodes = nodes.filter((n) => n.online && !n.error);
-  const powered = liveNodes.filter((n) => n.power);
-  const totalW = powered.reduce((s, n) => s + (n.power?.watts ?? 0), 0);
-  const hot = liveNodes.reduce<typeof nodes[0] | null>((a, n) => ((n.temp?.cpuC ?? -1) > (a?.temp?.cpuC ?? -1) ? n : a), null);
+  const draws = liveNodes.map(nodeWatts).filter((w): w is number => w != null);
+  const totalW = draws.length ? draws.reduce((s, w) => s + w, 0) : null;
+  // The toolbar's one temperature: the average of every CPU and GPU reading,
+  // so the GPU counts toward it rather than living only inside the card.
+  const temps = liveNodes
+    .flatMap((n) => [n.temp?.cpuC, n.hw?.gpu?.tempC])
+    .filter((t): t is number => t != null);
+  const avgTemp = temps.length ? temps.reduce((a, t) => a + t, 0) / temps.length : null;
   const tsKey = (creds.data ?? []).find((c) => /tailscale/i.test(c.name));
   const allOnline = nodes.length > 0 && nodes.every((n) => n.online && !n.error);
 
@@ -59,15 +70,17 @@ export default function App() {
     try { localStorage.setItem('appearance', document.documentElement.dataset.theme!); } catch { /* private mode */ }
   };
 
+  // Wider with a second board, so the server's card keeps its size and the
+  // Pi gets its own column beside it.
   return (
-    <section class="shell">
+    <section class={`shell ${nodes.length > 1 ? 'wide' : ''}`}>
       <div class="toolbar">
         <div class="tb-left">
           <span class="tb-stat" title="fleet draw">
             <Power size={12} /><b>{watts(totalW)}</b>
           </span>
-          <span class="tb-stat" title="hottest board">
-            <Thermo size={12} /><b>{hot?.temp?.cpuC != null ? celsius(hot.temp.cpuC) : '—'}</b>
+          <span class="tb-stat" title="average of CPU and GPU">
+            <Thermo size={12} /><b>{celsius(avgTemp)}</b>
           </span>
           <span class={`tb-stat ${tsKey?.state === 'expired' ? 'crit' : tsKey?.state === 'soon' ? 'warn' : ''}`} title="Tailscale key expiry">
             <Key size={12} /><b>{tsKey?.daysLeft != null ? `${tsKey.daysLeft}d` : '—'}</b>
@@ -79,7 +92,7 @@ export default function App() {
 
         <div class="tb-center">
           <button class={`tbtn ${view === 'fleet' || view === 'detail' ? 'on' : ''}`} onClick={() => setView('fleet')}>
-            <Grid size={15} /> Fleet
+            <Grid size={15} /> {nodes.length === 1 ? 'Server' : 'Fleet'}
           </button>
           <button class={`tbtn ${view === 'apps' ? 'on' : ''}`} onClick={() => setView('apps')}>
             <Box size={15} /> Apps
@@ -121,6 +134,8 @@ export default function App() {
             tempHistory={history}
             powerHistory={powerHistory}
             netHistory={netHistory}
+            gpuTempHistory={gpuTempHistory}
+            gpuPowerHistory={gpuPowerHistory}
           />
         )}
         {view === 'apps' && (

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Pi-specific metrics Glances does not expose: power draw and throttle state,
-plus a read-only directory scanner, file reads, and cached thumbnails.
+"""Hardware metrics Glances does not expose: a Pi's power draw and throttle
+state; a desktop's CPU sensor, fans, supply rails, drive temperatures, GPU and
+Wi-Fi signal; plus a read-only directory scanner, file reads, and cached
+thumbnails.
 
 Stdlib only. Serves JSON on :9101. Degrades to capabilities-only on hardware
 without vcgencmd, so the same file can be dropped on any node.
@@ -217,7 +219,16 @@ def read_throttled():
 
 
 def read_temp():
-    """Prefer the sysfs thermal zone — present on any Linux box, not just Pi."""
+    """The CPU's own sensor where the board has one, then the thermal zone.
+
+    On a Pi, thermal_zone0 is the SoC. On an x86 desktop it is usually the
+    ACPI zone on the motherboard, which reads the room more than the CPU:
+    the PC reported 26° there with the Ryzen's own sensor in the forties. So
+    the CPU driver's reading wins when it exists.
+    """
+    cpu = _cpu_sensor_temp()
+    if cpu is not None:
+        return cpu
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
             return round(int(f.read().strip()) / 1000.0, 1)
@@ -299,6 +310,296 @@ def read_disks():
     return disks
 
 
+# Everything below reads hardware a Pi does not have: a desktop CPU's own
+# sensor, the motherboard's fan and voltage chip, drive temperatures, an NVIDIA
+# card and a Wi-Fi card. Each returns None or an empty list when the hardware
+# or its driver is absent, so the console draws only the rows a machine can
+# actually fill, and a row appears the day its driver is installed.
+HWMON = "/sys/class/hwmon"
+NVIDIA_SMI = shutil.which("nvidia-smi")
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _hwmon_chips():
+    """(name, path) for every hwmon device."""
+    try:
+        entries = sorted(os.listdir(HWMON))
+    except OSError:
+        return []
+    chips = []
+    for entry in entries:
+        path = os.path.join(HWMON, entry)
+        name = _read(os.path.join(path, "name"))
+        if name:
+            chips.append((name, path))
+    return chips
+
+
+def _sensor_inputs(path, kind):
+    """(index, raw value, label) for each <kind>N_input in one hwmon device."""
+    try:
+        files = os.listdir(path)
+    except OSError:
+        return []
+    found = []
+    for f in files:
+        m = re.fullmatch(kind + r"(\d+)_input", f)
+        if not m:
+            continue
+        raw = _read(os.path.join(path, f))
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        label = _read(os.path.join(path, "%s%s_label" % (kind, m.group(1))))
+        found.append((int(m.group(1)), value, label))
+    return sorted(found)
+
+
+def _cpu_sensor_temp():
+    """k10temp's Tctl on AMD, coretemp's package reading on Intel."""
+    for name, path in _hwmon_chips():
+        if name not in ("k10temp", "coretemp"):
+            continue
+        readings = _sensor_inputs(path, "temp")
+        preferred = [r for r in readings if r[2] in ("Tctl", "Tdie", "Package id 0")]
+        pick = (preferred or readings or [None])[0]
+        if pick:
+            return round(pick[1] / 1000.0, 1)
+    return None
+
+
+def read_cpu_model():
+    """The CPU's marketing name. A Pi reports its board through the device
+    tree instead, so this is the x86 half of the same question."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    name = line.split(":", 1)[1].strip()
+                    # "AMD Ryzen 5 1600 Six-Core Processor" says six cores
+                    # twice once the card has its own count.
+                    return re.sub(r"\s+\S+-Core Processor$", "", name)
+    except OSError:
+        pass
+    return None
+
+
+FANS_STATE = os.environ.get("FANS_STATE", "/run/pi-fans.json")
+
+
+def read_fans():
+    """Every fan the board can see turning, plus every fan the fan controller
+    manages, which may be stopped on purpose.
+
+    A header reading 0 rpm usually has nothing plugged into it, so it is left
+    out, unless the controller (deploy/fan-curve.py) says it switched that fan
+    off. The controller also knows which header is which fan, so its names win
+    over the chip's "fan 2".
+    """
+    managed = {}
+    try:
+        with open(FANS_STATE) as f:
+            managed = json.load(f).get("fans", {})
+    except (OSError, ValueError):
+        pass
+    fans = []
+    for name, path in _hwmon_chips():
+        on_board = name.startswith("it8")
+        for index, rpm, label in _sensor_inputs(path, "fan"):
+            known = managed.get("fan%d" % index) if on_board else None
+            if rpm <= 0 and not known:
+                continue
+            fans.append({
+                "label": (known or {}).get("label") or label or "fan %d" % index,
+                "rpm": rpm,
+                "managed": bool(known),
+            })
+    return fans
+
+
+def read_volts():
+    """Labelled supply rails only.
+
+    A Super I/O chip reports its voltage inputs after a resistor divider, so an
+    unlabelled in3 reading 2.0 V may be the 12 V rail. Without the board's
+    scaling, a number like that is wrong, so only rails the driver has
+    named, and therefore scaled, are reported.
+    """
+    rails = []
+    for name, path in _hwmon_chips():
+        if name in ("nvme", "drivetemp"):
+            continue
+        for index, millivolts, label in _sensor_inputs(path, "in"):
+            if label:
+                rails.append({"label": label, "volts": round(millivolts / 1000.0, 3)})
+    return rails
+
+
+def read_drive_temps():
+    """{block device: °C} from the drivetemp and nvme hwmon drivers.
+
+    drivetemp is a kernel module that is not loaded by default; install.sh
+    loads it. Without it, SATA drives simply have no temperature here.
+    """
+    temps = {}
+    for name, path in _hwmon_chips():
+        if name not in ("drivetemp", "nvme"):
+            continue
+        readings = _sensor_inputs(path, "temp")
+        if not readings:
+            continue
+        celsius = round(readings[0][1] / 1000.0, 1)
+        device = os.path.realpath(os.path.join(path, "device"))
+        try:
+            children = os.listdir(os.path.join(device, "block")) if name == "drivetemp" else os.listdir(device)
+        except OSError:
+            continue
+        for child in children:
+            if re.fullmatch(r"sd[a-z]+|nvme\d+n\d+", child):
+                temps[child] = celsius
+    return temps
+
+
+_gpu_held = {"at": 0.0, "value": None}
+GPU_TTL_SEC = 4
+
+
+def _smi_number(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None  # "[N/A]", "[Not Supported]"
+
+
+def _smi(fields):
+    out = subprocess.run(
+        [NVIDIA_SMI, "--query-gpu=" + fields, "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=4,
+    )
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return [v.strip() for v in out.stdout.strip().splitlines()[0].split(",")]
+
+
+def read_gpu():
+    """The first NVIDIA card, through nvidia-smi.
+
+    Absent until the proprietary driver is installed, which is the normal
+    state of a fresh install. Held for a few seconds because nvidia-smi takes
+    a noticeable fraction of a second and the console polls every three.
+    The encoder and decoder are asked separately: an older driver that does
+    not know those fields fails the whole query, and that should cost the two
+    numbers, not the card.
+    """
+    if not NVIDIA_SMI:
+        return None
+    now = time.time()
+    if now - _gpu_held["at"] < GPU_TTL_SEC:
+        return _gpu_held["value"]
+    gpu = None
+    try:
+        core = _smi("name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,fan.speed")
+        if core:
+            mem_used, mem_total = _smi_number(core[2]), _smi_number(core[3])
+            gpu = {
+                "name": core[0],
+                "utilPct": _smi_number(core[1]),
+                # MiB from nvidia-smi; bytes everywhere else in the console.
+                "memUsedBytes": int(mem_used * 1048576) if mem_used is not None else None,
+                "memTotalBytes": int(mem_total * 1048576) if mem_total is not None else None,
+                "tempC": _smi_number(core[4]),
+                "powerW": _smi_number(core[5]),
+                "fanPct": _smi_number(core[6]),
+                "encoderPct": None,
+                "decoderPct": None,
+            }
+            codec = _smi("utilization.encoder,utilization.decoder")
+            if codec:
+                gpu["encoderPct"] = _smi_number(codec[0])
+                gpu["decoderPct"] = _smi_number(codec[1])
+    except (subprocess.SubprocessError, OSError, IndexError):
+        gpu = None
+    _gpu_held.update(at=now, value=gpu)
+    return gpu
+
+
+def read_wifi():
+    """Signal strength per wireless interface, from /proc/net/wireless.
+
+    A file rather than `iw`: the unit allows only IP sockets, and iw talks
+    netlink. The level column is already in dBm on every current driver.
+    """
+    try:
+        with open("/proc/net/wireless") as f:
+            lines = f.read().splitlines()[2:]
+    except OSError:
+        return []
+    found = []
+    for line in lines:
+        if ":" not in line:
+            continue
+        iface, rest = line.split(":", 1)
+        cols = rest.split()
+        if len(cols) < 3:
+            continue
+        try:
+            level = float(cols[2].rstrip("."))
+        except ValueError:
+            continue
+        found.append({"iface": iface.strip(), "signalDbm": round(level)})
+    return found
+
+
+_rapl_last = {}
+
+
+def read_cpu_watts():
+    """CPU package power from the RAPL energy counter, as a rate between two
+    reads. The counter is readable by root only on current kernels, and the
+    shim does not run as root, so on most boards this is None. It is here so
+    the number appears without a code change if that is ever granted."""
+    base = "/sys/class/powercap/intel-rapl:0"
+    energy = _read(base + "/energy_uj")
+    if energy is None:
+        return None
+    try:
+        uj = int(energy)
+        wrap = int(_read(base + "/max_energy_range_uj") or 0)
+    except ValueError:
+        return None
+    now = time.time()
+    prev = _rapl_last.get("v")
+    _rapl_last["v"] = (now, uj)
+    if not prev or now - prev[0] < 0.5:
+        return None
+    delta = uj - prev[1]
+    if delta < 0 and wrap:
+        delta += wrap
+    if delta < 0:
+        return None
+    return round(delta / 1e6 / (now - prev[0]), 1)
+
+
+def read_hw():
+    return {
+        "cpuModel": read_cpu_model(),
+        "cpuWatts": read_cpu_watts(),
+        "fans": read_fans(),
+        "volts": read_volts(),
+        "driveTemps": read_drive_temps(),
+        "gpu": read_gpu(),
+        "wifi": read_wifi(),
+    }
+
+
 def collect():
     power = read_power()
     throttled = read_throttled()
@@ -318,6 +619,7 @@ def collect():
         "throttled": throttled,
         "capabilities": capabilities,
         "disks": read_disks(),
+        "hw": read_hw(),
     }
 
 

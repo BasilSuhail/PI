@@ -62,6 +62,40 @@ export interface DiskStats {
   usedPct: number;
   /** Spins, rather than flashes. Null when the agent is too old to say. */
   rotational?: boolean | null;
+  /** Null until drivetemp is loaded, or for a drive it cannot read. */
+  tempC?: number | null;
+}
+
+/**
+ * Hardware a Pi does not have, read by the shim on a desktop board. Every part
+ * is optional in practice: an empty list or a null means the driver is not
+ * installed yet, and the card leaves that row out rather than inventing it.
+ */
+export interface GpuStats {
+  name: string;
+  utilPct: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  tempC: number | null;
+  powerW: number | null;
+  fanPct: number | null;
+  /** NVENC and NVDEC load: what a Jellyfin transcode shows up as. */
+  encoderPct: number | null;
+  decoderPct: number | null;
+}
+
+export interface HwStats {
+  cpuModel: string | null;
+  /** CPU package power. Needs root to read on current kernels, so usually null. */
+  cpuWatts: number | null;
+  /** `managed`: the fan controller sets this one, so 0 rpm means switched off. */
+  fans: Array<{ label: string; rpm: number; managed?: boolean }>;
+  /** Only rails the sensor driver has labelled, and therefore scaled. */
+  volts: Array<{ label: string; volts: number }>;
+  /** Keyed by block device: sda, nvme0n1. */
+  driveTemps: Record<string, number>;
+  gpu: GpuStats | null;
+  wifi: Array<{ iface: string; signalDbm: number }>;
 }
 
 export interface NetStats {
@@ -99,6 +133,8 @@ export interface FleetNode {
   power: PowerStats | null;
   disks: DiskStats[];
   net: NetStats[];
+  /** Null from an agent older than the desktop sensors. */
+  hw: HwStats | null;
 
   capabilities: Capability[];
   /** Busiest few, for the card's table. Full list stays on the detail route. */

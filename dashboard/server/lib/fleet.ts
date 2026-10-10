@@ -30,6 +30,7 @@ const offlineNode = (device: TailnetDevice, ip: string | null): FleetNode => ({
   power: null,
   disks: [],
   net: [],
+  hw: null,
   capabilities: [],
   topProcesses: [],
 });
@@ -236,7 +237,8 @@ const buildNode = async (
     stale,
     lastSeen: device.lastSeen,
     role: roleFor(device, roles),
-    model: probe.shim?.model ?? null,
+    // A Pi names its board; a desktop has no device tree, so its CPU stands in.
+    model: probe.shim?.model ?? probe.shim?.hw?.cpuModel ?? null,
     os: probe.system.os,
     arch: probe.system.arch,
     kernel: probe.system.kernel,
@@ -248,6 +250,7 @@ const buildNode = async (
     disks: withRotation(probe.disks, probe.shim),
     cache,
     net: probe.net,
+    hw: probe.shim?.hw ?? null,
     capabilities,
     topProcesses: topBySortableMetric(probe.topProcesses),
   };
@@ -258,7 +261,7 @@ const buildNode = async (
  * alone would hide a process that is idle but holds a lot of memory, so the
  * union of the leaders in every sortable column is sent instead.
  */
-const CARD_ROWS = 6;
+const CARD_ROWS = 8;
 
 const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
   const keep = new Map<number, ProcessRow>();
@@ -293,10 +296,11 @@ const withRotation = (
   shim: Awaited<ReturnType<typeof fetchShim>>,
 ): DiskStatsValue[] => {
   const spins = new Map((shim?.disks ?? []).map((d) => [d.device, d.rotational]));
-  return disks.map((d) => ({
-    ...d,
-    rotational: spins.get(parentDisk(d.device.replace(/^\/dev\//, ''))) ?? null,
-  }));
+  const temps = shim?.hw?.driveTemps ?? {};
+  return disks.map((d) => {
+    const disk = parentDisk(d.device.replace(/^\/dev\//, ''));
+    return { ...d, rotational: spins.get(disk) ?? null, tempC: temps[disk] ?? null };
+  });
 };
 
 type DiskStatsValue = FleetNode['disks'][number];

@@ -84,6 +84,10 @@ HOST_ALIASES="$(sudo tailscale status --json 2>/dev/null | jq -c '
 case "$HOST_ALIASES" in
   ""|"[]") echo "Could not list tailnet machines from tailscaled. Is it up?" >&2; exit 1 ;;
 esac
+# Kuma is the first app on a fresh cluster, and the namespace used to come from
+# the dashboard install, so on a new machine this failed with "namespaces pi
+# not found". Created here, idempotently, so the order does not matter.
+kube create namespace pi --dry-run=client -o yaml | kube apply -f - >/dev/null
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" -e "s|__HOST_ALIASES__|${HOST_ALIASES}|g" \
   "${REPO_ROOT}/k8s/uptime-kuma.yaml" | apply_guarded
 kube -n pi rollout status deployment/uptime-kuma --timeout=300s
