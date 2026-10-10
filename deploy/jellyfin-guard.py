@@ -47,6 +47,9 @@ def env_file(path):
             for line in f:
                 if "=" in line and not line.lstrip().startswith("#"):
                     k, v = line.split("=", 1)
+                    # A note after the value: "5   # failed logins".
+                    if " #" in v:
+                        v = v.split(" #", 1)[0]
                     out[k.strip()] = v.strip().strip('"')
     except OSError:
         pass
