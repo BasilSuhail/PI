@@ -228,8 +228,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    "998.94 GB / 984.60 GB"; the mount box fits "/srv/storage" and is the same
    size for "/" as for the longest. */
 .mrow.drow>.fig{flex:0 0 20.5ch}
-.mrow.drow>.on-disk{flex:0 0 13ch;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mrow.drow>.on-disk.temp{flex:0 0 4.5ch}
+/* The box's width includes its padding and border (8px) and its letter
+   spacing, so the text widths get that added rather than cut to an ellipsis. */
+.mrow.drow>.on-disk{flex:0 0 calc(13ch + 10px);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow.drow>.on-disk.temp{flex:0 0 calc(4ch + 10px)}
 /* A phone has no room for fixed columns: the bar would shrink to a stub. */
 @media (max-width:520px){.mrow.drow>.fig,.mrow.drow>.on-disk,.mrow.drow>.on-disk.temp{flex:none}}
 /* Stacked on a phone, where two meters side by side leave neither enough bar
