@@ -6,8 +6,8 @@ export const StatusDot = ({ online, size = 'md' }: { online: boolean; size?: 'sm
 
 export const Meter = ({ value, tone = '' }: { value: number; tone?: string }) => (
   <div class="meter">
-    {/* 3% floor keeps a sliver visible at zero so the row does not read as empty. */}
-    <span class={`mfill ${tone}`} style={{ width: `${Math.min(Math.max(value, 3), 100)}%` }} />
+    {/* Exact, no floor: 0% is an empty bar, so a bar never shows use that is not there. */}
+    <span class={`mfill ${tone}`} style={{ width: `${Math.min(Math.max(value, 0), 100)}%` }} />
   </div>
 );
 
