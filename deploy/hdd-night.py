@@ -5,7 +5,7 @@ In the closed case the drives sit around 35° doing nothing, so a fan rule at
 35 runs nearly all the time. This measures what "normal" is. For the night,
 the fan's drive trigger moves up to 42° (still a safe ceiling: the drives are
 rated to 60°), so the fan does not hide the drives' own behaviour; the CPU
-and GPU rules are untouched. At 09:00 the old setting comes back and a report
+and GPU rules are untouched. At 12:00 the old setting comes back and a report
 goes to Discord with a recommended start temperature.
 
   sudo python3 deploy/hdd-night.py start    record from now, trigger at 42° for the night
@@ -170,13 +170,13 @@ def start():
     unit("pi-hdd-log.service", f"[Unit]\nDescription=Hard drive temperatures, one reading\n\n[Service]\nType=oneshot\nExecStart={BIN} log\n")
     unit("pi-hdd-log.timer", "[Unit]\nDescription=Hard drive temperatures, every minute\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=5s\n\n[Install]\nWantedBy=timers.target\n")
     unit("pi-hdd-end.service", f"[Unit]\nDescription=End the hard drive night: restore the fan setting, post the report\n\n[Service]\nType=oneshot\nExecStart={BIN} end\n")
-    unit("pi-hdd-end.timer", "[Unit]\nDescription=End the hard drive night at 09:00\n\n[Timer]\nOnCalendar=*-*-* 09:00:00\n\n[Install]\nWantedBy=timers.target\n")
+    unit("pi-hdd-end.timer", "[Unit]\nDescription=End the hard drive night at 12:00\n\n[Timer]\nOnCalendar=*-*-* 12:00:00\n\n[Install]\nWantedBy=timers.target\n")
     subprocess.run(["systemctl", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "enable", "--now", "pi-hdd-log.timer", "pi-hdd-end.timer"], check=True)
     set_drive_trigger(NIGHT_ON, NIGHT_OFF)
     log()
     now = drives()
-    print("Recording every minute until 09:00.")
+    print("Recording every minute until 12:00.")
     print("Bottom fan's drive trigger for tonight: %d° (off below %d°). CPU and GPU rules unchanged." % (NIGHT_ON, NIGHT_OFF))
     for _, model, t in now:
         print("  %-24s %.0f°" % (model, t))
