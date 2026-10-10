@@ -10,6 +10,7 @@ in the message comes from a log entry, a counter or a reading.
   a reboot during the day
   error messages that were not there the day before
   family devices reaching the apps through a slow relay (pi-paths)
+  Jellyfin: failed logins, new devices, public access switched off (jellyfin-guard)
   on Mondays, the to-do list in /etc/pi-report/todo.txt
 
 Config: /etc/pi-report/env (DISCORD_WEBHOOK=...). State, for spotting new
@@ -253,6 +254,16 @@ def relays():
     return lines
 
 
+GUARD = "/usr/local/lib/pi/jellyfin-guard"
+
+
+def jellyfin_logins():
+    """Failed logins, new devices and Funnel shut-offs, from jellyfin-guard."""
+    if not os.access(GUARD, os.X_OK):
+        return []
+    return [l for l in sh([GUARD, "--summary"]).splitlines() if l.strip()]
+
+
 def todo():
     if datetime.date.today().weekday() != 0:
         return []
@@ -311,6 +322,7 @@ def main():
         ("Problems", problems),
         ("New errors (not seen the day before)", fresh),
         ("Slow connections", relays()),
+        ("Jellyfin logins", jellyfin_logins()),
     ]
     sections.append(("To do (Mondays)", todo()))
     found = any(lines for _, lines in sections)
