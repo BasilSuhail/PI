@@ -34,11 +34,11 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # fan at 0%; pwm1 drives the CPU cooler, which bottoms out near 800 rpm and
 # never stops. Duty is 0-255.
 # Each case fan answers only to the heat it can move: the bottom intake blows
-# across the hard drives and is the only one that comes on for them; CPU and
-# GPU heat brings all three. `version` lets install-fan-curve.sh replace a
+# across the hard drives and comes on for them alone; the exhaust and the top
+# intake move the CPU's and GPU's heat. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 5,
+    "version": 6,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
@@ -47,7 +47,7 @@ DEFAULT = {
             # The front fans' cables were swapped on 10 Oct 2026: pwm3 is now
             # the top fan, pwm4 the bottom one, which blows over the drives.
             "pwm3": {"label": "Intake top", "watch": ["cpu", "gpu"]},
-            "pwm4": {"label": "Intake bottom", "watch": ["cpu", "gpu", "drive"]},
+            "pwm4": {"label": "Intake bottom", "watch": ["drive"]},
         },
         # A stopped fan needs a push to start, then holds a lower duty. 77/255
         # (30%) is the lowest all three case fans kept turning at in
@@ -58,14 +58,13 @@ DEFAULT = {
         # a config written before this existed keeps its tuning and gets it.
         "min_on_sec": 60,
         "max": 255,
-        # Early and gentle: with the case closed there is no airflow at all
-        # while every case fan is off, so they come on at their slowest well
-        # before anything is hot, and ramp to full from there. The drive
-        # threshold matches the dashboard's red box (above 35).
-        "on": {"cpu": 45, "gpu": 45, "drive": 35},
+        # 45 for everything. The drives idle around 35 in the closed case,
+        # which is where they last longest; airflow matters from the mid 40s.
+        # The CPU and GPU get air at their slowest well before they are hot.
+        "on": {"cpu": 45, "gpu": 45, "drive": 45},
         # Lower than "on", so a reading hovering at the threshold does not
         # switch a fan on and off every few seconds.
-        "off": {"cpu": 42, "gpu": 42, "drive": 33},
+        "off": {"cpu": 42, "gpu": 42, "drive": 42},
         "full": {"cpu": 80, "gpu": 80, "drive": 50},
     },
 }
