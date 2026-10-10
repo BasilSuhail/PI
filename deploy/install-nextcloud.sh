@@ -199,6 +199,11 @@ done
 occ app:install impersonate >/dev/null 2>&1 || occ app:enable impersonate >/dev/null 2>&1 || true
 # With the dashboard gone, a login lands on the files.
 occ config:system:set defaultapp --value=files >/dev/null
+# The vault's backups (on HDD2 and in the SSD's Apps) are not readable by
+# Nextcloud, on purpose. A folder it cannot open has no size, and that left
+# the whole disk showing "Pending". Leaving every folder named Vaultwarden out
+# of Nextcloud fixes the sizes and keeps the vault out of the file browser.
+occ config:system:set excluded_directories 0 --value=Vaultwarden >/dev/null
 echo "  apps             storage only; opens straight to Files; admin can impersonate"
 
 # The admin's three disks, as external storage visible to the admin only.
