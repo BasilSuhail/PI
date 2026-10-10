@@ -38,14 +38,16 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # GPU heat brings all three. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 2,
+    "version": 3,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
             # Short enough to fit a dashboard cell; the docs give the long form.
             "pwm2": {"label": "Exhaust", "watch": ["cpu", "gpu"]},
-            "pwm3": {"label": "Intake bottom", "watch": ["cpu", "gpu", "drive"]},
-            "pwm4": {"label": "Intake top", "watch": ["cpu", "gpu"]},
+            # The front fans' cables were swapped on 10 Oct 2026: pwm3 is now
+            # the top fan, pwm4 the bottom one, which blows over the drives.
+            "pwm3": {"label": "Intake top", "watch": ["cpu", "gpu"]},
+            "pwm4": {"label": "Intake bottom", "watch": ["cpu", "gpu", "drive"]},
         },
         # A stopped fan needs a push to start, then holds a lower duty.
         "start": 102,
