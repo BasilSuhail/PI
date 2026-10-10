@@ -49,6 +49,10 @@ DEFAULT = {
         },
         # A stopped fan needs a push to start, then holds a lower duty.
         "start": 102,
+        # Once on, a fan stays on at least this long, so a short burst of work
+        # does not switch it on and off every minute. Read with a default, so
+        # a config written before this existed keeps its tuning and gets it.
+        "min_on_sec": 120,
         "max": 255,
         "on": {"cpu": 60, "gpu": 60, "drive": 40},
         # Lower than "on", so a reading hovering at the threshold does not
@@ -201,10 +205,12 @@ def step(conf, path, state):
         watched = {src: readings[src] for src in fan["watch"] if readings[src] is not None}
         hot = lambda lim: any(t >= lim[src] for src, t in watched.items())
         on = state["case_on"].get(p, False)
+        held = time.time() - state["on_since"].get(p, 0) < c.get("min_on_sec", 120)
         if not on and hot(c["on"]):
             on = True
+            state["on_since"][p] = time.time()
             log("%s on: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
-        elif on and not hot(c["off"]):
+        elif on and not hot(c["off"]) and not held:
             on = False
             log("%s off: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
         state["case_on"][p] = on
@@ -252,7 +258,7 @@ def run(once=False):
         write(os.path.join(path, p + "_enable"), 1)
     log("controlling %s" % ", ".join(headers(conf)))
 
-    state = {"case_on": {}, "last": {}}
+    state = {"case_on": {}, "last": {}, "on_since": {}}
     while True:
         try:
             step(conf, path, state)
