@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The admin's own files are a folder on HDD1 ("Admin Storage"), reached until
-# now only through the whole-disk /HDD1 view. Nextcloud never counts external
+# The admin's own files are a folder on HDD2 ("Admin Storage"), reached until
+# now only through the whole-disk /HDD2 view. Nextcloud never counts external
 # storage, so the admin showed "0 B used" with hundreds of GB in that folder.
 #
 # This mounts that folder over the admin's Nextcloud home (data/<admin>/files)
@@ -10,14 +10,14 @@
 # on disk underneath and comes back if this is undone.
 #
 # Called by install-nextcloud.sh; safe to run on its own and to re-run.
-#   ADMIN_HOME_DIR   the folder (default: "$HDD1_DIR/Admin Storage"); skipped
+#   ADMIN_HOME_DIR   the folder (default: "$HDD2_DIR/Admin Storage"); skipped
 #                    when it does not exist
 #   UNDO=1           take the mount out again
 set -euo pipefail
 
-HDD1_DIR="${HDD1_DIR:-/srv/storage}"
+HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
 POOL_DIR="${POOL_DIR:-/srv/pool}"
-ADMIN_HOME_DIR="${ADMIN_HOME_DIR:-$HDD1_DIR/Admin Storage}"
+ADMIN_HOME_DIR="${ADMIN_HOME_DIR:-$HDD2_DIR/Admin Storage}"
 VOL=admin-home
 
 kube() { sudo k3s kubectl "$@"; }
