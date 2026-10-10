@@ -194,7 +194,11 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    it. */
 .mrow{display:flex;align-items:center;gap:9px;margin:6px 0;
   font-family:var(--mono);font-size:10px}
-.mrow>.lbl{flex:0 0 46px;color:var(--muted);letter-spacing:.02em}
+/* A label is as wide as its name, at least four characters, so the bar starts
+   the same gap after the name as it ends before the figure. Four-character
+   names (SSD1, HDD2, VRAM, SWAP) line their bars up; a three-letter one sits
+   one character further off; a longer one pushes its bar along. */
+.mrow>.lbl{flex:0 0 auto;min-width:4ch;color:var(--muted);letter-spacing:.02em}
 .mrow>.lbl.dim{color:var(--faint);font-size:9px}
 .mrow>.fig{flex:none;text-align:right;color:var(--ink-2);font-weight:400;font-size:11px;
   font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -202,7 +206,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
    one row where two rows cost two. */
 .mrow.duo{gap:14px}
 .duo .half{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
-.duo .half>.lbl{flex:0 0 46px}
+.duo .half>.lbl{flex:0 0 auto;min-width:4ch}
 .duo .half>.fig{font-size:10px}
 /* Which disk these bytes are actually on. Small enough to read as an
    annotation on the figure rather than a value of its own.
@@ -397,7 +401,7 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 /* Network strip — full width graph like the sensor row */
 .net-strip{display:flex;align-items:center;gap:9px;margin:8px 0 0;
   font-family:var(--mono);font-size:10px}
-.net-strip>.lbl{flex:0 0 46px}
+.net-strip>.lbl{flex:0 0 auto;min-width:4ch}
 .net-graph-wrap{flex:1;min-width:40px}
 .net-graph{height:24px}
 .net-rates{flex:none;font-family:var(--mono);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
