@@ -38,7 +38,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -69,6 +69,7 @@ help:
 	@echo "make hw-watchdog               the board reboots itself if it hangs (SP5100 on the PC)"
 	@echo "make fans                      fans by temperature instead of the BIOS floor (needs it87)"
 	@echo "make gpu                       NVIDIA card into k3s; Jellyfin transcodes on it"
+	@echo "make paths                     watcher: does each family device reach the apps direct or by relay"
 	@echo "make sata NODE=jug2       report the PCIe port and the SATA HAT. Changes nothing."
 	@echo "make bootstrap NODE=jug3  once per node: deploy key + checkout"
 	@echo
@@ -199,6 +200,10 @@ gpu:
 # The PC's fans by temperature instead of the BIOS floor. Needs the it87 driver.
 fans:
 	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-fan-curve.sh'
+
+# Every minute, how each family device in use reaches the apps: direct or relay.
+paths:
+	ssh $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-tailnet-paths.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)
