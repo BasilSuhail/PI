@@ -218,6 +218,15 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
 .mfill.gpu{background:var(--sheen),linear-gradient(var(--gpu-1),var(--gpu-2))}
 .on-disk.temp{color:var(--muted)}
+/* Drive rows share one set of columns, so every bar is the same length and
+   the figures, mounts and temperatures line up down the list. The figure fits
+   "998.94 GB / 984.60 GB"; the mount box fits "/srv/storage" and is the same
+   size for "/" as for the longest. */
+.mrow.drow>.fig{flex:0 0 20.5ch}
+.mrow.drow>.on-disk{flex:0 0 13ch;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow.drow>.on-disk.temp{flex:0 0 4.5ch}
+/* A phone has no room for fixed columns: the bar would shrink to a stub. */
+@media (max-width:520px){.mrow.drow>.fig,.mrow.drow>.on-disk,.mrow.drow>.on-disk.temp{flex:none}}
 /* Stacked on a phone, where two meters side by side leave neither enough bar
    to read. Once stacked they are ordinary rows and have to line up with the
    ones above: same label column, same margins, nothing about them special. */

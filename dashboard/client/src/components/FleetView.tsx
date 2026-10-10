@@ -389,7 +389,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           <Sec title="DRIVES" note={`${disks.length} connected`} />
           {disks.map((d, i) => (
-            <div class="mrow" key={d.device} title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used`}>
+            <div class="mrow drow" key={d.device} title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used`}>
               <span class="lbl">{labels[i]}</span>
               <Meter value={d.usedPct} tone={diskTone(d.usedPct)} />
               {/* Used and total rather than a percentage: "29.34 GB / 984.37 GB"
