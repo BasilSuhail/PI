@@ -397,7 +397,11 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                   is how a download is watched. */}
               <strong class="fig">{bytes(d.usedBytes)} / {bytes(d.totalBytes)}</strong>
               <span class="on-disk">{d.mount}</span>
-              {d.tempC != null && <span class="on-disk temp">{Math.round(d.tempC)}°</span>}
+              {/* Red above 35°: hard drives last longest under about 40°, and the
+                  bottom front fan only starts at 40°, so this is the early warning. */}
+              {d.tempC != null && (
+                <span class={`on-disk temp${Math.round(d.tempC) > 35 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
+              )}
             </div>
           ))}
 
