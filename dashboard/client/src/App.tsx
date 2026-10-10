@@ -70,8 +70,10 @@ export default function App() {
     try { localStorage.setItem('appearance', document.documentElement.dataset.theme!); } catch { /* private mode */ }
   };
 
+  // Wider with a second board, so the server's card keeps its size and the
+  // Pi gets its own column beside it.
   return (
-    <section class="shell">
+    <section class={`shell ${nodes.length > 1 ? 'wide' : ''}`}>
       <div class="toolbar">
         <div class="tb-left">
           <span class="tb-stat" title="fleet draw">

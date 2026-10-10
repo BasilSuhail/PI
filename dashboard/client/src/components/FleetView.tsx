@@ -105,8 +105,13 @@ const MiniGraph = ({ series, series2, color, color2 = 'var(--gpu-2)', min, max, 
   );
 };
 
+/**
+ * The network strip's graph, drawn like the temperature one at the strip's own
+ * height: download solid over its shaded area, upload dashed, three guide
+ * lines, and the peak the scale reaches labelled in the corner.
+ */
 const NetGraph = ({ series }: { series: Array<[number, number]> }) => {
-  const W = 100, H = 16;
+  const W = 100, H = 24;
   const peak = Math.max(1024, ...series.map(([rx, tx]) => Math.max(rx, tx)));
   const y = (v: number) => H - (v / peak) * (H - 2) - 1;
   const line = (pick: (p: [number, number]) => number) =>
@@ -116,12 +121,48 @@ const NetGraph = ({ series }: { series: Array<[number, number]> }) => {
   return (
     <div class="mgraph-wrap net-graph-wrap">
       <svg class="mgraph net-graph" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-        {[0.5].map((f) => (
+        {[0.25, 0.5, 0.75].map((f) => (
           <line class="mgl" key={f} x1="0" x2={W} y1={(H * f).toFixed(1)} y2={(H * f).toFixed(1)} vector-effect="non-scaling-stroke" />
         ))}
-        <polyline points={line((p) => p[0])} fill="none" stroke="var(--aqua-2)" stroke-width="1.2" stroke-opacity=".85" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
-        <polyline points={line((p) => p[1])} fill="none" stroke="var(--muted)" stroke-width="1" stroke-opacity=".55" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+        <polygon points={`0,${H} ${line((p) => p[0])} ${W},${H}`} fill="var(--aqua-2)" opacity=".12" />
+        <polyline points={line((p) => p[0])} fill="none" stroke="var(--aqua-2)" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+        <polyline points={line((p) => p[1])} fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
       </svg>
+      <span class="mg-lab mg-max net-peak">{bytesPerSec(peak)}</span>
+    </div>
+  );
+};
+
+/**
+ * Temperature and power in one graph, for the narrow card: each line on its
+ * own scale, temperature's labels on the right and power's on the left.
+ */
+const DualGraph = ({ temp, power }: { temp: number[]; power: number[] }) => {
+  const W = 100, H = 40;
+  const tr = (() => {
+    if (!temp.length) return { min: 30, max: 60 };
+    const lo = Math.floor(Math.min(...temp) - 2), hi = Math.ceil(Math.max(...temp) + 2);
+    return { min: lo, max: Math.max(hi, lo + 10) };
+  })();
+  const pr = powerRange(power);
+  const line = (s: number[], lo: number, hi: number) => s.length >= 2
+    ? s.map((v, i) => `${((i / (s.length - 1)) * W).toFixed(2)},${(H - ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo || 1)) * (H - 2) - 1).toFixed(2)}`).join(' ')
+    : `0,${H - 2} ${W},${H - 2}`;
+  const t = line(temp, tr.min, tr.max);
+  return (
+    <div class="mgraph-wrap">
+      <svg class="mgraph dual" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line class="mgl" key={f} x1="0" x2={W} y1={(H * f).toFixed(1)} y2={(H * f).toFixed(1)} vector-effect="non-scaling-stroke" />
+        ))}
+        <polygon points={`0,${H} ${t} ${W},${H}`} fill="var(--aqua-2)" opacity=".12" />
+        <polyline points={t} fill="none" stroke="var(--aqua-2)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+        {power.length >= 2 && (
+          <polyline points={line(power, pr.min, pr.max)} fill="none" stroke="var(--crit)" stroke-width="1.3" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+        )}
+      </svg>
+      <span class="mg-lab mg-max">{tr.max}°</span><span class="mg-lab mg-min">{tr.min}°</span>
+      {power.length >= 2 && <><span class="mg-lab mg-max mg-left">{pr.max}W</span><span class="mg-lab mg-min mg-left">{pr.min}W</span></>}
     </div>
   );
 };
@@ -158,10 +199,12 @@ const Sec = ({ title, note }: { title: string; note?: string | null }) => (
   <div class="sec">{title}{note && <small>{note}</small>}</div>
 );
 
-const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTempHistory, gpuPowerHistory }: {
+const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTempHistory, gpuPowerHistory, compact = false }: {
   node: FleetNode; onOpen: (id: string) => void;
   tempHistory: number[]; powerHistory: number[]; netHistory: Array<[number, number]>;
   gpuTempHistory: number[]; gpuPowerHistory: number[];
+  /** The narrow card beside the server: one column, no cores, one graph, a two-column table. */
+  compact?: boolean;
 }) => {
   const [sort, setSort] = useState<SortKey>('cpuPct');
   const unreachable = node.online && !!node.error;
@@ -221,12 +264,14 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   const rows = [...node.topProcesses].sort((a, b) => sortMetric(b, sort) - sortMetric(a, sort)).slice(0, ROWS);
 
   const drawW = nodeWatts(node);
+  const tabs = compact ? TABS.filter((t) => t.key === 'cpuPct' || t.key === 'memBytes') : TABS;
   const threads = node.cpu?.perCore ?? [];
   // Name, address and specs on one line in one size, so the card starts at
   // once and the rows below it get the room.
   const specs = [
     node.role,
-    node.model,
+    // "Raspberry Pi 5 Model B Rev 1.0" is a lot of words for "Raspberry Pi 5".
+    compact ? node.model?.replace(/ Model .*$/, '') : node.model,
     threads.length ? `${threads.length} threads` : null,
     gpu ? gpuShort(gpu.name) : null,
     node.mem ? capacity(node.mem.totalBytes) : null,
@@ -248,10 +293,10 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   const wired = node.net.length > 0 && node.net.every((n) => !n.iface.startsWith('wl'));
 
   return (
-    <article class="card">
+    <article class={`card ${compact ? 'compact' : ''}`}>
       <div class="c-line">
         <StatusDot online size="sm" />
-        <p><b>{node.name}</b> · {node.tailscaleIp}{specs.length ? ` · ${specs.join(' · ')}` : ''}</p>
+        <p><b>{node.name}</b>{compact ? '' : ` · ${node.tailscaleIp}`}{specs.length ? ` · ${specs.join(' · ')}` : ''}</p>
       </div>
 
       <div class="c-body">
@@ -264,7 +309,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           {/* Threads get a row of their own: twelve of them beside two graphs
               left neither enough room to read. */}
-          {threads.length > 0 && (
+          {!compact && threads.length > 0 && (
             <div class="cores">
               <div class="cores-scale"><span>100</span><span>50</span><span>0</span></div>
               <div class={`cores-grid ${threads.length > 6 ? 'many' : ''}`} style={{ '--n': threads.length }}>
@@ -281,9 +326,27 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             </div>
           )}
 
+          {compact && (
+            <div class="sense one">
+              <div class="s-cell">
+                <div class="s-head">
+                  <span class="s-label">temperature</span>
+                  <b>{celsius(node.temp?.cpuC)}</b>
+                  {(() => { const th = throttleState(node); return <em class={`chip ${th.cls}`}>{th.text}</em>; })()}
+                  {drawW != null && <><span class="s-label s-gap">power</span><b class="t-crit">{watts(drawW)}</b></>}
+                </div>
+                <DualGraph temp={tempHistory} power={drawW != null ? powerHistory : []} />
+                <div class="legend">
+                  <span><i />temperature <em>{celsius(node.temp?.cpuC)}</em></span>
+                  {drawW != null && <span><i class="crit" />power <em>{watts(drawW)}</em></span>}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Temperature and power together, the CPU solid and the GPU dashed
               on the same scale. */}
-          <div class="sense">
+          {!compact && <div class="sense">
             <div class="s-cell">
               <div class="s-head">
                 <span class="s-label">temperature</span>
@@ -322,7 +385,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
           {gpu && (
             <>
@@ -363,7 +426,14 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
           </div>
           {/* One line carrying two, because neither is a drive and neither earns
               a row of its own. The figure is the amount, not the proportion. */}
-          {(swap || node.cache) && (
+          {compact && swap && (
+            <div class="mrow" title={`${bytes(swap.used)} of ${bytes(swap.total)} swap in use, on ${bootLabel}`}>
+              <span class="lbl">SWAP</span><Meter value={swap.pct} tone={swapTone(swap.pct)} />
+              <strong class="fig">{bytes(swap.used)}</strong>
+              <span class="on-disk">{bootLabel}</span>
+            </div>
+          )}
+          {!compact && (swap || node.cache) && (
             <div class="mrow duo">
               {swap && (
                 <span class="half" title={`${bytes(swap.used)} of ${bytes(swap.total)} swap in use, on ${bootLabel}`}>
@@ -405,7 +475,21 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             </div>
           ))}
 
-          {boardCells.length > 0 && (
+          {compact && hw?.fans[0] && (() => {
+            const f = hw.fans[0];
+            // A Pi's one fan is its Active Cooler; hwmon calls it fan1.
+            const name = /raspberry/i.test(node.model ?? '') || /^fan\d*$/i.test(f.label) ? 'ACTIVE COOLER' : f.label.toUpperCase();
+            return (
+              <div class="mrow fan-row">
+                <span class="lbl">{name}</span>
+                <div class="fan-box">
+                  <span class="fan-val">{f.rpm > 0 ? <><span class="spin" />{f.rpm.toLocaleString()}<small> rpm</small></> : 'off'}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {!compact && boardCells.length > 0 && (
             <>
               <Sec title="FANS" note={`${boardCells.filter((c) => c.v !== 'off').length} turning${hw?.fans.some((f) => f.managed) ? ' · by temperature' : ''}`} />
               <div class="board">
@@ -433,19 +517,19 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
       <div class="ptable"><div class="pscroll">
         <div class="prow phead">
           <span>PROCESS</span>
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button key={t.key} class={sort === t.key ? 'sorted' : ''} onClick={() => setSort(t.key)}>
               {COL_FMT[t.key].head}{sort === t.key ? ' ▾' : ''}
             </button>
           ))}
         </div>
         {rows.length === 0 && (
-          <div class="prow body"><span class="pname">—</span>{TABS.map((t) => <span key={t.key} class="pval">—</span>)}</div>
+          <div class="prow body"><span class="pname">—</span>{tabs.map((t) => <span key={t.key} class="pval">—</span>)}</div>
         )}
         {rows.map((p) => (
           <div class="prow body" key={p.pid}>
             <span class="pname">{p.name}</span>
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <span key={t.key} class={`pval ${t.key === 'cpuPct' && (p.cpuPct ?? 0) > 100 ? 'hot' : t.key === sort ? 'lead' : ''}`}>
                 {COL_FMT[t.key].fmt(p)}
               </span>
@@ -469,22 +553,30 @@ export const FleetView = ({ nodes, onOpen, tempHistory, powerHistory, netHistory
   netHistory: Map<string, Array<[number, number]>>;
   gpuTempHistory: Map<string, number[]>; gpuPowerHistory: Map<string, number[]>;
 }) => {
-  // One machine takes the whole width; the card lays itself out in two
-  // columns once it has the room.
+  const card = (n: FleetNode, compact = false) => (
+    <NodeCard
+      key={n.id}
+      node={n}
+      compact={compact}
+      onOpen={onOpen}
+      tempHistory={tempHistory.get(n.id) ?? []}
+      powerHistory={powerHistory.get(n.id) ?? []}
+      netHistory={netHistory.get(n.id) ?? []}
+      gpuTempHistory={gpuTempHistory.get(n.id) ?? []}
+      gpuPowerHistory={gpuPowerHistory.get(n.id) ?? []}
+    />
+  );
+  // One machine takes the whole width. With more, the server keeps that card
+  // and every other board (the Pi) gets a narrow one in a column beside it,
+  // or under it on a narrower screen. The server is the cluster's control
+  // plane, or failing that the board with the most threads.
+  if (nodes.length <= 1) return <div class="grid single">{nodes.map((n) => card(n))}</div>;
+  const main = nodes.find((n) => n.role === 'control-plane')
+    ?? [...nodes].sort((a, b) => (b.cpu?.perCore.length ?? 0) - (a.cpu?.perCore.length ?? 0))[0];
   return (
-    <div class={`grid ${nodes.length === 1 ? 'single' : ''}`}>
-      {nodes.map((n) => (
-        <NodeCard
-          key={n.id}
-          node={n}
-          onOpen={onOpen}
-          tempHistory={tempHistory.get(n.id) ?? []}
-          powerHistory={powerHistory.get(n.id) ?? []}
-          netHistory={netHistory.get(n.id) ?? []}
-          gpuTempHistory={gpuTempHistory.get(n.id) ?? []}
-          gpuPowerHistory={gpuPowerHistory.get(n.id) ?? []}
-        />
-      ))}
+    <div class="grid with-side">
+      {card(main)}
+      <div class="side">{nodes.filter((n) => n !== main).map((n) => card(n, true))}</div>
     </div>
   );
 };
