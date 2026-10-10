@@ -209,7 +209,12 @@ attach() { # mount point, path in the pod, ro|rw
   if [ -n "$id" ]; then
     # Earlier versions of this script flagged the HDDs read-only.
     occ files_external:option "$id" readonly "$([ "$3" = ro ] && echo true || echo false)" >/dev/null 2>&1 || true
-    printf '  %-16s already attached\n' "$1"
+    # Who may see it is enforced on every run, not only when it is created. A
+    # mount carried over from another machine kept whatever it had, and one
+    # with no applicable user is visible to every account: a family member
+    # could browse the whole disk, backups included.
+    occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
+    printf '  %-16s already attached, admin only\n' "$1"
     return 0
   fi
   id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
