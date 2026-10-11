@@ -480,7 +480,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
               {/* Red above 35°: hard drives last longest under about 40°, and the
                   bottom front fan only starts at 40°, so this is the early warning. */}
               {d.tempC != null && (
-                <span class={`on-disk temp${Math.round(d.tempC) > 35 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
+                <span class={`on-disk temp${Math.round(d.tempC) >= 40 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
               )}
             </div>
           ))}
