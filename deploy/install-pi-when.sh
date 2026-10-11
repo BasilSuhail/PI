@@ -24,7 +24,7 @@ if [ ! -d /var/log/journal ]; then
   sudo systemd-tmpfiles --create --prefix /var/log/journal
   sudo systemctl restart systemd-journald
 fi
-journalctl --disk-usage
+sudo journalctl --disk-usage
 
 sudo tee "$UNIT.service" >/dev/null <<UNIT
 [Unit]
@@ -53,9 +53,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now pi-when.timer >/dev/null
 
 echo "==> Two readings a minute apart"
-sudo "$BIN" record
-sleep 60
-sudo "$BIN" record
+sleep 70
 sudo pi-when now --minutes 2
 echo
 echo "Ask:  sudo pi-when 12:15 nextcloud"
