@@ -106,7 +106,7 @@ encodes H.264 and HEVC; it has no AV1.
 | pwm1 | CPU cooler | follows the CPU: slowest below 50°, full at 75°. It cannot stop (about 800 rpm minimum) |
 | pwm2 | rear exhaust | off until CPU or GPU reaches 55°, then 30% rising to full at 75°; off again at 45°, after at least 1 minute on |
 | pwm3 | front intake, top | as the exhaust |
-| pwm4 | front intake, bottom | the hard drives only: on at 40°, 30% rising to full at 55°, off at 37° after at least 1 minute; it blows across them |
+| pwm4 | front intake, bottom | the hard drives only: on at 38° and off below it (after at least 1 minute), 30% up to 42° then rising each degree to full at 55°; it blows across them |
 | pwm6 | nothing | free, for a fan on the GPU heatsink |
 
 The three case fans stop fully at 0%. Stopping the service, or any failure,

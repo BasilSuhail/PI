@@ -38,7 +38,7 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # intake move the CPU's and GPU's heat. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 8,
+    "version": 9,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
@@ -60,14 +60,19 @@ DEFAULT = {
         "max": 255,
         # The drives idle around 35 in the closed case, which is where they
         # last longest, and wear faster from the mid 40s. So the bottom fan
-        # starts at its lowest at 40, before they get there, rather than at 45
-        # once they have. The CPU and GPU get the exhaust and top intake from
-        # 55, full at 75.
-        "on": {"cpu": 55, "gpu": 55, "drive": 40},
-        # Lower than "on", so a reading hovering at the threshold does not
-        # switch a fan on and off every few seconds. A fan goes off once the
-        # reading is back down to this, not only once it is below it.
+        # runs at its lowest from 38 and is off below it. The CPU and GPU get
+        # the exhaust and top intake from 55, full at 75.
+        "on": {"cpu": 55, "gpu": 55, "drive": 38},
+        # A fan goes off once the reading is back down to this. For the CPU
+        # and GPU it is lower than "on", so a reading hovering at the
+        # threshold does not switch a fan on and off every few seconds; the
+        # drives report whole degrees, so 37 is simply "below 38", and
+        # min_on_sec keeps that from flapping.
         "off": {"cpu": 45, "gpu": 45, "drive": 37},
+        # The speed holds at its lowest up to here, then rises a step with
+        # each degree until "full". Read with a default of "on", so a config
+        # written before this existed ramps as it did.
+        "ramp": {"cpu": 55, "gpu": 55, "drive": 42},
         "full": {"cpu": 75, "gpu": 75, "drive": 55},
     },
 }
@@ -229,7 +234,7 @@ def step(conf, path, state):
             log("%s off: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
         state["case_on"][p] = on
         duties[p] = max(
-            [ramp(t, c["on"][src], c["full"][src], c["start"], c["max"]) for src, t in watched.items()]
+            [ramp(t, c.get("ramp", c["on"])[src], c["full"][src], c["start"], c["max"]) for src, t in watched.items()]
         ) if on else 0
 
     kicks = []
