@@ -93,6 +93,8 @@ def pods():
         return ["Could not ask k3s about the apps"]
     lines = []
     now = time.time()
+    up = float((read("/proc/uptime") or "0").split()[0])
+    boot = now - up if up else 0
     for p in json.loads(raw)["items"]:
         name = p["metadata"]["name"]
         phase = p["status"].get("phase")
@@ -107,7 +109,8 @@ def pods():
             end = term.get("finishedAt")
             if end:
                 t = datetime.datetime.fromisoformat(end.replace("Z", "+00:00")).timestamp()
-                if now - t < DAY:
+                # Everything stops when the PC restarts; reboot() says that once.
+                if now - t < DAY and not abs(t - boot) < 600:
                     lines.append("App restarted: %s at %s (%s, %d restarts in all)" % (
                         app, ago(t), term.get("reason") or "exit %s" % term.get("exitCode"), c.get("restartCount", 0)))
             if not c.get("ready") and not term:
@@ -118,10 +121,13 @@ def pods():
 def kernel():
     out = sh(["journalctl", "-k", "--since", "-24h", "--no-pager", "-o", "cat"])
     lines = []
-    oom = [l for l in out.splitlines() if "Out of memory: Killed process" in l]
+    # "Out of memory" for the whole PC, "Memory cgroup out of memory" for one
+    # app over its own limit.
+    oom = [l for l in out.splitlines() if re.search(r"out of memory: Killed process", l, re.I)]
     for l in oom[-3:]:
         m = re.search(r"\(([^)]+)\)", l)
-        lines.append("Out of memory: the kernel killed %s" % (m.group(1) if m else "a process"))
+        lines.append("Out of memory: the kernel killed %s%s" % (
+            m.group(1) if m else "a process", " (over its app's memory limit)" if "cgroup" in l else ""))
     trouble = [l for l in out.splitlines() if DISK_TROUBLE.search(l)]
     if trouble:
         lines.append("Disk errors: %d kernel lines, last: %s" % (len(trouble), trouble[-1].strip()[:120]))
@@ -175,7 +181,7 @@ def temps():
 def reboot():
     up = float((read("/proc/uptime") or "0").split()[0])
     if 0 < up < DAY:
-        return ["The PC restarted at %s" % ago(time.time() - up)]
+        return ["The PC restarted at %s (every app restarted with it)" % ago(time.time() - up)]
     return []
 
 
