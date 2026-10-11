@@ -215,9 +215,12 @@ def step(conf, path, state):
         watched = {src: readings[src] for src in fan["watch"] if readings[src] is not None}
         hot = lambda lim: any(t >= lim[src] for src, t in watched.items())
         above = lambda lim: any(t > lim[src] for src, t in watched.items())
+        first = p not in state["case_on"]
         on = state["case_on"].get(p, False)
         held = time.time() - state["on_since"].get(p, 0) < c.get("min_on_sec", 60)
-        if not on and hot(c["on"]):
+        # Just started (a restart or a reinstall): a fan that would still be
+        # running is switched on, not left off until the "on" temperature.
+        if not on and (hot(c["on"]) or (first and above(c["off"]))):
             on = True
             state["on_since"][p] = time.time()
             log("%s on: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
