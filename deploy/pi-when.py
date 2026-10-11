@@ -20,6 +20,17 @@ app's restart count. The lookup puts everything around a moment on one page:
   requests minute by minute, or any other app's error lines
   kernel warnings and Wi-Fi messages
 
+Nobody has to be watching: every minute the recorder also checks for
+trouble (a restart, a memory kill, a disk error, Wi-Fi or internet lost, a
+drive flat out for 3 minutes, the PC missing readings, a family device on a
+slow relay, Jellyfin errors, Nextcloud requests failing). When it finds some it
+waits 10 minutes, then saves this page, before and after, to
+/var/lib/pi-when/incidents/<day>_<time>.txt (kept 60 days). Trouble in those
+10 minutes goes in the same file; the same trouble repeating is noted at most
+once every 30 minutes.
+
+  sudo pi-when incidents   what was saved, newest last
+
 Any time `date -d` understands works; a bare HH:MM later than now means
 yesterday. Jellyfin keeps its own log for 3 days and an app's console log
 lasts until its second restart, so ask within a few days. Stdlib only;
@@ -47,6 +58,11 @@ NS = "pi"
 DAY = 24 * 3600
 MOUNTS = {"/": "os", "/srv/ssd": "ssd", "/srv/storage": "hdd1", "/srv/hdd2": "hdd2"}
 INTERNET = "1.1.1.1"
+INCIDENTS = os.path.join(DIR, "incidents")
+OPEN = os.path.join(INCIDENTS, "open.json")
+KEEP_INCIDENT_DAYS = 60
+SETTLE = 600       # wait this long after trouble starts, to capture the "after"
+MERGE = 1800       # trouble this soon after the first goes in the same file
 FANS_STATE = "/run/pi-fans.json"
 # The same words the morning report treats as an error.
 POD_ERROR = re.compile(r"\b(ERR|ERROR|FATAL|CRIT|CRITICAL|PANIC|panic|Exception|Traceback)\b")
@@ -254,6 +270,10 @@ def record():
     for old in glob.glob(os.path.join(DIR, "*.jsonl")):
         if os.path.basename(old)[:10] < cutoff:
             os.remove(old)
+    try:
+        watch(now)
+    except Exception as err:  # the readings matter more than the incident file
+        print("trouble check failed: %s" % err, flush=True)
 
 
 # ---------------------------------------------------------------- the lookup
@@ -424,10 +444,11 @@ JF_LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+ ([+-]\d\d:\d\d)\
 JF_KEEP = re.compile(r"Playback|playing|transcod|FFmpeg|ffmpeg|stream|throttl|session|Authentication", re.I)
 
 
-def jellyfin_log(who, start, end):
+def jellyfin_log(who, start, end, tail=None):
     files = " ".join("/data/log/log_%s.log" % d.strftime("%Y%m%d") for d in days(start, end))
+    reader = "tail -q -n %d" % tail if tail else "cat"
     lines = []
-    for line in exec_app("jellyfin", "cat %s 2>/dev/null" % files).splitlines():
+    for line in exec_app("jellyfin", "%s %s 2>/dev/null" % (reader, files)).splitlines():
         m = JF_LINE.match(line)
         if not m:
             continue
@@ -599,9 +620,143 @@ def lookup(args):
     section("Wi-Fi and kernel messages", ["%s  %s" % (hm(t), m[:200]) for t, m in sorted(wifi + kern)], "none")
 
 
+# ---------------------------------------------------------------- trouble, unattended
+
+def trouble(now):
+    """[(app or '', reason)] for what went wrong in the last minute."""
+    data = rows(now - 240, now)
+    out = []
+    if not data:
+        return out
+    last = data[-1]["t"]
+    for ts, msg in stands_out(data[-2:], ""):
+        # Busy drives, a single lost ping, a slow ping or a weak signal on their
+        # own are everyday Wi-Fi and disk life, not trouble.
+        if ts < last - 60 or re.search(r"drive busy|ready again|started \(new pod\)|went away|lost 1 of 3|"
+                                       r"Wi-Fi slow|signal weak", msg):
+            continue
+        app = next((a for a in ("jellyfin", "nextcloud", "immich") if a in msg), "")
+        out.append((app, msg))
+    # A drive flat out for a few minutes, not a moment.
+    recent = [r.get("disk") or {} for r in data[-3:]]
+    if len(recent) == 3:
+        for name in recent[-1]:
+            if all(d.get(name, [0])[0] >= 90 for d in recent):
+                out.append(("", "%s drive flat out for 3 minutes" % name))
+    for ts, msg in journal(["-k"], now - 70, now):
+        if OOM.search(msg):
+            out.append(("", "memory kill: " + msg[:120]))
+        elif DISK_TROUBLE.search(msg):
+            out.append(("", "disk error: " + msg[:120]))
+    for ts, msg in journal(["_SYSTEMD_UNIT=pi-paths.service"], now - 70, now):
+        if " RELAY " in msg:
+            f = msg.split()
+            out.append((f[0], "%s: %s on a slow relay" % (f[0], " ".join(f[1:4]))))
+    if any(n.split("/", 1)[1].startswith("jellyfin") for n in data[-1].get("pods", {})):
+        errs = [l for l in jellyfin_log(None, now - 70, now, tail=400) if "[ERR]" in l or "[FTL]" in l]
+        if errs:
+            out.append(("jellyfin", "Jellyfin logged %d error(s): %s" % (len(errs), errs[-1][13:130])))
+    if any(n.split("/", 1)[1].startswith("nextcloud") for n in data[-1].get("pods", {})):
+        bad = [l for l in nextcloud_requests(None, now - 70, now) if "->" in l]
+        failed = [l for l in bad if re.search(r"-> 5\d\d", l) or
+                  (re.search(r" (PUT|MOVE|MKCOL) ", l) and not re.search(r"-> (401|404)", l))]
+        if failed:
+            out.append(("nextcloud", "Nextcloud: %d failed request(s), last %s" % (len(failed), failed[-1][7:120])))
+    return out
+
+
+def watch(now):
+    """Notes trouble, and SETTLE seconds after it began saves the page to a file.
+    The same trouble again (a relay every minute, say) is noted at most once per MERGE."""
+    os.makedirs(INCIDENTS, exist_ok=True)
+    try:
+        with open(OPEN) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    inc, seen = st.get("open"), {k: v for k, v in st.get("seen", {}).items() if now - v < MERGE}
+    for app, reason in trouble(now):
+        key = re.sub(r"\d+", "N", reason)
+        if key in seen:
+            continue
+        seen[key] = now
+        inc = inc or {"t": now, "reasons": [], "apps": []}
+        inc["reasons"].append("%s  %s" % (hm(now), reason))
+        if app and app not in inc["apps"]:
+            inc["apps"].append(app)
+    if inc and now - inc["t"] >= SETTLE:
+        save(inc, now)
+        inc = None
+    with open(OPEN + ".tmp", "w") as f:
+        json.dump({"open": inc, "seen": seen}, f)
+    os.replace(OPEN + ".tmp", OPEN)
+    cutoff = time.strftime("%Y-%m-%d", time.localtime(now - KEEP_INCIDENT_DAYS * DAY))
+    for old in glob.glob(os.path.join(INCIDENTS, "*.txt")):
+        if os.path.basename(old)[:10] < cutoff:
+            os.remove(old)
+
+
+def save(inc, now):
+    import contextlib
+    import io
+    path = os.path.join(INCIDENTS, time.strftime("%Y-%m-%d_%H%M.txt", time.localtime(inc["t"])))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print("Trouble on %s, %s\n" % (socket.gethostname(), time.strftime("%a %d %b %Y %H:%M", time.localtime(inc["t"]))))
+        print("What set it off:")
+        for r in inc["reasons"]:
+            print("  " + r)
+        apps = inc["apps"] or [None]
+        for app in apps:
+            print("\n" + "=" * 100)
+            minutes = int((now - inc["t"]) / 60) + 5
+            lookup(argparse.Namespace(time="@%d" % (inc["t"] + (now - inc["t"]) // 2), app=app, who=None,
+                                      minutes=max(15, minutes)))
+    with open(path, "w") as f:
+        f.write(buf.getvalue())
+    print("saved " + path, flush=True)
+
+
+def incidents():
+    files = sorted(glob.glob(os.path.join(INCIDENTS, "*.txt")))
+    if not files:
+        print("nothing saved yet")
+    for path in files:
+        with open(path) as f:
+            head = f.read(3000).split("What set it off:\n", 1)[-1].split("\n\n", 1)[0]
+        print(path)
+        print(head + "\n")
+    try:
+        with open(OPEN) as f:
+            inc = json.load(f).get("open")
+    except (OSError, ValueError):
+        inc = None
+    if inc:
+        print("going on now (its file is saved at %s):" % hm(inc["t"] + SETTLE))
+        print("\n".join("  " + r for r in inc["reasons"]))
+
+
+def summary(hours=24):
+    """One line per incident in the last day, for the morning report."""
+    cutoff = time.time() - hours * 3600
+    out = []
+    for path in sorted(glob.glob(os.path.join(INCIDENTS, "*.txt"))):
+        if os.path.getmtime(path) < cutoff:
+            continue
+        with open(path) as f:
+            reasons = f.read(3000).split("What set it off:\n", 1)[-1].split("\n\n", 1)[0].splitlines()
+        first = reasons[0].strip() if reasons else "?"
+        more = " (+%d more)" % (len(reasons) - 1) if len(reasons) > 1 else ""
+        out.append("%s%s  -> %s" % (first, more, os.path.basename(path)))
+    return out
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "record":
-        return record()
+    if len(sys.argv) > 1 and sys.argv[1] in ("record", "incidents", "--summary"):
+        if os.geteuid() != 0:
+            sys.exit("run with sudo")
+        return {"record": record, "incidents": incidents,
+                "--summary": lambda: print("\n".join(summary()))}[sys.argv[1]]()
     p = argparse.ArgumentParser(prog="pi-when", description="What was happening on the PC around a moment.")
     p.add_argument("time", help='12:15, "yesterday 12:15", "sat 21:40", "2026-10-10 12:15"')
     p.add_argument("app", nargs="?", help="jellyfin, nextcloud, immich, ... (optional)")

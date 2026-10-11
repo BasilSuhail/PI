@@ -11,6 +11,7 @@ in the message comes from a log entry, a counter or a reading.
   error messages that were not there the day before
   family devices reaching the apps through a slow relay (pi-paths)
   Jellyfin: failed logins, new devices, public access switched off (jellyfin-guard)
+  trouble pi-when caught and saved to a file while nobody was watching
   on Mondays, the to-do list in /etc/pi-report/todo.txt
 
 Config: /etc/pi-report/env (DISCORD_WEBHOOK=...). State, for spotting new
@@ -264,6 +265,17 @@ def jellyfin_logins():
     return [l for l in sh([GUARD, "--summary"]).splitlines() if l.strip()]
 
 
+WHEN = "/usr/local/lib/pi/pi-when"
+
+
+def incidents():
+    """Trouble pi-when saved in the last day, one line each with its file."""
+    if not os.access(WHEN, os.X_OK):
+        return []
+    lines = [l for l in sh([WHEN, "--summary"]).splitlines() if l.strip()]
+    return lines + ["Read: sudo pi-when incidents, then cat the file"] if lines else []
+
+
 def todo():
     if datetime.date.today().weekday() != 0:
         return []
@@ -323,6 +335,7 @@ def main():
         ("New errors (not seen the day before)", fresh),
         ("Slow connections", relays()),
         ("Jellyfin logins", jellyfin_logins()),
+        ("Trouble caught (saved in /var/lib/pi-when/incidents)", incidents()),
     ]
     sections.append(("To do (Mondays)", todo()))
     found = any(lines for _, lines in sections)
