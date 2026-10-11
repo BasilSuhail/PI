@@ -792,7 +792,13 @@ def mbit(x):
 
 
 def apps_now():
-    """(running, down), or None when k3s did not answer."""
+    """(running, off, down), or None when k3s did not answer. Off is an app
+    scaled to 0 on purpose (make torrent-off), which is not trouble."""
+    scaled = {}
+    for line in sh(KUBECTL + ["-n", NS, "get", "deploy", "-o",
+                              r'jsonpath={range .items[*]}{.metadata.name}={.spec.replicas}{"\n"}{end}'], 20).splitlines():
+        name, _, replicas = line.partition("=")
+        scaled[name] = replicas
     live = {}
     for name, (_, ready) in pods().items():
         ns, pod = name.split("/", 1)
@@ -801,8 +807,11 @@ def apps_now():
             live[base] = max(live.get(base, 0), ready)
     if not live:
         return None
-    running, down = [], []
+    running, off, down = [], [], []
     for app, parts in APPS:
+        if scaled.get(parts[0]) == "0":
+            off.append(app)
+            continue
         gone = [p for p in parts if p not in live]
         stuck = [p for p in parts if live.get(p) == 0]
         if not gone and not stuck:
@@ -813,7 +822,7 @@ def apps_now():
             down.append("%s (starting, or stuck)" % app)
         else:
             down.append("%s (part of it is down: %s)" % (app, ", ".join(gone + stuck)))
-    return running, down
+    return running, off, down
 
 
 def jellyfin_watching():
@@ -878,8 +887,10 @@ def status():
     if apps is None:
         out.append("Apps: k3s did not answer, so I can't tell.")
     else:
-        running, down = apps
+        running, off, down = apps
         out.append("Running: " + (", ".join(running) if running else "nothing"))
+        if off:
+            out.append("Off: " + ", ".join(off))
         if down:
             out.append("Down: " + "; ".join(down))
 
