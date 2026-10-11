@@ -28,8 +28,8 @@ the plan was wrong.
 |---|---|---|---|
 | SSD1, 250 GB | Samsung 860 EVO | Debian, and nothing else | `/` |
 | SSD2, 1 TB | Crucial BX500 | `1) Archive`: every app's settings and databases, and backups | `/srv/ssd`, bound to `/1) Archive` |
-| HDD1, 6 TB | Seagate ST6000VX009 | Jellyfin, Kiwix, downloads | `/srv/storage` |
-| HDD2, 6 TB | WD Purple WD64PURZ | Nextcloud, Immich, backups, ArchiveBox | `/srv/hdd2`, under the `/srv/pool` mergerfs pool |
+| HDD1, 6 TB | Seagate ST6000VX009 | Jellyfin, downloads | `/srv/storage` |
+| HDD2, 6 TB | WD Purple WD64PURZ | Nextcloud, Immich, backups, ArchiveBox, Kiwix | `/srv/hdd2`, under the `/srv/pool` mergerfs pool |
 
 All four are mounted by UUID with `nofail`. The `sdX` letters move between
 boots on this board, so nothing may refer to a disk by them.

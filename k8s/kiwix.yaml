@@ -45,7 +45,7 @@ spec:
               containerPort: 8080
           # The library is rebuilt from whatever .zim files are in the folder:
           # once at start, then again whenever the folder changes. Drop a .zim
-          # into the Kiwix folder on the 6TB and it appears within a couple of
+          # into the Kiwix folder on HDD2 and it appears within a couple of
           # minutes, with no restart.
           #
           # A file still being copied or downloaded changes size from one look

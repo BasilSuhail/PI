@@ -47,8 +47,12 @@ APPS_DIR="${APPS_DIR:-/1) Archive/Apps}"
 # The 6TB, by its mount point rather than its device: a disk swapped for a
 # bigger one at the same path should need no edit here.
 DATA_DIR="${DATA_DIR:-/srv/storage}"
-# Kiwix's .zim files can live on a different disk from Jellyfin's films.
-WIKI_DIR="${WIKI_DIR:-$DATA_DIR}"
+# Kiwix's .zim files go on HDD2 with the other archives, so the 6TB stays
+# Jellyfin's alone. A board without HDD2 keeps them next to the films.
+if [ -z "${WIKI_DIR:-}" ]; then
+  WIKI_DIR="$DATA_DIR"
+  mountpoint -q /srv/hdd2 2>/dev/null && WIKI_DIR=/srv/hdd2
+fi
 data_dir_for() { if [ "$1" = Kiwix ]; then echo "$WIKI_DIR"; else echo "$DATA_DIR"; fi; }
 
 APPS=(Jellyfin Kiwix Vaultwarden Uptime)
