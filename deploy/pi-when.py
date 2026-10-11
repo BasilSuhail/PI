@@ -30,6 +30,8 @@ waits 10 minutes, then saves this page, before and after, to
 once every 30 minutes.
 
   sudo pi-when incidents   what was saved, newest last
+  sudo pi-when status      right now, in a few lines: what the Discord bot
+                           answers to "status" (deploy/pi-bot.py)
 
 Any time `date -d` understands works; a bare HH:MM later than now means
 yesterday. Jellyfin keeps its own log for 3 days and an app's console log
@@ -49,6 +51,7 @@ import struct
 import subprocess
 import sys
 import time
+import urllib.request
 
 DIR = os.environ.get("WHEN_DIR", "/var/lib/pi-when")
 STATE = os.environ.get("WHEN_STATE", "/run/pi-when.json")
@@ -751,11 +754,185 @@ def summary(hours=24):
     return out
 
 
+# ---------------------------------------------------------------- right now
+
+BOT_ENV = "/etc/pi-bot/env"
+# Each app and the pods it is made of; the first is the app itself.
+APPS = [
+    ("Jellyfin", ["jellyfin"]),
+    ("Nextcloud", ["nextcloud", "nextcloud-postgres", "nextcloud-redis"]),
+    ("Immich", ["immich-server", "immich-machine-learning", "immich-postgres", "immich-redis"]),
+    ("Vaultwarden", ["vaultwarden"]),
+    ("Kiwix", ["kiwix"]),
+    ("ArchiveBox", ["archivebox"]),
+    ("Uptime Kuma", ["uptime-kuma"]),
+    ("Torrent", ["qbittorrent"]),
+    ("Dashboard", ["pi-console"]),
+]
+# pi-paths names an app by its tailnet machine.
+TAILNET_APPS = {"jellyfin": "Jellyfin", "cloud": "Nextcloud", "photos": "Immich", "vault": "Vaultwarden",
+                "kiwix": "Kiwix", "archivebox": "ArchiveBox", "uptime": "Uptime Kuma", "torrent": "Torrent",
+                "pi-console": "Dashboard"}
+PATHS_LINE = re.compile(r"^(\S+)\s+(.+?) / (.+?)\s+((?:direct|peer relay|RELAY).*?)\s+"
+                        r"to them\s+([\d.]+) Mbit/s\s+from them\s+([\d.]+) Mbit/s")
+DRIVE_LABELS = {"os": "SSD1", "ssd": "SSD2", "hdd1": "HDD1", "hdd2": "HDD2"}
+
+
+def env_value(name):
+    if os.environ.get(name):
+        return os.environ[name]
+    for line in (read(BOT_ENV) or "").splitlines():
+        if line.startswith(name + "="):
+            return line.split("=", 1)[1].strip().strip('"') or None
+    return None
+
+
+def mbit(x):
+    return "%.1f" % x if x < 10 else "%.0f" % x
+
+
+def apps_now():
+    """(running, down), or None when k3s did not answer."""
+    live = {}
+    for name, (_, ready) in pods().items():
+        ns, pod = name.split("/", 1)
+        if ns == NS:
+            base = re.sub(r"-[a-z0-9]{5,10}-[a-z0-9]{5}$", "", pod)
+            live[base] = max(live.get(base, 0), ready)
+    if not live:
+        return None
+    running, down = [], []
+    for app, parts in APPS:
+        gone = [p for p in parts if p not in live]
+        stuck = [p for p in parts if live.get(p) == 0]
+        if not gone and not stuck:
+            running.append(app)
+        elif parts[0] in gone:
+            down.append("%s (not running)" % app)
+        elif parts[0] in stuck:
+            down.append("%s (starting, or stuck)" % app)
+        else:
+            down.append("%s (part of it is down: %s)" % (app, ", ".join(gone + stuck)))
+    return running, down
+
+
+def jellyfin_watching():
+    """One line per film playing, Funnel viewers included; None without an API key."""
+    key = env_value("JELLYFIN_API_KEY")
+    ip = sh(KUBECTL + ["-n", NS, "get", "svc", "jellyfin", "-o", "jsonpath={.spec.clusterIP}"], 10).strip()
+    if not key or not ip:
+        return None
+    req = urllib.request.Request("http://%s/Sessions?activeWithinSeconds=300" % ip,
+                                 headers={"Authorization": 'MediaBrowser Token="%s"' % key})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            sessions = json.load(r)
+    except (OSError, ValueError):
+        return None
+    out = []
+    for s in sessions:
+        item = s.get("NowPlayingItem")
+        if not item:
+            continue
+        play = s.get("PlayState") or {}
+        title = item.get("Name") or "?"
+        if item.get("SeriesName"):
+            title = "%s S%02dE%02d" % (item["SeriesName"], item.get("ParentIndexNumber") or 0,
+                                       item.get("IndexNumber") or 0)
+        total = item.get("RunTimeTicks") or 0
+        at = " at %s of %s" % (clock((play.get("PositionTicks") or 0) // 10000), clock(total // 10000)) if total else ""
+        how = {"Transcode": "converted on the fly", "DirectStream": "direct stream",
+               "DirectPlay": "direct play"}.get(play.get("PlayMethod"), "playing")
+        out.append('• %s on Jellyfin: "%s"%s%s, %s (%s)' % (
+            s.get("UserName") or "?", title, at, ", paused" if play.get("IsPaused") else "", how,
+            s.get("DeviceName") or "?"))
+    return out
+
+
+def active_now():
+    """Who is using what: Jellyfin's own sessions, then pi-paths' last run."""
+    watching = jellyfin_watching()
+    lines = list(watching or [])
+    now = time.time()
+    seen = {}
+    for _, msg in journal(["_SYSTEMD_UNIT=pi-paths.service"], now - 90, now):
+        m = PATHS_LINE.match(msg)
+        if m:
+            seen[m.group(1, 2, 3)] = m
+    for (app, who, device), m in seen.items():
+        if app == "jellyfin" and watching is not None:
+            continue
+        to_them, from_them = float(m.group(5)), float(m.group(6))
+        what = ("uploading %s Mbit/s" % mbit(from_them) if from_them > to_them
+                else "%s %s Mbit/s" % ("watching," if app == "jellyfin" else "downloading", mbit(to_them)))
+        slow = ", on a slow relay" if m.group(4).startswith("RELAY") else ""
+        lines.append("• %s on %s: %s%s (%s)" % (who, TAILNET_APPS.get(app, app), what, slow, device))
+    return lines
+
+
+def status():
+    """A few plain lines on right now, for the Discord bot: sudo pi-when status."""
+    out = ["**PC, %s**" % time.strftime("%H:%M")]
+
+    apps = apps_now()
+    if apps is None:
+        out.append("Apps: k3s did not answer, so I can't tell.")
+    else:
+        running, down = apps
+        out.append("Running: " + (", ".join(running) if running else "nothing"))
+        if down:
+            out.append("Down: " + "; ".join(down))
+
+    active = active_now()
+    out.append("Active now:" if active else "Nobody is using anything right now.")
+    out += active
+
+    data = rows(time.time() - 180, time.time())
+    if not data:
+        out.append("PC: no readings in the last 3 minutes (sudo systemctl status pi-when.timer)")
+    else:
+        r = data[-1]
+        t = r.get("temp") or {}
+        pc = []
+        if r.get("cpu") is not None:
+            pc.append("CPU %d%%" % r["cpu"])
+        if "cpu" in t:
+            pc.append("%d°" % t["cpu"])
+        drives = [v for k, v in t.items() if k != "cpu"]
+        if drives:
+            pc.append("drives up to %d°" % max(drives))
+        out.append("PC: " + ", ".join(pc))
+        busy = ["%s %s" % (DRIVE_LABELS.get(n, n), "writing %.0f MB/s" % w if w > rd else "reading %.0f MB/s" % rd)
+                for n, (b, rd, w) in sorted((r.get("disk") or {}).items()) if b >= 20]
+        if busy:
+            out.append("Busy drives: " + ", ".join(busy))
+        g = r.get("gpu") or {}
+        if (g.get("enc") or 0) > 0 or (g.get("dec") or 0) > 0:
+            out.append("Graphics card: converting video")
+        fans_on = [k for k, v in (r.get("fans") or {}).items() if v and k != "CPU"]
+        if fans_on:
+            out.append("Fans on: " + ", ".join(fans_on))
+
+    saved = summary()
+    try:
+        with open(OPEN) as f:
+            going = (json.load(f).get("open") or {}).get("reasons") or []
+    except (OSError, ValueError):
+        going = []
+    if going:
+        out.append("Trouble going on now: " + going[0])
+    if saved:
+        out.append("Trouble in the last 24 hours: %d saved, newest: %s" % (len(saved), saved[-1].split("  -> ")[0]))
+    elif not going:
+        out.append("Trouble in the last 24 hours: none")
+    print("\n".join(out))
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("record", "incidents", "--summary"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("record", "incidents", "--summary", "status"):
         if os.geteuid() != 0:
             sys.exit("run with sudo")
-        return {"record": record, "incidents": incidents,
+        return {"record": record, "incidents": incidents, "status": status,
                 "--summary": lambda: print("\n".join(summary()))}[sys.argv[1]]()
     p = argparse.ArgumentParser(prog="pi-when", description="What was happening on the PC around a moment.")
     p.add_argument("time", help='12:15, "yesterday 12:15", "sat 21:40", "2026-10-10 12:15"')

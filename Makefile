@@ -38,7 +38,7 @@ define on_storage_nodes
 	if [ -n "$$failed" ]; then echo; echo "Failed on:$$failed" >&2; exit 1; fi
 endef
 
-.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths report direct guard when watchdog
+.PHONY: help dashboard dashboard-k8s uptime vault vault-backup cloud pool media photos torrent torrent-on torrent-off archivebox agents deploy check logs bootstrap archive automount browse wifi samba mounts sata quiet hw-watchdog fans gpu paths report direct guard when bot watchdog
 
 help:
 	@echo "make dashboard-k8s   dashboard/ or deploy/ changed — this is what runs"
@@ -223,6 +223,9 @@ guard:
 # The PC every minute for 14 days, and "sudo pi-when 12:15 nextcloud" to look back.
 when:
 	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-pi-when.sh'
+
+bot:
+	ssh -t $(DASH_NODE) '$(SYNC) && bash ~/$(REPO_DIR)/deploy/install-pi-bot.sh'
 
 bootstrap:
 	bash deploy/bootstrap-node.sh $(NODE)

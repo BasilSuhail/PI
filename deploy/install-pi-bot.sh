@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# The Discord bot: type "status" in the server, get right now in a few lines
+# (sudo pi-when status). Asks for the bot token the first time, and for two
+# optional extras: a Jellyfin API key (who is watching which film) and the
+# channels it may answer in. Re-run to change them: an empty answer keeps
+# what is there. Idempotent.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN=/usr/local/lib/pi/pi-bot
+ENV=/etc/pi-bot/env
+UNIT=/etc/systemd/system/pi-bot.service
+
+echo "==> Bot and status"
+python3 -c 'import websocket' 2>/dev/null || sudo apt-get install -y python3-websocket >/dev/null
+sudo install -d /usr/local/lib/pi /etc/pi-bot
+sudo install -m 755 "$REPO_ROOT/deploy/pi-bot.py" "$BIN"
+# status is part of pi-when, so the bot needs a pi-when that has it.
+sudo install -m 755 "$REPO_ROOT/deploy/pi-when.py" /usr/local/lib/pi/pi-when
+sudo ln -sf /usr/local/lib/pi/pi-when /usr/local/bin/pi-when
+
+echo "==> Settings in $ENV"
+current() { sudo grep -s "^$1=" "$ENV" | cut -d= -f2- || true; }
+ask() {
+  local name=$1 prompt=$2 secret=${3:-} value
+  if [ -n "$secret" ]; then read -rsp "$prompt" value; echo >&2; else read -rp "$prompt" value; fi
+  [ -n "$value" ] || value=$(current "$name")
+  printf '%s=%s\n' "$name" "$value"
+}
+TOKEN_NOW=$(current DISCORD_BOT_TOKEN)
+[ -n "$TOKEN_NOW" ] && echo "  (Enter keeps what is set)"
+umask 077
+{
+  ask DISCORD_BOT_TOKEN "  Discord bot token: " secret
+  ask JELLYFIN_API_KEY "  Jellyfin API key (optional): " secret
+  ask DISCORD_CHANNELS "  Channel IDs to answer in, comma separated (optional, empty = any): "
+} > /tmp/pi-bot.env
+if ! grep -q '^DISCORD_BOT_TOKEN=.\+' /tmp/pi-bot.env; then
+  rm -f /tmp/pi-bot.env
+  echo "No token given. Nothing changed." >&2
+  exit 1
+fi
+sudo install -m 600 -o root -g root /tmp/pi-bot.env "$ENV"
+rm -f /tmp/pi-bot.env
+
+echo "==> Service"
+sudo tee "$UNIT" >/dev/null <<UNIT
+[Unit]
+Description=Discord bot: answers "status" with what the PC is doing
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=$ENV
+ExecStart=/usr/bin/python3 $BIN
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable pi-bot.service >/dev/null
+sudo systemctl restart pi-bot.service
+
+echo "==> What it would answer now"
+sudo pi-when status
+echo
+sleep 5
+sudo journalctl -u pi-bot -n 5 --no-pager -o cat
+echo
+echo 'Type "status" in your Discord server. Logs: sudo journalctl -u pi-bot -f'
