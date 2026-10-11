@@ -336,7 +336,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
 server.listen(PORT, () => {
   console.log(`pi-console listening on :${PORT}`);
-  if (!process.env.TAILSCALE_API_KEY) {
-    console.warn('TAILSCALE_API_KEY is not set — /api/nodes will return 502');
+  if (!process.env.TAILSCALE_API_KEY && !process.env.TAILSCALE_OAUTH_CLIENT_ID) {
+    console.warn('no Tailscale OAuth client or TAILSCALE_API_KEY — /api/nodes will return 502');
   }
 });

@@ -67,14 +67,29 @@ spec:
           env:
             - name: PORT
               value: "8080"
-            # No tailscaled socket in a pod, so node discovery uses the API.
-            # tailnet.ts falls back to the local CLI when this is absent, which
+            # No tailscaled socket in a pod, so node discovery uses the API:
+            # a read-only OAuth client (never expires), or else an API key
+            # (90 days). All optional, so either kind of Secret starts the pod.
+            # tailnet.ts falls back to the local CLI when none is set, which
             # is what the systemd install relies on and what a pod cannot do.
+            - name: TAILSCALE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: pi-console-tailscale
+                  key: oauth-id
+                  optional: true
+            - name: TAILSCALE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pi-console-tailscale
+                  key: oauth-secret
+                  optional: true
             - name: TAILSCALE_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: pi-console-tailscale
                   key: api-key
+                  optional: true
             # The date that key dies, so the console can say so before it does.
             # Tailscale will not tell a token its own expiry, so the installer
             # records what you were shown. Optional: a Secret written before

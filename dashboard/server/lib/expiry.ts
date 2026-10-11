@@ -39,6 +39,8 @@ const daysUntil = (isoDate: string, now: number): number | null => {
 };
 
 export const credentialStatus = (now = Date.now()): CredentialStatus[] => {
+  // An OAuth client does not expire, so there is nothing to count down.
+  if (process.env.TAILSCALE_OAUTH_CLIENT_ID && process.env.TAILSCALE_OAUTH_CLIENT_SECRET) return [];
   // No key means the local tailscaled socket is doing the work, and there is
   // nothing here to warn about. The tile disappears rather than reading zero.
   if (!process.env.TAILSCALE_API_KEY) return [];
