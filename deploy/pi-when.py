@@ -323,7 +323,7 @@ def section(title, lines, empty):
 
 def who_used(app, who, start, end):
     lines = []
-    for ts, msg in journal(["_SYSTEMD_UNIT=pi-paths.service", "_COMM=tailnet-paths"], start, end):
+    for ts, msg in journal(["_SYSTEMD_UNIT=pi-paths.service"], start, end):
         if app and msg.split()[:1] != [app]:
             continue
         if who and who.lower() not in msg.lower():
