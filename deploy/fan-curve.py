@@ -65,7 +65,8 @@ DEFAULT = {
         # 55, full at 75.
         "on": {"cpu": 55, "gpu": 55, "drive": 40},
         # Lower than "on", so a reading hovering at the threshold does not
-        # switch a fan on and off every few seconds.
+        # switch a fan on and off every few seconds. A fan goes off once the
+        # reading is back down to this, not only once it is below it.
         "off": {"cpu": 45, "gpu": 45, "drive": 37},
         "full": {"cpu": 75, "gpu": 75, "drive": 55},
     },
@@ -213,13 +214,14 @@ def step(conf, path, state):
     for p, fan in c["pwms"].items():
         watched = {src: readings[src] for src in fan["watch"] if readings[src] is not None}
         hot = lambda lim: any(t >= lim[src] for src, t in watched.items())
+        above = lambda lim: any(t > lim[src] for src, t in watched.items())
         on = state["case_on"].get(p, False)
         held = time.time() - state["on_since"].get(p, 0) < c.get("min_on_sec", 60)
         if not on and hot(c["on"]):
             on = True
             state["on_since"][p] = time.time()
             log("%s on: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
-        elif on and not hot(c["off"]) and not held:
+        elif on and not above(c["off"]) and not held:
             on = False
             log("%s off: %s" % (fan["label"], ", ".join("%s %.0f°" % kv for kv in watched.items())))
         state["case_on"][p] = on
