@@ -64,6 +64,8 @@ export interface DiskStats {
   rotational?: boolean | null;
   /** Null until drivetemp is loaded, or for a drive it cannot read. */
   tempC?: number | null;
+  /** % of the last few seconds spent reading or writing. Null until the agent has two readings. */
+  busyPct?: number | null;
 }
 
 /**
@@ -94,6 +96,8 @@ export interface HwStats {
   volts: Array<{ label: string; volts: number }>;
   /** Keyed by block device: sda, nvme0n1. */
   driveTemps: Record<string, number>;
+  /** % of the last few seconds each drive spent reading or writing. Absent on an older agent. */
+  driveBusy?: Record<string, number>;
   gpu: GpuStats | null;
   wifi: Array<{ iface: string; signalDbm: number }>;
 }

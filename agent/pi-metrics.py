@@ -468,6 +468,41 @@ def read_drive_temps():
     return temps
 
 
+_busy_last = {"at": 0.0, "ticks": {}, "value": {}}
+
+
+def read_drive_busy():
+    """{block device: % of the time it was reading or writing} since the
+    previous reading, from the io_ticks column of /proc/diskstats.
+
+    Readings under a second apart reuse the last answer: several viewers poll
+    at once, and a window of a few milliseconds reads 0% or 100% at random. A
+    gap over half a minute (nobody was looking) would be an average of that
+    whole stretch, so it starts over instead and the next poll has the number.
+    """
+    now = time.time()
+    elapsed = now - _busy_last["at"]
+    if elapsed < 1:
+        return _busy_last["value"]
+    ticks = {}
+    try:
+        with open("/proc/diskstats") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) > 12 and re.fullmatch(r"sd[a-z]+|nvme\d+n\d+|mmcblk\d+", parts[2]):
+                    ticks[parts[2]] = int(parts[12])
+    except (OSError, ValueError):
+        return {}
+    prev = _busy_last["ticks"] if elapsed <= 30 else {}
+    value = {
+        dev: round(min(100.0, (t - prev[dev]) / (elapsed * 10)), 1)
+        for dev, t in ticks.items()
+        if dev in prev and t >= prev[dev]
+    }
+    _busy_last.update(at=now, ticks=ticks, value=value)
+    return value
+
+
 _gpu_held = {"at": 0.0, "value": None}
 GPU_TTL_SEC = 4
 
@@ -595,6 +630,7 @@ def read_hw():
         "fans": read_fans(),
         "volts": read_volts(),
         "driveTemps": read_drive_temps(),
+        "driveBusy": read_drive_busy(),
         "gpu": read_gpu(),
         "wifi": read_wifi(),
     }

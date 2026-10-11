@@ -297,9 +297,12 @@ const withRotation = (
 ): DiskStatsValue[] => {
   const spins = new Map((shim?.disks ?? []).map((d) => [d.device, d.rotational]));
   const temps = shim?.hw?.driveTemps ?? {};
+  const busy = shim?.hw?.driveBusy ?? {};
   return disks.map((d) => {
     const disk = parentDisk(d.device.replace(/^\/dev\//, ''));
-    return { ...d, rotational: spins.get(disk) ?? null, tempC: temps[disk] ?? null };
+    return {
+      ...d, rotational: spins.get(disk) ?? null, tempC: temps[disk] ?? null, busyPct: busy[disk] ?? null,
+    };
   });
 };
 

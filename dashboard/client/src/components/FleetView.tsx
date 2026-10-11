@@ -459,8 +459,18 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           <Sec title="DRIVES" note={`${disks.length} connected`} />
           {disks.map((d, i) => (
-            <div class="mrow drow" key={d.device} title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used`}>
-              <span class="lbl">{labels[i]}</span>
+            <div
+              class="mrow drow"
+              key={d.device}
+              title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used${d.busyPct != null ? ` · busy ${Math.round(d.busyPct)}%` : ''}`}
+            >
+              {/* Turns while the drive is reading or writing, still when idle,
+                  like the fans. 5%: the OS drive's own logging keeps every
+                  drive above zero now and then, and that is not "in use". */}
+              <span class="lbl">
+                {d.busyPct != null && <span class={`spin${d.busyPct >= 5 ? '' : ' idle'}`} />}
+                {labels[i]}
+              </span>
               <Meter value={d.usedPct} tone={diskTone(d.usedPct)} />
               {/* Used and total rather than a percentage: "29.34 GB / 984.37 GB"
                   answers both "how full" and "how big". Full precision: this row
