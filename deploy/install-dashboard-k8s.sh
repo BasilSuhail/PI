@@ -87,8 +87,10 @@ sudo systemctl daemon-reload
 # Deliberately not enabled at boot. buildkitd is wanted for the length of a
 # build and holds tens of MB the rest of the time; on these boards RAM is the
 # scarce thing. Started here, stopped on the way out however this exits.
+# buildkitd exits 1 on SIGTERM even after a clean build, so systemd marks it
+# failed and the morning report lists it; reset-failed clears that.
 sudo systemctl restart buildkit.service
-trap 'sudo systemctl stop buildkit.service 2>/dev/null || true' EXIT
+trap 'sudo systemctl stop buildkit.service 2>/dev/null; sudo systemctl reset-failed buildkit.service 2>/dev/null || true' EXIT
 
 for _ in $(seq 1 20); do
   sudo buildctl --addr "$BUILDKIT_ADDR" debug workers >/dev/null 2>&1 && break
