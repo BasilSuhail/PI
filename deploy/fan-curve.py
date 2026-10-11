@@ -38,7 +38,7 @@ NVIDIA_SMI = shutil.which("nvidia-smi")
 # intake move the CPU's and GPU's heat. `version` lets install-fan-curve.sh replace a
 # config written in an older shape.
 DEFAULT = {
-    "version": 7,
+    "version": 8,
     "cpu": {"pwm": "pwm1", "label": "CPU", "min": 51, "max": 255, "from": 50, "to": 75},
     "case": {
         "pwms": {
@@ -59,12 +59,14 @@ DEFAULT = {
         "min_on_sec": 60,
         "max": 255,
         # The drives idle around 35 in the closed case, which is where they
-        # last longest; airflow matters from the mid 40s. The CPU and GPU get
-        # the exhaust and top intake from 55, full at 75.
-        "on": {"cpu": 55, "gpu": 55, "drive": 45},
+        # last longest, and wear faster from the mid 40s. So the bottom fan
+        # starts at its lowest at 40, before they get there, rather than at 45
+        # once they have. The CPU and GPU get the exhaust and top intake from
+        # 55, full at 75.
+        "on": {"cpu": 55, "gpu": 55, "drive": 40},
         # Lower than "on", so a reading hovering at the threshold does not
         # switch a fan on and off every few seconds.
-        "off": {"cpu": 45, "gpu": 45, "drive": 42},
+        "off": {"cpu": 45, "gpu": 45, "drive": 37},
         "full": {"cpu": 75, "gpu": 75, "drive": 55},
     },
 }
