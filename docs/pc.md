@@ -40,6 +40,26 @@ fstab line binds `/srv/ssd/1) Archive` to `/1) Archive`, which is where every
 install script looks, so no app needed a path changed. The OS lives on its own
 drive so it can be reinstalled without touching the apps.
 
+### SSD mirror
+
+`deploy/ssd-mirror.sh` turns the two SSDs into a mirror (mdadm RAID 1): each
+carries an EFI partition, root (100G, `/`), apps (115G, `/srv/ssd`) and its own
+swap, and every write lands on both. Either SSD can die and jug3 keeps running;
+the firmware boots whichever is left. The 250GB is the main disk and the 1TB's
+half is write-mostly, so reads stay on the 250GB. The 1TB's leftover ~700G is
+`/srv/spare`, not mirrored.
+
+A disk dropping out, or a boot with one missing, posts to Discord with
+@everyone (`pi-raid-alert`, from mdadm's monitor and `pi-raid-check.service`).
+`pi-esp-sync` copies `/boot/efi` to every SSD's EFI partition after each apt
+run, since the firmware reads those before Linux and they cannot be mirrored.
+
+Replacing an SSD (the 1TB is due to become a 512GB):
+`ssd-mirror.sh remove /dev/sdX`, power off, swap, power on,
+`ssd-mirror.sh add /dev/sdY --backup`. `ssd-mirror.sh status` shows both
+halves, the copy progress and the boot order. A mirror is not a backup: a
+deleted file is gone from both.
+
 ---
 
 ## BIOS

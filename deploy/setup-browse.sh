@@ -53,6 +53,9 @@ skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/mnt/new|/var/lib/docker.*|/var/lib/kube
 # parent device names itself.
 disk_of() {
   local parent
+  # A mirror (deploy/ssd-mirror.sh) is one drive however many disks hold it,
+  # and /sys/block/mdN answers for it like a disk does.
+  [[ "$1" == /dev/md* ]] && { basename "$(readlink -f "$1")"; return; }
   parent=$(lsblk -no pkname "$1" 2>/dev/null || true)
   echo "${parent:-$(basename "$1")}"
 }
@@ -127,6 +130,13 @@ for row in "${rows[@]}"; do
   [[ "$target" == "$BROWSE"/* ]] && continue
   disk=$(disk_of "$source")
   [ -z "$(disk_facts "$disk")" ] && continue   # loop/ram/zram: not a disk
+  # "SSD-mirror-root", "SSD-mirror-apps": the mirror's own name, not a size
+  # no shop ever sold.
+  if [[ "$disk" == md* ]]; then
+    for l in /dev/md/*; do
+      [ "$(readlink -f "$l")" = "/dev/$disk" ] && disk_label[$disk]="SSD-mirror-$(basename "$l" | sed 's/.*://')"
+    done
+  fi
   mounts+=("$target|$disk")
   depth=${target//[^\/]/}
   if [ -z "${disk_root[$disk]:-}" ] || [ ${#depth} -lt ${disk_depth[$disk]} ]; then
