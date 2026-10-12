@@ -3,21 +3,29 @@ import { AppsView } from './components/AppsView';
 import { DetailView } from './components/DetailView';
 import { FilesView } from './components/FilesView';
 import { FleetView } from './components/FleetView';
-import { Alert, Box, Grid, Key, Moon, Power, Refresh, Sun, Thermo, Wifi } from './components/icons';
-import { getApps, getCredentials, getNodes, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
+import { StatusView } from './components/StatusView';
+import { Alert, Box, Grid, Moon, Power, Pulse, Refresh, Sun, Thermo, Wifi } from './components/icons';
+import { getApps, getNodes, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
 import type { FleetNode } from '../../shared/fleet';
-import { celsius, watts } from './lib/format';
+import { celsius, pct, watts } from './lib/format';
 
 const POLL_MS = 3000;
 
-type View = 'fleet' | 'detail' | 'apps' | 'files';
+type View = 'fleet' | 'detail' | 'apps' | 'files' | 'status';
+
+/**
+ * The Apps tab is paused, not deleted: Status lists the same apps and opens
+ * them too. Set to true to put the button back; the view and its code are
+ * untouched.
+ */
+const SHOW_APPS_TAB = false;
 
 /**
  * A tile's `#name` is config, so it is checked against the views that exist
  * rather than cast. A typo in apps.json used to switch to a view nothing
  * renders, leaving the page blank with no way back but the toolbar.
  */
-const VIEWS: View[] = ['fleet', 'detail', 'apps', 'files'];
+const VIEWS: View[] = ['fleet', 'detail', 'apps', 'files', 'status'];
 const asView = (name: string): View | null =>
   (VIEWS as string[]).includes(name) ? (name as View) : null;
 
@@ -36,7 +44,6 @@ export default function App() {
 
   const fleet = usePoll(getNodes, POLL_MS);
   const apps = usePoll(getApps, 15_000);
-  const creds = usePoll(getCredentials, 300_000);
   const history = useHistory(fleet.data);
   const powerHistory = usePowerHistory(fleet.data);
   const netHistory = useNetHistory(fleet.data);
@@ -54,7 +61,16 @@ export default function App() {
     .flatMap((n) => [n.temp?.cpuC, n.hw?.gpu?.tempC])
     .filter((t): t is number => t != null);
   const avgTemp = temps.length ? temps.reduce((a, t) => a + t, 0) / temps.length : null;
-  const tsKey = (creds.data ?? []).find((c) => /tailscale/i.test(c.name));
+  // Every drive on every machine as one figure, SSDs and HDDs alike.
+  const disks = liveNodes.flatMap((n) => n.disks);
+  const diskTotal = disks.reduce((a, d) => a + d.totalBytes, 0);
+  const storagePct = diskTotal ? (disks.reduce((a, d) => a + d.usedBytes, 0) / diskTotal) * 100 : null;
+  // How hard everything is working: the mean of each machine's CPU and RAM and
+  // of every drive's activity. A board that joins later counts by itself.
+  const loads = liveNodes
+    .flatMap((n) => [n.cpu?.usagePct, n.mem?.usedPct, ...n.disks.map((d) => d.busyPct)])
+    .filter((v): v is number => v != null);
+  const usagePct = loads.length ? loads.reduce((a, v) => a + v, 0) / loads.length : null;
   const allOnline = nodes.length > 0 && nodes.every((n) => n.online && !n.error);
 
   const openDetail = (id: string) => { setSelectedId(id); setView('detail'); };
@@ -82,8 +98,11 @@ export default function App() {
           <span class="tb-stat" title="average of CPU and GPU">
             <Thermo size={12} /><b>{celsius(avgTemp)}</b>
           </span>
-          <span class={`tb-stat ${tsKey?.state === 'expired' ? 'crit' : tsKey?.state === 'soon' ? 'warn' : ''}`} title="Tailscale key expiry">
-            <Key size={12} /><b>{tsKey?.daysLeft != null ? `${tsKey.daysLeft}d` : '—'}</b>
+          <span class="tb-stat" title="all drives on every machine, used">
+            <span class="tb-label">STORAGE</span><b>{pct(storagePct)}</b>
+          </span>
+          <span class="tb-stat" title="mean of CPU, RAM and every drive's activity, on every machine">
+            <span class="tb-label">USAGE</span><b>{pct(usagePct)}</b>
           </span>
           <span class="tb-stat" title={allOnline ? 'all nodes reachable' : 'some nodes offline'}>
             <span class={`dot-live ${allOnline ? '' : 'off'}`} /><span class="tb-label">VPN</span>
@@ -94,8 +113,13 @@ export default function App() {
           <button class={`tbtn ${view === 'fleet' || view === 'detail' ? 'on' : ''}`} onClick={() => setView('fleet')}>
             <Grid size={15} /> {nodes.length === 1 ? 'Server' : 'Fleet'}
           </button>
-          <button class={`tbtn ${view === 'apps' ? 'on' : ''}`} onClick={() => setView('apps')}>
-            <Box size={15} /> Apps
+          {SHOW_APPS_TAB && (
+            <button class={`tbtn ${view === 'apps' ? 'on' : ''}`} onClick={() => setView('apps')}>
+              <Box size={15} /> Apps
+            </button>
+          )}
+          <button class={`tbtn ${view === 'status' ? 'on' : ''}`} onClick={() => setView('status')}>
+            <Pulse size={15} /> Status
           </button>
         </div>
 
@@ -147,6 +171,7 @@ export default function App() {
             }}
           />
         )}
+        {view === 'status' && <StatusView apps={apps.data ?? []} />}
         {view === 'files' && <FilesView nodes={nodes} />}
         {view === 'detail' && selected && (
           <DetailView node={selected} history={history.get(selected.id) ?? []} onBack={() => setView('fleet')} />

@@ -32,6 +32,8 @@ once every 30 minutes.
   sudo pi-when incidents   what was saved, newest last
   sudo pi-when status      right now, in a few lines: what the Discord bot
                            answers to "status" (deploy/pi-bot.py)
+  sudo pi-when content     writes /run/pi-status/status.json for the
+                           dashboard's Status tab (pi-status.timer, 30 s)
 
 Any time `date -d` understands works; a bare HH:MM later than now means
 yesterday. Jellyfin keeps its own log for 3 days and an app's console log
@@ -825,18 +827,15 @@ def apps_now():
     return running, off, down
 
 
-def jellyfin_watching():
-    """One line per film playing, Funnel viewers included; None without an API key."""
+def jellyfin_sessions():
+    """What Jellyfin itself says is playing, Funnel viewers included, as
+    {app, who, what, device}; None without an API key."""
     key = env_value("JELLYFIN_API_KEY")
-    ip = sh(KUBECTL + ["-n", NS, "get", "svc", "jellyfin", "-o", "jsonpath={.spec.clusterIP}"], 10).strip()
+    ip = jellyfin_ip()
     if not key or not ip:
         return None
-    req = urllib.request.Request("http://%s/Sessions?activeWithinSeconds=300" % ip,
-                                 headers={"Authorization": 'MediaBrowser Token="%s"' % key})
-    try:
-        with urllib.request.urlopen(req, timeout=8) as r:
-            sessions = json.load(r)
-    except (OSError, ValueError):
+    sessions = jellyfin_get(ip, key, "/Sessions?activeWithinSeconds=300")
+    if sessions is None:
         return None
     out = []
     for s in sessions:
@@ -852,16 +851,31 @@ def jellyfin_watching():
         at = " at %s of %s" % (clock((play.get("PositionTicks") or 0) // 10000), clock(total // 10000)) if total else ""
         how = {"Transcode": "converted on the fly", "DirectStream": "direct stream",
                "DirectPlay": "direct play"}.get(play.get("PlayMethod"), "playing")
-        out.append('• %s on Jellyfin: "%s"%s%s, %s (%s)' % (
-            s.get("UserName") or "?", title, at, ", paused" if play.get("IsPaused") else "", how,
-            s.get("DeviceName") or "?"))
+        out.append({"app": "Jellyfin", "who": s.get("UserName") or "?",
+                    "what": '"%s"%s%s, %s' % (title, at, ", paused" if play.get("IsPaused") else "", how),
+                    "device": s.get("DeviceName") or "?"})
     return out
 
 
-def active_now():
-    """Who is using what: Jellyfin's own sessions, then pi-paths' last run."""
-    watching = jellyfin_watching()
-    lines = list(watching or [])
+def jellyfin_ip():
+    return sh(KUBECTL + ["-n", NS, "get", "svc", "jellyfin", "-o", "jsonpath={.spec.clusterIP}"], 10).strip()
+
+
+def jellyfin_get(ip, key, path, timeout=8):
+    req = urllib.request.Request("http://%s%s" % (ip, path),
+                                 headers={"Authorization": 'MediaBrowser Token="%s"' % key})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except (OSError, ValueError):
+        return None
+
+
+def active_list():
+    """Who is using what, as {app, who, what, device}: Jellyfin's own
+    sessions, then pi-paths' last run (90 s) for everything else."""
+    watching = jellyfin_sessions()
+    out = list(watching or [])
     now = time.time()
     seen = {}
     for _, msg in journal(["_SYSTEMD_UNIT=pi-paths.service"], now - 90, now):
@@ -874,9 +888,15 @@ def active_now():
         to_them, from_them = float(m.group(5)), float(m.group(6))
         what = ("uploading %s Mbit/s" % mbit(from_them) if from_them > to_them
                 else "%s %s Mbit/s" % ("watching," if app == "jellyfin" else "downloading", mbit(to_them)))
-        slow = ", on a slow relay" if m.group(4).startswith("RELAY") else ""
-        lines.append("• %s on %s: %s%s (%s)" % (who, TAILNET_APPS.get(app, app), what, slow, device))
-    return lines
+        if m.group(4).startswith("RELAY"):
+            what += ", on a slow relay"
+        out.append({"app": TAILNET_APPS.get(app, app), "who": who, "what": what, "device": device})
+    return out
+
+
+def active_now():
+    """active_list() as the bot's bullet lines."""
+    return ["• %s on %s: %s (%s)" % (a["who"], a["app"], a["what"], a["device"]) for a in active_list()]
 
 
 def status():
@@ -939,11 +959,54 @@ def status():
     print("\n".join(out))
 
 
+STATUS_FILE = "/run/pi-status/status.json"
+# Adding up every film's size is one large request; the total moves when a
+# film is added, not every 30 seconds.
+LIBRARY_EVERY = 600
+
+
+def content():
+    """The dashboard's Status tab, written to STATUS_FILE: who is using which
+    app (the same as the bot's), and what Jellyfin and Kiwix hold. Run every
+    30 seconds by pi-status.timer; the dashboard pod reads the file."""
+    try:
+        with open(STATUS_FILE) as f:
+            prev = json.load(f)
+    except (OSError, ValueError):
+        prev = {}
+    out = {"ts": int(time.time()), "active": active_list(), "jellyfin": None, "kiwix": None}
+
+    key, ip = env_value("JELLYFIN_API_KEY"), jellyfin_ip()
+    counts = jellyfin_get(ip, key, "/Items/Counts") if key and ip else None
+    if counts:
+        last = prev.get("jellyfin") or {}
+        size, at = last.get("bytes"), last.get("bytesAt") or 0
+        if size is None or time.time() - at > LIBRARY_EVERY:
+            items = jellyfin_get(ip, key, "/Items?IncludeItemTypes=Movie,Episode&Recursive=true"
+                                 "&Fields=MediaSources&EnableImages=false&EnableUserData=false", 60)
+            if items is not None:
+                size = sum(((i.get("MediaSources") or [{}])[0].get("Size") or 0) for i in items.get("Items") or [])
+                at = int(time.time())
+        out["jellyfin"] = {"films": counts.get("MovieCount") or 0, "series": counts.get("SeriesCount") or 0,
+                           "episodes": counts.get("EpisodeCount") or 0, "bytes": size, "bytesAt": at}
+
+    books = glob.glob("/srv/*/Kiwix/*.zim")
+    if books:
+        out["kiwix"] = {"books": len(books), "bytes": sum(os.path.getsize(b) for b in books)}
+
+    os.makedirs(os.path.dirname(STATUS_FILE), mode=0o755, exist_ok=True)
+    tmp = STATUS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(out, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, STATUS_FILE)
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("record", "incidents", "--summary", "status"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("record", "incidents", "--summary", "status", "content"):
         if os.geteuid() != 0:
             sys.exit("run with sudo")
-        return {"record": record, "incidents": incidents, "status": status,
+        return {"record": record, "incidents": incidents, "status": status, "content": content,
                 "--summary": lambda: print("\n".join(summary()))}[sys.argv[1]]()
     p = argparse.ArgumentParser(prog="pi-when", description="What was happening on the PC around a moment.")
     p.add_argument("time", help='12:15, "yesterday 12:15", "sat 21:40", "2026-10-10 12:15"')

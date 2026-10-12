@@ -127,6 +127,19 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # The Status tab's feed, written by pi-status.timer on the PC
+          # (deploy/install-dashboard-k8s.sh). The directory rather than the
+          # file: the timer replaces the file each run, and a file mount would
+          # keep showing the first one.
+          volumeMounts:
+            - name: status
+              mountPath: /run/pi-status
+              readOnly: true
+      volumes:
+        - name: status
+          hostPath:
+            path: /run/pi-status
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

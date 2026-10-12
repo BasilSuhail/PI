@@ -130,13 +130,17 @@ const askGluetun = async <T>(path: string): Promise<T | null> => {
 const fetchVpn = async (): Promise<TorrentState['vpn']> => {
   const [status, ip] = await Promise.all([
     askGluetun<{ status?: string }>('/v1/vpn/status'),
-    askGluetun<{ public_ip?: string; country?: string }>('/v1/publicip/ip'),
+    askGluetun<{ public_ip?: string; country?: string; city?: string }>('/v1/publicip/ip'),
   ]);
   if (!status && !ip) return null;
   return {
     status: status?.status ?? null,
     publicIp: ip?.public_ip ?? null,
     country: ip?.country ?? null,
+    city: ip?.city ?? null,
+    // gluetun's open routes do not say whose server it is. This is the
+    // VPN_SERVICE_PROVIDER in k8s/qbittorrent.yaml; change both together.
+    provider: 'AirVPN',
   };
 };
 

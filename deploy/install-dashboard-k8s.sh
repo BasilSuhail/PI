@@ -111,6 +111,41 @@ sudo buildctl --addr "$BUILDKIT_ADDR" build \
   --local dockerfile="$SRC_DIR" \
   --output "type=image,name=${IMAGE}:${TAG}"
 
+echo "==> Status tab feed"
+# Who is using which app comes from the journal and Jellyfin, which only root
+# on the PC can read. pi-when writes it to /run/pi-status every 30 seconds and
+# the pod reads that directory (k8s/dashboard.yaml).
+sudo install -d /usr/local/lib/pi
+sudo install -m 755 "${REPO_ROOT}/deploy/pi-when.py" /usr/local/lib/pi/pi-when
+sudo ln -sf /usr/local/lib/pi/pi-when /usr/local/bin/pi-when
+sudo tee /etc/systemd/system/pi-status.service >/dev/null <<UNIT
+[Unit]
+Description=Status tab: who is using which app, what Jellyfin and Kiwix hold
+After=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi/pi-when content
+Nice=10
+UNIT
+sudo tee /etc/systemd/system/pi-status.timer >/dev/null <<UNIT
+[Unit]
+Description=Refresh the Status tab every 30 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable --now pi-status.timer >/dev/null
+sudo systemctl start pi-status.service
+sudo test -s /run/pi-status/status.json && echo "  /run/pi-status/status.json written" \
+  || echo "  no status file yet: sudo journalctl -u pi-status -n 20"
+
 echo "==> Cluster access for the node labels"
 kube apply -f "${REPO_ROOT}/k8s/dashboard-node-reader.yaml"
 

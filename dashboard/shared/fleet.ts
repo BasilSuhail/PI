@@ -205,7 +205,29 @@ export interface TorrentState {
     /** The address traffic is leaving from. AirVPN's, not yours. */
     publicIp: string | null;
     country: string | null;
+    /** Where that exit server is. Absent from an older console. */
+    city?: string | null;
+    /** Whose server it is, as k8s/qbittorrent.yaml configures it. */
+    provider?: string | null;
   } | null;
+}
+
+/** One person using one app right now. Written by `pi-when content` on the PC. */
+export interface ActiveUse {
+  /** The app as the Status tab names it: Jellyfin, Nextcloud, Immich, Torrent... */
+  app: string;
+  who: string;
+  what: string;
+  device: string;
+}
+
+/** The Status tab's feed. Null parts are ones the PC could not read. */
+export interface ContentStatus {
+  /** Unix seconds the PC wrote this. */
+  ts: number;
+  active: ActiveUse[];
+  jellyfin: { films: number; series: number; episodes: number; bytes: number | null } | null;
+  kiwix: { books: number; bytes: number } | null;
 }
 
 /**

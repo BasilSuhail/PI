@@ -1001,3 +1001,45 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   .fx-col{flex-basis:82vw}
   .fx-strip{height:min(66vh,520px)}
 }
+
+/* ── Status: Apple's inset grouped lists. One rounded list per group, one row
+   per app, hairlines inset past the icon, figures on the right. No boxes
+   inside, no bars: it has to fit one screen. ── */
+.sgroups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr));gap:20px 24px;align-items:start;margin-top:4px}
+.sstack{display:grid;gap:20px;min-width:0;align-content:start}
+.sgrp{display:grid;gap:6px;min-width:0}
+.sgrp h3{margin:0;padding-left:14px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.slist{background:var(--card-1);border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px var(--panel-line)}
+.srow{display:flex;align-items:center;gap:12px;padding:7px 14px;min-height:46px;position:relative}
+.srow+.srow::before{content:"";position:absolute;top:0;left:54px;right:0;border-top:1px solid var(--panel-line)}
+.srow.opens{cursor:pointer}
+.srow.opens:hover{background:var(--row-hover)}
+.srow:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
+.sico{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;flex:none;color:#fff;font-size:13px;font-weight:700}
+.sico.purple{background:linear-gradient(145deg,#d889ec,#793da9)}
+.sico.blue{background:linear-gradient(145deg,#78d9f3,#2774b7)}
+.sico.orange{background:linear-gradient(145deg,#ffcb79,#d76e22)}
+.sico.green{background:linear-gradient(145deg,#9ae6b2,#268d60)}
+.sico.pink{background:linear-gradient(145deg,#ffabc4,#be4f82)}
+.sico.art{background:none;overflow:hidden}
+.sico.art img{display:block;width:100%;height:100%;object-fit:contain}
+.smain{flex:1;min-width:0;display:grid}
+.smain .st{font-size:13px;font-weight:600;color:var(--ink)}
+.smain .ss{font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.smain .ss.busy{color:var(--ok)}
+.smain .ss.bad{color:var(--crit)}
+.svv{display:grid;justify-items:end;flex:none}
+.sv{font-size:12.5px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sv2{font-size:11.5px;color:var(--faint);white-space:nowrap;font-variant-numeric:tabular-nums}
+.schev{color:var(--faint);font-size:16px;line-height:1}
+.sfoot{margin:0;padding:2px 14px 0;font-size:11px;color:var(--faint)}
+.sfoot.bad{color:var(--crit)}
+.stog{width:40px;height:24px;border-radius:12px;border:0;padding:0;position:relative;cursor:pointer;flex:none;
+  background:var(--meter-bg-a);transition:background .2s}
+.stog::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+.stog.on{background:var(--ok)}
+.stog.on::after{transform:translateX(16px)}
+.stog:disabled{opacity:.6;cursor:default}
+.stog:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.stog,.stog::after{transition:none}}

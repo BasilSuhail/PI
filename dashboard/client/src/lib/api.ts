@@ -1,7 +1,7 @@
 /** Thin fetch layer plus the polling hook the views use. */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AppTile, TorrentState, ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
+import type { AppTile, TorrentState, ContainerRow, ContentStatus, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
 
 const json = async <T>(path: string): Promise<T> => {
   const res = await fetch(path, { cache: 'no-store' });
@@ -14,6 +14,7 @@ const json = async <T>(path: string): Promise<T> => {
 
 export const getNodes = () => json<FleetNode[]>('/api/nodes');
 export const getApps = () => json<AppTile[]>('/api/apps');
+export const getStatus = () => json<ContentStatus | null>('/api/status');
 export const getCredentials = () => json<CredentialStatus[]>('/api/credentials');
 export const getProcesses = (id: string, limit = 30) =>
   json<ProcessRow[]>(`/api/nodes/${encodeURIComponent(id)}/processes?limit=${limit}`);

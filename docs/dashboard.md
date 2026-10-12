@@ -88,6 +88,8 @@ GET /api/nodes
 GET /api/nodes/:id/processes?limit=30
 GET /api/nodes/:id/containers
 GET /api/apps
+GET /api/status    the Status tab: who is using which app, Jellyfin and Kiwix totals,
+                   read from /run/pi-status/status.json (pi-when content, every 30 s)
 ```
 
 Two rules the design has to respect:

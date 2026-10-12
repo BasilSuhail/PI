@@ -19,6 +19,7 @@ import { credentialStatus } from './lib/expiry';
 import { dialHost } from './lib/dial';
 import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
+import { fetchContentStatus } from './lib/status';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
 
@@ -86,6 +87,11 @@ const readBody = async (req: IncomingMessage): Promise<string> => {
 const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): Promise<boolean> => {
   if (url.pathname === '/api/nodes') {
     sendJson(req, res, 200, await fetchFleet());
+    return true;
+  }
+
+  if (url.pathname === '/api/status') {
+    sendJson(req, res, 200, await fetchContentStatus());
     return true;
   }
 
