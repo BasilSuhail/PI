@@ -132,6 +132,7 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
   const jf = status?.jellyfin ?? null;
   const kx = status?.kiwix ?? null;
   const im = status?.immich ?? null;
+  const nc = status?.nextcloud ?? null;
   const tl = torrentLine(torrent);
   const qb = app('qBittorrent');
   const osint = (name: string) => {
@@ -200,7 +201,10 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
         <div class="sgrp">
           <h3>Cloud</h3>
           <div class="slist">
-            <Row name="Nextcloud" app={app('Nextcloud')} letter="N" accent="blue" {...sub(app('Nextcloud'), 'Nextcloud')} value={upDown(app('Nextcloud'))} />
+            <Row name="Nextcloud" app={app('Nextcloud')} letter="N" accent="blue" {...sub(app('Nextcloud'), 'Nextcloud')}
+              value={nc ? bytes(nc.bytes, 1) : upDown(app('Nextcloud'))}
+              value2={nc ? count(nc.users.length, 'user') : undefined} />
+            {nc?.users.map((u) => <SubRow key={u.name} name={u.name} value={bytes(u.bytes, 1)} />)}
             <Row name="Immich" app={app('Photos')} letter="I" accent="orange" {...sub(app('Photos'), 'Immich')}
               value={im ? `${bytes(im.bytes, 1)} · ${count(im.photos, 'photo')}` : upDown(app('Photos'))}
               value2={im ? count(im.videos, 'video') : undefined} />
@@ -212,8 +216,8 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
             <Row name="ArchiveBox" app={app('ArchiveBox')} letter="A" accent="pink" {...sub(app('ArchiveBox'), 'ArchiveBox')} value={upDown(app('ArchiveBox'))} />
           </div>
           <p class="sfoot">
-            Space used and each user's share for Nextcloud{im ? '' : ', Immich'} and ArchiveBox, Kuma's monitors and
-            qBittorrent's downloads arrive as each app's key goes in.
+            {[!nc && 'Nextcloud', !im && 'Immich', 'ArchiveBox'].filter(Boolean).join(', ')} totals, Kuma's monitors
+            and qBittorrent's downloads arrive as each one is set up.
           </p>
         </div>
       </div>

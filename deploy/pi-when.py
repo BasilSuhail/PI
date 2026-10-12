@@ -47,6 +47,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import struct
@@ -967,18 +968,42 @@ STATUS_FILE = "/run/pi-status/status.json"
 # Adding up every film's size is one large request; the total moves when a
 # film is added, not every 30 seconds.
 LIBRARY_EVERY = 600
+OCC = KUBECTL + ["-n", NS, "exec", "deploy/nextcloud", "-c", "nextcloud", "--",
+                 "su", "-s", "/bin/sh", "www-data", "-c"]
+
+
+def nextcloud_users():
+    """[{name, bytes}] biggest first, from occ: no key or token needed, since
+    root on the PC can already run occ inside the pod. None if it fails."""
+    try:
+        listed = json.loads(sh(OCC + ["php /var/www/html/occ user:list --output=json"], 60) or "null")
+    except ValueError:
+        return None
+    if not isinstance(listed, dict):
+        return None
+    users = []
+    for uid, name in listed.items():
+        try:
+            info = json.loads(sh(OCC + ["php /var/www/html/occ user:info --output=json %s" % shlex.quote(uid)], 60))
+        except ValueError:
+            continue
+        used = ((info or {}).get("storage") or {}).get("used")
+        users.append({"name": name if isinstance(name, str) else uid, "bytes": used if isinstance(used, int) else 0})
+    return sorted(users, key=lambda u: -u["bytes"])
 
 
 def content():
     """The dashboard's Status tab, written to STATUS_FILE: who is using which
-    app (the same as the bot's), and what Jellyfin, Immich and Kiwix hold. Run every
+    app (the same as the bot's), and what Jellyfin, Immich, Nextcloud and
+    Kiwix hold. Run every
     30 seconds by pi-status.timer; the dashboard pod reads the file."""
     try:
         with open(STATUS_FILE) as f:
             prev = json.load(f)
     except (OSError, ValueError):
         prev = {}
-    out = {"ts": int(time.time()), "active": active_list(), "jellyfin": None, "immich": None, "kiwix": None}
+    out = {"ts": int(time.time()), "active": active_list(), "jellyfin": None, "immich": None,
+           "nextcloud": None, "kiwix": None}
 
     key, ip = env_value("JELLYFIN_API_KEY"), jellyfin_ip()
     counts = jellyfin_get(ip, key, "/Items/Counts") if key and ip else None
@@ -1013,6 +1038,17 @@ def content():
 
     # One drive can appear under two /srv names (a bind mount), so a book is
     # counted once per file on disk, not once per path to it.
+    # occ starts PHP once per call, so this is asked every LIBRARY_EVERY too.
+    last = prev.get("nextcloud") or {}
+    if last.get("at") and time.time() - last["at"] < LIBRARY_EVERY:
+        out["nextcloud"] = last
+    else:
+        users = nextcloud_users()
+        if users is not None:
+            out["nextcloud"] = {"bytes": sum(u["bytes"] for u in users), "users": users, "at": int(time.time())}
+        elif last:
+            out["nextcloud"] = last
+
     books = {}
     for path in glob.glob("/srv/*/Kiwix/*.zim"):
         st = os.stat(path)

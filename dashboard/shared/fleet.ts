@@ -227,6 +227,8 @@ export interface ContentStatus {
   ts: number;
   active: ActiveUse[];
   jellyfin: { films: number; series: number; episodes: number; bytes: number | null } | null;
+  /** Each account's files, from occ. Users biggest first. */
+  nextcloud?: { bytes: number; users: Array<{ name: string; bytes: number }> } | null;
   /** Absent from a PC without an Immich key. Users biggest first. */
   immich?: {
     photos: number;
