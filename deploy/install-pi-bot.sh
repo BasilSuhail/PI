@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The Discord bot: type "status" in the server, get right now in a few lines
-# (sudo pi-when status). Asks for the bot token the first time, and for two
-# optional extras: a Jellyfin API key (who is watching which film) and the
-# channels it may answer in. Re-run to change them: an empty answer keeps
+# (sudo pi-when status). Asks for the bot token the first time, and for
+# optional extras: a Jellyfin API key (who is watching which film), an Immich
+# API key (the dashboard's photo totals) and the channels it may answer in. Re-run to change them: an empty answer keeps
 # what is there. Idempotent.
 set -euo pipefail
 
@@ -33,6 +33,7 @@ umask 077
 {
   ask DISCORD_BOT_TOKEN "  Discord bot token: " secret
   ask JELLYFIN_API_KEY "  Jellyfin API key (optional): " secret
+  ask IMMICH_API_KEY "  Immich API key (optional, server statistics only): " secret
   ask DISCORD_CHANNELS "  Channel IDs to answer in, comma separated (optional, empty = any): "
 } > /tmp/pi-bot.env
 if ! grep -q '^DISCORD_BOT_TOKEN=.\+' /tmp/pi-bot.env; then

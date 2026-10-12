@@ -80,6 +80,16 @@ const Row = ({ name, app, letter, accent, sub, tone, value, value2, canOpen = tr
   );
 };
 
+/** One line under an app: a user and their share. Not clickable. */
+const SubRow = ({ name, value }: { name: string; value: string }) => (
+  <div class="srow sub">
+    <div class="smain"><span class="st">{name}</span></div>
+    <span class="sv">{value}</span>
+  </div>
+);
+
+const count = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
+
 export const StatusView = ({ apps }: { apps: AppTile[] }) => {
   const feed = usePoll(getStatus, 30_000);
   const [torrent, setTorrentState] = useState<TorrentState | null>(null);
@@ -121,6 +131,7 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
 
   const jf = status?.jellyfin ?? null;
   const kx = status?.kiwix ?? null;
+  const im = status?.immich ?? null;
   const tl = torrentLine(torrent);
   const qb = app('qBittorrent');
   const osint = (name: string) => {
@@ -190,12 +201,18 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
           <h3>Cloud</h3>
           <div class="slist">
             <Row name="Nextcloud" app={app('Nextcloud')} letter="N" accent="blue" {...sub(app('Nextcloud'), 'Nextcloud')} value={upDown(app('Nextcloud'))} />
-            <Row name="Immich" app={app('Photos')} letter="I" accent="orange" {...sub(app('Photos'), 'Immich')} value={upDown(app('Photos'))} />
+            <Row name="Immich" app={app('Photos')} letter="I" accent="orange" {...sub(app('Photos'), 'Immich')}
+              value={im ? `${bytes(im.bytes, 1)} · ${count(im.photos, 'photo')}` : upDown(app('Photos'))}
+              value2={im ? count(im.videos, 'video') : undefined} />
+            {im?.users.map((u) => (
+              <SubRow key={u.name} name={u.name}
+                value={`${bytes(u.bytes, 1)} · ${count(u.photos, 'photo')} · ${count(u.videos, 'video')}`} />
+            ))}
             <Row name="Vaultwarden" app={app('Vault')} letter="V" accent="purple" {...sub(app('Vault'), 'Vaultwarden')} value={upDown(app('Vault'))} />
             <Row name="ArchiveBox" app={app('ArchiveBox')} letter="A" accent="pink" {...sub(app('ArchiveBox'), 'ArchiveBox')} value={upDown(app('ArchiveBox'))} />
           </div>
           <p class="sfoot">
-            Space used and each user's share for Nextcloud, Immich and ArchiveBox, Kuma's monitors and
+            Space used and each user's share for Nextcloud{im ? '' : ', Immich'} and ArchiveBox, Kuma's monitors and
             qBittorrent's downloads arrive as each app's key goes in.
           </p>
         </div>

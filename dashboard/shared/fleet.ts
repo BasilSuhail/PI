@@ -227,6 +227,13 @@ export interface ContentStatus {
   ts: number;
   active: ActiveUse[];
   jellyfin: { films: number; series: number; episodes: number; bytes: number | null } | null;
+  /** Absent from a PC without an Immich key. Users biggest first. */
+  immich?: {
+    photos: number;
+    videos: number;
+    bytes: number;
+    users: Array<{ name: string; photos: number; videos: number; bytes: number }>;
+  } | null;
   kiwix: { books: number; bytes: number } | null;
 }
 

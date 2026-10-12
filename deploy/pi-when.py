@@ -857,8 +857,12 @@ def jellyfin_sessions():
     return out
 
 
+def svc_ip(name):
+    return sh(KUBECTL + ["-n", NS, "get", "svc", name, "-o", "jsonpath={.spec.clusterIP}"], 10).strip()
+
+
 def jellyfin_ip():
-    return sh(KUBECTL + ["-n", NS, "get", "svc", "jellyfin", "-o", "jsonpath={.spec.clusterIP}"], 10).strip()
+    return svc_ip("jellyfin")
 
 
 def jellyfin_get(ip, key, path, timeout=8):
@@ -967,14 +971,14 @@ LIBRARY_EVERY = 600
 
 def content():
     """The dashboard's Status tab, written to STATUS_FILE: who is using which
-    app (the same as the bot's), and what Jellyfin and Kiwix hold. Run every
+    app (the same as the bot's), and what Jellyfin, Immich and Kiwix hold. Run every
     30 seconds by pi-status.timer; the dashboard pod reads the file."""
     try:
         with open(STATUS_FILE) as f:
             prev = json.load(f)
     except (OSError, ValueError):
         prev = {}
-    out = {"ts": int(time.time()), "active": active_list(), "jellyfin": None, "kiwix": None}
+    out = {"ts": int(time.time()), "active": active_list(), "jellyfin": None, "immich": None, "kiwix": None}
 
     key, ip = env_value("JELLYFIN_API_KEY"), jellyfin_ip()
     counts = jellyfin_get(ip, key, "/Items/Counts") if key and ip else None
@@ -989,6 +993,23 @@ def content():
                 at = int(time.time())
         out["jellyfin"] = {"films": counts.get("MovieCount") or 0, "series": counts.get("SeriesCount") or 0,
                            "episodes": counts.get("EpisodeCount") or 0, "bytes": size, "bytesAt": at}
+
+    # Space and counts per user. The key needs only Immich's
+    # "server.statistics" permission (Account Settings > API Keys).
+    key, ip = env_value("IMMICH_API_KEY"), svc_ip("immich")
+    if key and ip:
+        req = urllib.request.Request("http://%s/api/server/statistics" % ip, headers={"x-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                st = json.load(r)
+            users = [{"name": u.get("userName") or "?", "photos": u.get("photos") or 0,
+                      "videos": u.get("videos") or 0, "bytes": u.get("usage") or 0}
+                     for u in st.get("usageByUser") or []]
+            out["immich"] = {"photos": st.get("photos") or 0, "videos": st.get("videos") or 0,
+                             "bytes": st.get("usage") or 0,
+                             "users": sorted(users, key=lambda u: -u["bytes"])}
+        except (OSError, ValueError):
+            pass
 
     books = glob.glob("/srv/*/Kiwix/*.zim")
     if books:
