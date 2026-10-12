@@ -255,7 +255,10 @@ bind() { # source, destination
   # second "1) Archive" and "2) Plugged in" beside it. A drive's folder should
   # show that drive as it was when the tree was built, and nothing else.
   sudo mount --make-rprivate "$2"
-  printf '%s  %s  none  bind,nofail  0  0  %s\n' \
+  # The fstab line carries the same flag, or the boot-time bind is a shared
+  # peer again and grows the copies back: jug3 showed "1) Archive" inside
+  # SSD-250GB as well as SSD-1TB after a reboot.
+  printf '%s  %s  none  bind,rprivate,nofail  0  0  %s\n' \
     "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
 }
 
