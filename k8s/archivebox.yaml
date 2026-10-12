@@ -114,10 +114,10 @@ spec:
               memory: 256Mi
               cpu: 50m
             # Chrome renders each page for the screenshot, PDF and SingleFile.
-            # At 512Mi it was OOMKilled mid-save, and the web interface went
+            # At 512Mi (sized for the Pi) it was OOMKilled mid-save, and the web interface went
             # down with it: 502s in the extension, previews that never loaded.
             limits:
-              memory: 2Gi
+              memory: 4Gi
           readinessProbe:
             httpGet: { path: /, port: http }
             initialDelaySeconds: 15
