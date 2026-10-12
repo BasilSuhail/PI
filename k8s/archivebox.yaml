@@ -1,23 +1,23 @@
-# ArchiveBox: a self-hosted internet archive. Feed it URLs and it saves
+# ArchiveBox 0.9: a self-hosted internet archive. Feed it URLs and it saves
 # everything — HTML snapshots, PDFs, screenshots, media, git repos — using
-# wget, yt-dlp, and its own headless browser under the hood.
+# wget, yt-dlp, and its own headless Chrome under the hood.
 #
-# Deployed by deploy/install-archivebox.sh.
+# Deployed by deploy/install-archivebox.sh, which fills in the __PLACEHOLDERS__.
 #
-# The same SSD/6TB split as Jellyfin and Kiwix:
+# Two folders, two drives, no symlinks:
 #
-#   the app     __APPS_DIR__/ArchiveBox   the SQLite index and config. Small,
-#                                         read at random, and the part where
-#                                         speed is felt.
-#   the data    __DATA_DIR__/ArchiveBox   the archived content. Pages, videos,
-#                                         PDFs — the reason this exists. Large,
-#                                         read sequentially, and what the 6TB
-#                                         is for.
+#   /data           __APPS_DIR__/ArchiveBox         SSD. The SQLite index, the
+#                                                   config, logs and personas
+#                                                   (logged-in browser profiles).
+#                                                   Small, read at random.
+#   /data/archive   __DATA_DIR__/ArchiveBox/archive the archived pages, videos
+#                                                   and PDFs. Large, and what
+#                                                   the big drive is for.
 #
-# ArchiveBox keeps its index (a SQLite database) alongside the archived files
-# by default. The DATA_DIR env var points it at the 6TB; the index is
-# symlinked from there back to the SSD by the installer, so the database gets
-# fast random reads and the bulk content gets capacity.
+# The image's own entrypoint runs first, as root: it gives its `archivebox`
+# user the owner's UID (PUID/PGID), then drops to it with setpriv. One-off
+# commands through `kubectl exec` skip the entrypoint, so they drop the same
+# way by hand (see the installer).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,130 +37,97 @@ spec:
     spec:
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
-      securityContext:
-        runAsUser: __UID__
-        runAsGroup: __GID__
-        fsGroup: __GID__
-      initContainers:
-        - name: passwd-entry
-          image: archivebox/archivebox:0.7.4
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              cp /etc/passwd /tmp-passwd/passwd
-              echo "archivebox:x:__UID__:__GID__:archivebox:/tmp/archivebox:/bin/bash" >> /tmp-passwd/passwd
-          volumeMounts:
-            - name: passwd
-              mountPath: /tmp-passwd
       containers:
         - name: archivebox
-          image: archivebox/archivebox:0.7.4
+          # The image's default command is `archivebox server --init
+          # 0.0.0.0:5797`: it creates the collection on first start and
+          # upgrades it on later ones.
+          image: archivebox/archivebox:0.9.73
           ports:
             - name: http
-              containerPort: 8000
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              if [ -f /index/index.sqlite3 ] && [ ! -e /data/index.sqlite3 ]; then
-                ln -s /index/index.sqlite3 /data/index.sqlite3
-              fi
-              archivebox init --setup 2>/dev/null || true
-              if [ -f /data/index.sqlite3 ] && [ ! -L /data/index.sqlite3 ]; then
-                mv /data/index.sqlite3 /index/index.sqlite3
-                ln -s /index/index.sqlite3 /data/index.sqlite3
-              fi
-              exec archivebox server 0.0.0.0:8000
+              containerPort: 5797
           env:
-            # Chrome (screenshot, PDF, SingleFile, DOM) writes its profile and
-            # crash database under HOME. With no writable home it died before
-            # opening a page: "chrome_crashpad_handler: --database is
-            # required", and every Chrome extractor failed.
-            - name: HOME
-              value: /tmp/archivebox
-            - name: ALLOWED_HOSTS
-              value: "*"
+            - name: PUID
+              value: "__UID__"
+            - name: PGID
+              value: "__GID__"
+            - name: TZ
+              value: Europe/London
+            # The address people open. Behind the Tailscale ingress there is
+            # one name and no wildcard subdomains, so archived pages replay
+            # on that one domain with their scripts stripped, which keeps a
+            # saved page from acting as the logged-in admin.
+            - name: BASE_URL
+              value: "__BASE_URL__"
+            - name: SERVER_SECURITY_MODE
+              value: safe-onedomain-nojsreplay
+            # Logged-in pages end up in here; the list is for the admin.
             - name: PUBLIC_INDEX
-              value: "True"
-            - name: PUBLIC_SNAPSHOTS
-              value: "True"
+              value: "False"
             - name: PUBLIC_ADD_VIEW
               value: "False"
-            # The admin account, created on first init. Written by the
-            # installer into a ConfigMap rather than pinned here, so a
-            # re-apply cannot silently reset a password changed since.
+            # Read once, by the first init. Changing the Secret later does
+            # nothing: use `archivebox manage changepassword`.
             - name: ADMIN_USERNAME
               valueFrom:
-                configMapKeyRef:
-                  name: archivebox-config
-                  key: ADMIN_USERNAME
+                secretKeyRef: { name: archivebox-admin, key: ADMIN_USERNAME, optional: true }
             - name: ADMIN_PASSWORD
               valueFrom:
-                configMapKeyRef:
-                  name: archivebox-config
-                  key: ADMIN_PASSWORD
+                secretKeyRef: { name: archivebox-admin, key: ADMIN_PASSWORD, optional: true }
           volumeMounts:
-            - name: data
-              mountPath: /data
             - name: index
-              mountPath: /index
-            - name: passwd
-              mountPath: /etc/passwd
-              subPath: passwd
-              readOnly: true
-            - name: home
+              mountPath: /data
+            - name: archive
+              mountPath: /data/archive
+            - name: tmp
               mountPath: /tmp/archivebox
+            - name: shm
+              mountPath: /dev/shm
           resources:
             requests:
               memory: 256Mi
               cpu: 50m
-            # Chrome renders each page for the screenshot, PDF and SingleFile.
-            # At 512Mi (sized for the Pi) it was OOMKilled mid-save, and the web interface went
-            # down with it: 502s in the extension, previews that never loaded.
+            # Chrome renders each page for the screenshot, PDF and SingleFile,
+            # and a crawl runs several. At 512Mi (sized for the Pi) it was
+            # OOMKilled mid-save and the web interface went down with it. A
+            # ceiling, not a reservation: idle, it holds a few hundred MB.
             limits:
               memory: 4Gi
-          readinessProbe:
-            httpGet: { path: /, port: http }
-            initialDelaySeconds: 15
+          # First start creates the database and installs nothing over the
+          # network, but can still take a minute or two on a cold disk.
+          startupProbe:
+            tcpSocket: { port: http }
             periodSeconds: 10
-            failureThreshold: 30
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /, port: http }
-            initialDelaySeconds: 60
+            tcpSocket: { port: http }
             periodSeconds: 30
-          securityContext:
-            allowPrivilegeEscalation: false
+            failureThreshold: 5
       volumes:
-        - name: passwd
-          emptyDir: {}
-        # Chrome's scratch space: profile, cache, crash reports. Nothing in it
-        # is worth keeping across restarts.
-        - name: home
-          emptyDir: {}
-  # A note on `type: Directory` below, which is doing real work.
-  #
-  # The alternative, DirectoryOrCreate, is the default reflex and it is wrong for
-  # a disk that can go away. With the 6TB unmounted, /srv/storage still exists —
-  # it is the mount point, an empty directory on the boot disk. DirectoryOrCreate
-  # would create the app's folders inside it, the app would start, find no
-  # database, and cheerfully build a new one on the boot SSD. Mount the 6TB again
-  # and the real data reappears underneath, with the app now pointed at a second
-  # copy it made while the disk was missing.
-  #
-  # Directory refuses. The app's subdirectory only exists when the disk is
-  # mounted, so an unmounted disk means the pod stops at ContainerCreating with
-  # the missing path named in its events. Loud and harmless, instead of quiet and
-  # not.
-        - name: data
-          hostPath:
-            path: __DATA_DIR__/ArchiveBox
-            type: Directory
-        # SSD: the SQLite index. Read at random, so it lives on the fast
-        # disk. The init script symlinks it into /data where ArchiveBox
-        # expects it.
         - name: index
           hostPath:
             path: __APPS_DIR__/ArchiveBox
             type: Directory
+  # `type: Directory` on purpose. With the big drive unmounted its mount point
+  # is an empty folder on the boot disk; DirectoryOrCreate would let the app
+  # start there and archive onto the wrong disk. Directory refuses, and the
+  # pod waits at ContainerCreating with the missing path in its events.
+        - name: archive
+          hostPath:
+            path: __DATA_DIR__/ArchiveBox/archive
+            type: Directory
+        - name: tmp
+          emptyDir: {}
+        # Docker gives a container 64MB of /dev/shm and ArchiveBox's compose
+        # file raises it to 1GB for Chrome; a pod gets this instead. It is
+        # RAM, and counts toward the limit above.
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service

@@ -53,7 +53,7 @@ help:
 	@echo "make torrent         qBittorrent behind AirVPN, installed stopped. Asks for the keys once"
 	@echo "                     VPN_COUNTRIES=\"Netherlands\" picks where the tunnel comes out"
 	@echo "make torrent-on      Start it without the console. make torrent-off stops it"
-	@echo "make archivebox      ArchiveBox on its own tailnet name. Asks for an admin password once"
+	@echo "make archivebox      ArchiveBox on its own tailnet name. Asks for an admin login once"
 	@echo "make agents          agent/ changed — AGENT_NODES (jug3)"
 	@echo "make deploy          dashboard-k8s and agents together"
 	@echo "make check           services up, dashboard answering"
