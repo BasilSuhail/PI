@@ -1011,9 +1011,14 @@ def content():
         except (OSError, ValueError):
             pass
 
-    books = glob.glob("/srv/*/Kiwix/*.zim")
+    # One drive can appear under two /srv names (a bind mount), so a book is
+    # counted once per file on disk, not once per path to it.
+    books = {}
+    for path in glob.glob("/srv/*/Kiwix/*.zim"):
+        st = os.stat(path)
+        books[(st.st_dev, st.st_ino)] = st.st_size
     if books:
-        out["kiwix"] = {"books": len(books), "bytes": sum(os.path.getsize(b) for b in books)}
+        out["kiwix"] = {"books": len(books), "bytes": sum(books.values())}
 
     os.makedirs(os.path.dirname(STATUS_FILE), mode=0o755, exist_ok=True)
     tmp = STATUS_FILE + ".tmp"
