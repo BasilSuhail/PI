@@ -1036,8 +1036,6 @@ def content():
         except (OSError, ValueError):
             pass
 
-    # One drive can appear under two /srv names (a bind mount), so a book is
-    # counted once per file on disk, not once per path to it.
     # occ starts PHP once per call, so this is asked every LIBRARY_EVERY too.
     last = prev.get("nextcloud") or {}
     if last.get("at") and time.time() - last["at"] < LIBRARY_EVERY:
@@ -1049,10 +1047,13 @@ def content():
         elif last:
             out["nextcloud"] = last
 
+    # The same files show up under more than one /srv name: /srv/pool is a
+    # pool over the drives, which reports its own inode numbers, so a book is
+    # one name and size however many paths reach it.
     books = {}
     for path in glob.glob("/srv/*/Kiwix/*.zim"):
-        st = os.stat(path)
-        books[(st.st_dev, st.st_ino)] = st.st_size
+        size = os.path.getsize(path)
+        books[(os.path.basename(path), size)] = size
     if books:
         out["kiwix"] = {"books": len(books), "bytes": sum(books.values())}
 
