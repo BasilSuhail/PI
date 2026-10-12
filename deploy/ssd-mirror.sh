@@ -24,23 +24,27 @@
 #
 # Every path stays the same (/, /srv/ssd, /1) Archive), so no app changes.
 #
-#   sudo bash deploy/ssd-mirror.sh check            read-only: the disks and the plan
+#   sudo bash deploy/ssd-mirror.sh check            read-only: where things are, what is next
+#   sudo bash deploy/ssd-mirror.sh consolidate      apps onto the 250GB; it runs everything alone
 #   sudo bash deploy/ssd-mirror.sh stage1           build the mirror on the 1TB, boot it once
 #   sudo bash deploy/ssd-mirror.sh stage2           after that boot: add the 250GB, alerts on
 #   sudo bash deploy/ssd-mirror.sh status           both disks, sync progress, boot entries
 #   sudo bash deploy/ssd-mirror.sh add /dev/sdX [--backup]   a new or replacement SSD
 #   sudo bash deploy/ssd-mirror.sh remove /dev/sdX           take an SSD out on purpose
 #
-# Stage 1 never touches the 250GB. Its reboot uses BootNext, a one-time boot:
-# if the mirror does not come up, a power cycle lands back on the 250GB as it
-# was, with the apps already pointed at the mirror so they still run.
+# Consolidate first: the 250GB runs Debian and the apps on its own, and the
+# 1TB is unused. Stage 1 never touches the 250GB. Its reboot uses BootNext, a
+# one-time boot: if the mirror does not come up, a power cycle lands back on
+# the 250GB exactly as it was, apps included.
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || exec sudo -E bash "$0" "$@"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE=/etc/pi-ssd-mirror.env
-STAGE_DIR="${STAGE_DIR:-/srv/storage/.ssd-mirror-stage}"
+# The apps on the 250GB between consolidate and stage 1: a folder on the root
+# filesystem with /srv/ssd bound to it, so every path holds.
+LOCAL=/srv/apps-local
 NEW=/mnt/ssd-mirror
 ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 ESP_GB=1 ROOT_GB=100 APPS_GB=115 SWAP_GB=12
@@ -172,57 +176,193 @@ write_mostly() { # md, partition
   echo writemostly > "/sys/block/$(basename "$(readlink -f "$1")")/md/dev-$(basename "$2")/state"
 }
 
+# --- shared by consolidate and stage 1 ---------------------------------------
+
+# Stopping the apps for a copy: every host timer first (jellyfin-guard opens
+# jellyfin.db every minute, enough to fail the copy check), then k3s and its
+# containers, then Samba. start_apps undoes it.
+TIMERS=""
+stop_apps() {
+  local i
+  TIMERS=$(systemctl list-units --type=timer --state=active --no-legend --plain | awk '{ print $1 }' | xargs)
+  # shellcheck disable=SC2086
+  [ -z "$TIMERS" ] || systemctl stop $TIMERS
+  for i in $(seq 30); do
+    systemctl list-units --type=service --state=activating --no-legend --plain | grep -q . || break
+    sleep 1
+  done
+  systemctl stop k3s
+  # Stopping k3s leaves its containers running, by design. Its own teardown
+  # kills them and lifts their mounts.
+  [ -x /usr/local/bin/k3s-killall.sh ] || die "k3s-killall.sh is missing; cannot stop the containers."
+  /usr/local/bin/k3s-killall.sh >/dev/null 2>&1 || true
+  for i in $(seq 30); do pgrep -f containerd-shim >/dev/null || break; sleep 1; done
+  if pgrep -f containerd-shim >/dev/null; then
+    pgrep -af containerd-shim | head -5 | sed 's/^/    /' >&2
+    die "Containers are still running."
+  fi
+  systemctl stop smbd nmbd 2>/dev/null || true
+  echo "  apps, timers and Samba stopped"
+}
+start_apps() {
+  # shellcheck disable=SC2086
+  systemctl start smbd nmbd k3s $TIMERS 2>/dev/null || true
+}
+
+# Two passes (the second catches anything that moved during the first), then
+# a dry run that must come back empty.
+copy_tree() { # from, to
+  rsync -aAXH --numeric-ids --delete --info=progress2 "$1/" "$2/"
+  rsync -aAXH --numeric-ids --delete "$1/" "$2/"
+  local diff
+  diff=$(rsync -aAXHn --numeric-ids --delete --itemize-changes "$1/" "$2/")
+  if [ -n "$diff" ]; then
+    echo "  Still changing under the copy:" >&2
+    echo "$diff" | head -20 | sed 's/^/    /' >&2
+    return 1
+  fi
+  echo "  copy matches"
+}
+
+# The whole fstab line for a mount point, replaced.
+fstab_line() { # file, mount point, new line
+  local tmp; tmp=$(mktemp)
+  awk -v m="$2" -v l="$3" '$1 !~ /^#/ && NF >= 3 && $2 == m { print l; next } { print }' "$1" > "$tmp"
+  install -m 644 "$tmp" "$1"; rm -f "$tmp"
+}
+
+who_is_on() { command -v pi-when >/dev/null || return 0; say "Who is using it"; pi-when now || true; }
+
 # --- check -------------------------------------------------------------------
 
-preflight() {
+check() {
+  local root_src apps_src main
+  root_src=$(src_of /) || die "Cannot read the root mount."
+  apps_src=$(src_of /srv/ssd) || apps_src="(not mounted)"
+  say "Now"
+  printf '  %-10s %-12s %s\n' / "$root_src" "$(describe "$(disk_of "$root_src")")"
+  printf '  %-10s %-12s %s\n' /srv/ssd "$apps_src" "$(describe "$(disk_of "$apps_src" 2>/dev/null)" 2>/dev/null)"
+  case "$root_src" in /dev/md*)
+    if grep -q '\[2/2\]' /proc/mdstat; then echo "  Next: nothing, both SSDs are in the mirror"
+    else echo "  Next: sudo bash deploy/ssd-mirror.sh stage2"; fi
+    return ;;
+  esac
+  main=$(disk_of "$root_src")
+  say "Space on $main"
+  printf '  %-22s %4s GiB used\n' "Debian (/)" $(( $(df -B1 --output=used / | tail -1) / GIB ))
+  printf '  %-22s %4s GiB used\n' "apps (/srv/ssd)" $(( $(df -B1 --output=used /srv/ssd | tail -1) / GIB ))
+  printf '  %-22s %4s GiB free\n' "on /" $(( $(df -B1 --output=avail / | tail -1) / GIB ))
+  if [ "$(disk_of "$apps_src")" = "$main" ]; then
+    echo "  The apps run from the 250GB. Next: sudo bash deploy/ssd-mirror.sh stage1"
+  else
+    echo "  The apps run from $(describe "$(disk_of "$apps_src")"). Next: sudo bash deploy/ssd-mirror.sh consolidate"
+  fi
+}
+
+# --- consolidate -------------------------------------------------------------
+
+# Moves the apps onto the 250GB, so it runs everything on its own and the 1TB
+# is free to become the mirror. The 1TB is unmounted, not erased: its copy of
+# the apps stays as it was until stage 1.
+consolidate() {
   ROOT_SRC=$(src_of /) || die "Cannot read the root mount."
-  case "$ROOT_SRC" in /dev/md*) die "Root is already on the mirror. Next: sudo bash deploy/ssd-mirror.sh stage2" ;; esac
-  APPS_SRC=$(src_of /srv/ssd) || die "/srv/ssd is not mounted. Is the 1TB SSD in?"
+  case "$ROOT_SRC" in /dev/md*) die "Root is already on the mirror." ;; esac
+  APPS_SRC=$(src_of /srv/ssd) || die "/srv/ssd is not mounted."
   MAIN=$(disk_of "$ROOT_SRC")
   BACKUP=$(disk_of "$APPS_SRC")
-  [ "$MAIN" != "$BACKUP" ] || die "/ and /srv/ssd are on the same disk ($MAIN)."
-  grep -q '^md' /proc/mdstat 2>/dev/null && die "An md array already exists (cat /proc/mdstat). Not touching it."
+  if [ "$BACKUP" = "$MAIN" ]; then
+    echo "  The apps already run from $MAIN ($(describe "$MAIN")). Next: stage1"; return 0
+  fi
+  local apps_used root_free
+  apps_used=$(df -B1 --output=used /srv/ssd | tail -1)
+  root_free=$(df -B1 --output=avail / | tail -1)
 
-  ROOT_USED=$(df -B1 --output=used / | tail -1)
-  APPS_USED=$(df -B1 --output=used /srv/ssd | tail -1)
-  mountpoint -q "$(dirname "$STAGE_DIR")" || die "$(dirname "$STAGE_DIR") is not mounted; it holds the copy of the apps."
-  STAGE_FREE=$(df -B1 --output=avail "$(dirname "$STAGE_DIR")" | tail -1)
+  who_is_on
+  say "Moving the apps"
+  printf '  %-6s %s\n' from "$BACKUP  $(describe "$BACKUP")  (/srv/ssd, $((apps_used / GIB)) GiB)"
+  printf '  %-6s %s\n' to "$MAIN  $(describe "$MAIN")  ($LOCAL, $((root_free / GIB)) GiB free)"
+  [ "$root_free" -gt $(( apps_used + 20 * GIB )) ] || die "Not enough room on the 250GB."
+  echo "  The 1TB is unmounted afterwards, not erased. Apps are down for about 10 minutes."
+  printf '  Type MOVE to start: '
+  read -r reply
+  [ "$reply" = MOVE ] || die "Stopped. Nothing was changed."
 
-  say "Disks"
-  printf '  %-8s %-10s %s\n' main "$MAIN" "$(describe "$MAIN")  ($(by_id "$MAIN"))"
-  printf '  %-8s %-10s %s\n' backup "$BACKUP" "$(describe "$BACKUP")  ($(by_id "$BACKUP"))"
-  local bad=0
-  for d in "$MAIN" "$BACKUP"; do
-    [ "$(lsblk -dno TRAN "$d" | xargs)" = sata ] || echo "  note: $d is not on SATA ($(lsblk -dno TRAN "$d"))"
-    if [ $(( $(size_of "$d") / GIB )) -lt $NEED_GIB ]; then
-      echo "  FAIL  $d holds $(( $(size_of "$d") / GIB ))GiB; the layout needs ${NEED_GIB}GiB" >&2; bad=1
-    fi
-  done
+  # The first attempt staged a copy on the 6TB. Only a copy; the 1TB still
+  # holds the originals.
+  if [ -d /srv/storage/.ssd-mirror-stage ]; then
+    say "Deleting the old staging copy on the 6TB"
+    rm -rf /srv/storage/.ssd-mirror-stage
+  fi
 
-  say "Space"
-  printf '  %-26s %4s GiB used, fits in %s GiB\n' "Debian (/)" $((ROOT_USED / GIB)) $ROOT_GB
-  printf '  %-26s %4s GiB used, fits in %s GiB\n' "apps (/srv/ssd)" $((APPS_USED / GIB)) $APPS_GB
-  printf '  %-26s %4s GiB free\n' "staging ($(dirname "$STAGE_DIR"))" $((STAGE_FREE / GIB))
-  [ "$ROOT_USED" -lt $(( (ROOT_GB - 10) * GIB )) ] || { echo "  FAIL  Debian is too big for ${ROOT_GB}GiB" >&2; bad=1; }
-  [ "$APPS_USED" -lt $(( (APPS_GB - 10) * GIB )) ] || { echo "  FAIL  the apps are too big for ${APPS_GB}GiB" >&2; bad=1; }
-  [ "$STAGE_FREE" -gt $(( APPS_USED + 20 * GIB )) ] || { echo "  FAIL  not enough room to stage the apps" >&2; bad=1; }
-  [ -d /sys/firmware/efi ] || { echo "  FAIL  not booted in UEFI mode" >&2; bad=1; }
-  [ "$bad" -eq 0 ] || exit 1
+  say "Stopping the apps"
+  FSTAB_BAK=""
+  trap 'echo "  Stopped. Putting everything back as it was." >&2
+        if [ -n "$FSTAB_BAK" ]; then
+          install -m 644 "$FSTAB_BAK" /etc/fstab; systemctl daemon-reload
+          umount "/1) Archive" /srv/ssd 2>/dev/null || true
+        fi
+        mount -a 2>/dev/null || true; start_apps' EXIT
+  stop_apps
 
-  say "Plan"
-  echo "  1. stop the apps, copy /srv/ssd to $STAGE_DIR"
-  echo "  2. ERASE $BACKUP ($(describe "$BACKUP")), lay out EFI / root / apps / swap / spare"
-  echo "  3. copy Debian and the apps onto it, make it bootable"
-  echo "  4. one-time boot from it; the 250GB is untouched until stage 2"
+  say "Copying the apps to $LOCAL"
+  mkdir -p "$LOCAL"
+  copy_tree /srv/ssd "$LOCAL" || die "The copy does not match. Nothing was changed."
+
+  say "/srv/ssd now comes from the 250GB"
+  FSTAB_BAK=/etc/fstab.pi-ssd-mirror.bak
+  cp /etc/fstab "$FSTAB_BAK"
+  unmount_disk "$BACKUP" || die "Could not unmount the 1TB."
+  fstab_line /etc/fstab /srv/ssd "$LOCAL /srv/ssd none bind,nofail 0 0"
+  systemctl daemon-reload
+  mount -a
+  [ "$(disk_of "$(src_of /srv/ssd)")" = "$MAIN" ] || die "/srv/ssd did not come up from the 250GB."
+  [ -d "/1) Archive/Apps" ] || die "/1) Archive is empty after the switch."
+  printf 'MAIN_ID=%s\nBACKUP_ID=%s\n' "$(by_id "$MAIN")" "$(by_id "$BACKUP")" > "$STATE"
+
+  trap - EXIT
+  say "Starting the apps"
+  start_apps
+  cat <<NEXT
+
+Done. The 250GB now runs Debian and the apps on its own; the 1TB is not used.
+Give the apps a few minutes, check they all work (dashboard, Jellyfin,
+Nextcloud, Immich), then build the mirror:
+
+  sudo bash $REPO_ROOT/deploy/ssd-mirror.sh stage1
+
+To undo instead: sudo cp $FSTAB_BAK /etc/fstab, then reboot.
+NEXT
 }
 
 # --- stage 1 -----------------------------------------------------------------
 
 stage1() {
-  command -v pi-when >/dev/null && { say "Who is using it"; pi-when now || true; }
-  preflight
-  echo
-  printf '  Type WIPE to erase %s (%s) and start: ' "$BACKUP" "$(describe "$BACKUP")"
+  ROOT_SRC=$(src_of /) || die "Cannot read the root mount."
+  case "$ROOT_SRC" in /dev/md*) die "Root is already on the mirror. Next: sudo bash deploy/ssd-mirror.sh stage2" ;; esac
+  MAIN=$(disk_of "$ROOT_SRC")
+  [ "$(disk_of "$(src_of /srv/ssd)")" = "$MAIN" ] && [ -r "$STATE" ] ||
+    die "The apps are not on the 250GB yet. First: sudo bash deploy/ssd-mirror.sh consolidate"
+  # shellcheck disable=SC1090
+  . "$STATE"
+  BACKUP=$(readlink -f "$BACKUP_ID")
+  [ -b "$BACKUP" ] && [ "$BACKUP" != "$MAIN" ] || die "The 1TB ($BACKUP_ID) is not here."
+  # Unused since consolidate, but an automount may have picked it up.
+  unmount_disk "$BACKUP" || die "Could not unmount $BACKUP."
+  grep -q '^md' /proc/mdstat 2>/dev/null && die "An md array already exists (cat /proc/mdstat). Not touching it."
+  [ -d /sys/firmware/efi ] || die "Not booted in UEFI mode."
+  [ $(( $(size_of "$BACKUP") / GIB )) -ge $NEED_GIB ] || die "$BACKUP is smaller than ${NEED_GIB}GiB."
+  local apps_used root_used
+  apps_used=$(du -sb "$LOCAL" | cut -f1)
+  root_used=$(( $(df -B1 --output=used / | tail -1) - apps_used ))
+  [ "$root_used" -lt $(( (ROOT_GB - 10) * GIB )) ] || die "Debian is too big for ${ROOT_GB}GiB."
+  [ "$apps_used" -lt $(( (APPS_GB - 10) * GIB )) ] || die "The apps are too big for ${APPS_GB}GiB."
+
+  who_is_on
+  say "Building the mirror"
+  printf '  %-7s %s\n' erase "$BACKUP  $(describe "$BACKUP")"
+  printf '  %-7s %s\n' copy "Debian $((root_used / GIB)) GiB, apps $((apps_used / GIB)) GiB, from the 250GB"
+  echo "  The 250GB is not touched. Apps are down until the reboot."
+  printf '  Type WIPE to erase %s (%s): ' "$BACKUP" "$(describe "$BACKUP")"
   read -r reply
   [ "$reply" = WIPE ] || die "Stopped. Nothing was changed."
 
@@ -230,50 +370,10 @@ stage1() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q mdadm gdisk dosfstools efibootmgr rsync >/dev/null
 
   say "Stopping the apps"
-  ERASED=0
-  restore() {
-    [ "$ERASED" -eq 0 ] || return 0
-    echo "  Stopped before anything was erased. Starting everything again." >&2
-    mount -a 2>/dev/null || true
-    systemctl start smbd nmbd k3s 2>/dev/null || true
-  }
-  trap restore EXIT
-  systemctl stop k3s
-  # Stopping k3s leaves its containers running, by design. Its own teardown
-  # kills them and lifts their mounts; a database still running would keep
-  # writing under the copy.
-  [ -x /usr/local/bin/k3s-killall.sh ] || die "k3s-killall.sh is missing; cannot stop the containers."
-  /usr/local/bin/k3s-killall.sh >/dev/null 2>&1 || true
-  local i
-  for i in $(seq 30); do pgrep -f containerd-shim >/dev/null || break; sleep 1; done
-  if pgrep -f containerd-shim >/dev/null; then
-    pgrep -af containerd-shim | head -5 | sed 's/^/    /' >&2
-    die "Containers are still running. Nothing was erased."
-  fi
-  echo "  all containers stopped"
-  systemctl stop smbd nmbd 2>/dev/null || true
-
-  say "Copying the apps to $STAGE_DIR"
-  mkdir -p "$STAGE_DIR"
-  rsync -aAXH --numeric-ids --delete --info=progress2 /srv/ssd/ "$STAGE_DIR/"
-  # Second pass: quick, and picks up anything that moved during the first.
-  rsync -aAXH --numeric-ids --delete /srv/ssd/ "$STAGE_DIR/"
-  local diff
-  diff=$(rsync -aAXHn --numeric-ids --delete --itemize-changes /srv/ssd/ "$STAGE_DIR/")
-  if [ -n "$diff" ]; then
-    echo "  Still changing under the copy (something outside k3s writes here):" >&2
-    echo "$diff" | head -20 | sed 's/^/    /' >&2
-    die "The copy does not match /srv/ssd. Nothing was erased."
-  fi
-  echo "  copy matches"
-
-  say "Unmounting $BACKUP"
-  unmount_disk "$BACKUP" || die "Could not free $BACKUP. Nothing was erased."
+  trap 'echo "  Stopped. The 250GB is untouched; starting the apps again." >&2; start_apps' EXIT
+  stop_apps
 
   say "Laying out $BACKUP"
-  ERASED=1
-  trap - EXIT
-  trap 'echo; echo "  Failed after $BACKUP was erased. The apps are safe in $STAGE_DIR; the 250GB is untouched. Paste this output." >&2' EXIT
   partition "$BACKUP"
   mdadm --create /dev/md/root --name=root --level=1 --metadata=1.2 --bitmap=internal \
     --raid-devices=2 --run "$(part_of "$BACKUP" 2)" missing <<<y
@@ -295,26 +395,23 @@ stage1() {
   mkdir -p "$NEW"
   mount "$MD_ROOT" "$NEW"
   # -x stays on the root filesystem, but /srv/browse/SSD-250GB is a bind of
-  # that same filesystem and would be copied again inside itself.
+  # that same filesystem and would be copied again inside itself. The apps
+  # folder goes to its own mirror below.
   rsync -aAXHx --numeric-ids --info=progress2 \
-    --exclude='/srv/browse/*/*' --exclude="$NEW/*" --exclude='/lost+found' / "$NEW/"
+    --exclude='/srv/browse/*/*' --exclude="$NEW/*" --exclude="$LOCAL" --exclude='/lost+found' / "$NEW/"
   mkdir -p "$NEW/boot/efi"
   mount "$(part_of "$BACKUP" 1)" "$NEW/boot/efi"
   rsync -rt /boot/efi/ "$NEW/boot/efi/"
 
-  say "Copying the apps back from $STAGE_DIR"
+  say "Copying the apps"
   mkdir -p "$NEW/srv/ssd"
   mount "$MD_APPS" "$NEW/srv/ssd"
-  rsync -aAXH --numeric-ids --info=progress2 "$STAGE_DIR/" "$NEW/srv/ssd/"
-  if [ -n "$(rsync -aAXHn --numeric-ids --delete --itemize-changes "$STAGE_DIR/" "$NEW/srv/ssd/")" ]; then
-    die "The apps on the mirror do not match the staged copy."
-  fi
-  echo "  copy matches"
+  copy_tree "$LOCAL" "$NEW/srv/ssd" || die "The apps on the mirror do not match."
 
   say "Pointing the copy at the mirror"
   fstab_set "$NEW/etc/fstab" / "$(uuid "$MD_ROOT")"
   fstab_set "$NEW/etc/fstab" /boot/efi "$(uuid "$(part_of "$BACKUP" 1)")"
-  fstab_set "$NEW/etc/fstab" /srv/ssd "$(uuid "$MD_APPS")"
+  fstab_line "$NEW/etc/fstab" /srv/ssd "UUID=$(uuid "$MD_APPS") /srv/ssd ext4 defaults,noatime,nofail 0 2"
   # The 250GB's swap goes; this disk's own comes in.
   sed -i '/^[^#].*[[:space:]]swap[[:space:]]/d' "$NEW/etc/fstab"
   echo "UUID=$(uuid "$(part_of "$BACKUP" 4)") none swap sw,nofail 0 0" >> "$NEW/etc/fstab"
@@ -331,7 +428,7 @@ stage1() {
   # so that reboot lands on the 250GB.
   grep -q 'panic=' "$NEW/etc/default/grub" ||
     sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 panic=10"/' "$NEW/etc/default/grub"
-  printf 'MAIN_ID=%s\nBACKUP_ID=%s\n' "$(by_id "$MAIN")" "$(by_id "$BACKUP")" | tee "$STATE" > "$NEW$STATE"
+  cp "$STATE" "$NEW$STATE"
 
   say "Making it bootable"
   for d in dev proc sys run; do mount --rbind "/$d" "$NEW/$d"; mount --make-rslave "$NEW/$d"; done
@@ -353,16 +450,11 @@ stage1() {
   efibootmgr -q -n "$ENTRY"
   echo "  Boot$ENTRY  $(describe "$BACKUP")  -- next boot only"
 
-  say "Apps on this system point at the mirror too"
-  # If the mirror's first boot fails, this system comes back with its apps.
-  fstab_set /etc/fstab /srv/ssd "$(uuid "$MD_APPS")"
-  systemctl daemon-reload
-  mount /srv/ssd && mount '/1) Archive' || true
-
   trap - EXIT
   cat <<NEXT
 
-Stage 1 done. Reboot now:
+Stage 1 done. The apps stay stopped until the reboot, so nothing changes on
+the 250GB that the mirror would miss. Reboot now:
 
   sudo reboot
 
@@ -371,10 +463,8 @@ Give it 3 minutes, SSH back in, then:
   sudo bash $REPO_ROOT/deploy/ssd-mirror.sh status
 
 It should say root is on the mirror. If jug3 has not come back after 5
-minutes, switch it off at the power button and on again: it boots the 250GB as
-before, with the apps on the mirror. Nothing is lost either way.
-
-$STAGE_DIR is the staged copy of the apps. Keep it until stage 2 is done.
+minutes, switch it off at the power button and on again: it boots the 250GB
+exactly as it was, apps included. Nothing is lost either way.
 NEXT
 }
 
@@ -519,8 +609,6 @@ Stage 2 done. The 250GB is copying itself from the 1TB (the % above); the
 machine is fully usable while it does. Then:
 
   sudo bash $REPO_ROOT/deploy/setup-browse.sh
-
-$STAGE_DIR can be deleted once you are happy:  sudo rm -rf $STAGE_DIR
 NEXT
 }
 
@@ -612,7 +700,8 @@ status() {
 }
 
 case "${1:-}" in
-  check) preflight ;;
+  check) check ;;
+  consolidate) consolidate ;;
   stage1) stage1 ;;
   stage2) stage2 ;;
   status) status ;;
