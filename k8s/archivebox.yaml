@@ -48,7 +48,7 @@ spec:
           args:
             - |
               cp /etc/passwd /tmp-passwd/passwd
-              echo "archivebox:x:__UID__:__GID__:archivebox:$HOME:/bin/bash" >> /tmp-passwd/passwd
+              echo "archivebox:x:__UID__:__GID__:archivebox:/tmp/archivebox:/bin/bash" >> /tmp-passwd/passwd
           volumeMounts:
             - name: passwd
               mountPath: /tmp-passwd
@@ -71,6 +71,12 @@ spec:
               fi
               exec archivebox server 0.0.0.0:8000
           env:
+            # Chrome (screenshot, PDF, SingleFile, DOM) writes its profile and
+            # crash database under HOME. With no writable home it died before
+            # opening a page: "chrome_crashpad_handler: --database is
+            # required", and every Chrome extractor failed.
+            - name: HOME
+              value: /tmp/archivebox
             - name: ALLOWED_HOSTS
               value: "*"
             - name: PUBLIC_INDEX
@@ -101,6 +107,8 @@ spec:
               mountPath: /etc/passwd
               subPath: passwd
               readOnly: true
+            - name: home
+              mountPath: /tmp/archivebox
           resources:
             requests:
               memory: 128Mi
@@ -120,6 +128,10 @@ spec:
             allowPrivilegeEscalation: false
       volumes:
         - name: passwd
+          emptyDir: {}
+        # Chrome's scratch space: profile, cache, crash reports. Nothing in it
+        # is worth keeping across restarts.
+        - name: home
           emptyDir: {}
   # A note on `type: Directory` below, which is doing real work.
   #
