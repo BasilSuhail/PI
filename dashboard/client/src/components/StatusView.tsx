@@ -1,8 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { ActiveUse, AppTile, ContentStatus, TorrentState } from '../../../shared/fleet';
+import type { ActiveUse, AppTile, ContentStatus, TorrentCounts, TorrentState } from '../../../shared/fleet';
 import { getStatus, getTorrent, setTorrent, usePoll } from '../lib/api';
-import { bytes } from '../lib/format';
+import { bytes, bytesPerSec } from '../lib/format';
 import { openApp } from '../lib/open';
 
 /** Older than this, "who is using what" is history, not now. */
@@ -19,6 +19,17 @@ const nowLine = (uses: ActiveUse[]): string | null => {
   const what = u.what.startsWith('"') ? `watching ${u.what}` : u.what;
   return `${u.who} is ${what}${uses.length > 1 ? ` · +${uses.length - 1} more` : ''}`;
 };
+
+/** "2 downloading · 1 stalled · 0 seeding · 0 stopped", plus queued and errors when there are any. */
+const qbitLine = (c: TorrentCounts): string =>
+  [
+    `${c.downloading} downloading`,
+    `${c.stalled} stalled`,
+    `${c.seeding} seeding`,
+    `${c.stopped} stopped`,
+    c.queued ? `${c.queued} queued` : '',
+    c.errored ? `${c.errored} with errors` : '',
+  ].filter(Boolean).join(' · ');
 
 const torrentLine = (t: TorrentState | null): { text: string; on: boolean; bad?: boolean } => {
   if (!t) return { text: 'Checking…', on: false };
@@ -175,8 +186,11 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
                 } />
               <Row name="qBittorrent" app={qb} letter="q" accent="blue"
                 canOpen={!!torrent && torrent.wanted > 0 && torrent.ready > 0}
-                sub={tl.on ? nowLine(uses('Torrent')) ?? 'Open it to see what is downloading' : 'Off · switch Torrent on to use it'}
-                tone={tl.on && uses('Torrent').length ? 'busy' : null} />
+                sub={!tl.on ? 'Off · switch Torrent on to use it'
+                  : torrent?.torrents ? qbitLine(torrent.torrents)
+                  : torrent && torrent.ready > 0 ? 'Not answering yet' : 'Starting…'}
+                tone={tl.on && torrent?.torrents?.downloading ? 'busy' : null}
+                value={tl.on && torrent?.torrents?.downSpeed ? bytesPerSec(torrent.torrents.downSpeed) : undefined} />
             </div>
           </div>
 
@@ -216,8 +230,8 @@ export const StatusView = ({ apps }: { apps: AppTile[] }) => {
             <Row name="ArchiveBox" app={app('ArchiveBox')} letter="A" accent="pink" {...sub(app('ArchiveBox'), 'ArchiveBox')} value={upDown(app('ArchiveBox'))} />
           </div>
           <p class="sfoot">
-            {[!nc && 'Nextcloud', !im && 'Immich', 'ArchiveBox'].filter(Boolean).join(', ')} totals, Kuma's monitors
-            and qBittorrent's downloads arrive as each one is set up.
+            {[!nc && 'Nextcloud', !im && 'Immich', 'ArchiveBox'].filter(Boolean).join(', ')} totals and Kuma's monitors
+            arrive as each one is set up.
           </p>
         </div>
       </div>

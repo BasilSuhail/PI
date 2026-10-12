@@ -210,6 +210,23 @@ export interface TorrentState {
     /** Whose server it is, as k8s/qbittorrent.yaml configures it. */
     provider?: string | null;
   } | null;
+  /**
+   * What the client holds, by qBittorrent's own state. Null while it is off or
+   * not answering; absent from an older console.
+   */
+  torrents?: TorrentCounts | null;
+}
+
+/** Each torrent counted once, in the group its state puts it in. */
+export interface TorrentCounts {
+  downloading: number;
+  stalled: number;
+  seeding: number;
+  queued: number;
+  stopped: number;
+  errored: number;
+  /** Bytes per second, all torrents together. */
+  downSpeed: number;
 }
 
 /** One person using one app right now. Written by `pi-when content` on the PC. */
