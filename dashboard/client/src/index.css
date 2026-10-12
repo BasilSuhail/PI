@@ -136,6 +136,8 @@ button{font:inherit; cursor:pointer}
   font-size:10px;font-weight:500;letter-spacing:.04em}
 .dot-live{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok-1)}
 .dot-live.off{background:var(--crit);box-shadow:0 0 6px var(--crit-1)}
+.dot-live.warn{background:var(--warn);box-shadow:0 0 6px var(--warn-1)}
+.dot-live.idle{background:var(--faint);box-shadow:none}
 
 /* ── Content ── */
 .content{padding:20px 22px 22px;background-color:var(--content);

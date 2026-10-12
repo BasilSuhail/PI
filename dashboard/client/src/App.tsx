@@ -5,7 +5,7 @@ import { FilesView } from './components/FilesView';
 import { FleetView } from './components/FleetView';
 import { StatusView } from './components/StatusView';
 import { Alert, Box, Grid, Moon, Power, Pulse, Refresh, Sun, Thermo, Wifi } from './components/icons';
-import { getApps, getNodes, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
+import { getApps, getNodes, getTorrent, nodeWatts, useHistory, useNetHistory, usePoll, usePowerHistory, useSeries } from './lib/api';
 import type { FleetNode } from '../../shared/fleet';
 import { celsius, pct, watts } from './lib/format';
 
@@ -71,7 +71,17 @@ export default function App() {
     .flatMap((n) => [n.cpu?.usagePct, n.mem?.usedPct, ...n.disks.map((d) => d.busyPct)])
     .filter((v): v is number => v != null);
   const usagePct = loads.length ? loads.reduce((a, v) => a + v, 0) / loads.length : null;
-  const allOnline = nodes.length > 0 && nodes.every((n) => n.online && !n.error);
+  // The download VPN (AirVPN, through gluetun): green only once traffic is
+  // actually leaving through it. Tailscale is not shown: if the tailnet were
+  // down, this page would not load to say so.
+  const torrent = usePoll(getTorrent, 15_000).data;
+  const vpn = torrent?.vpn;
+  const vpnState = !torrent || torrent.wanted === 0 ? 'idle' : vpn?.publicIp ? '' : 'warn';
+  const vpnTitle = !torrent || torrent.wanted === 0
+    ? 'Download VPN off (Torrent is switched off)'
+    : vpn?.publicIp
+      ? `Download VPN on: ${[vpn.provider, [vpn.city, vpn.country].filter(Boolean).join(', '), vpn.publicIp].filter(Boolean).join(' · ')}`
+      : 'Download VPN starting';
 
   const openDetail = (id: string) => { setSelectedId(id); setView('detail'); };
 
@@ -104,8 +114,8 @@ export default function App() {
           <span class="tb-stat" title="mean of CPU, RAM and every drive's activity, on every machine">
             <span class="tb-label">USAGE</span><b>{pct(usagePct)}</b>
           </span>
-          <span class="tb-stat" title={allOnline ? 'all nodes reachable' : 'some nodes offline'}>
-            <span class={`dot-live ${allOnline ? '' : 'off'}`} /><span class="tb-label">VPN</span>
+          <span class="tb-stat" title={vpnTitle}>
+            <span class={`dot-live ${vpnState}`} /><span class="tb-label">VPN</span>
           </span>
         </div>
 
