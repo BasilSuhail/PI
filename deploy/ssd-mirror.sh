@@ -239,14 +239,30 @@ stage1() {
   }
   trap restore EXIT
   systemctl stop k3s
-  # Containers, their mounts and their network: k3s's own teardown.
-  [ -x /usr/local/bin/k3s-killall.sh ] && /usr/local/bin/k3s-killall.sh >/dev/null 2>&1 || true
+  # Stopping k3s leaves its containers running, by design. Its own teardown
+  # kills them and lifts their mounts; a database still running would keep
+  # writing under the copy.
+  [ -x /usr/local/bin/k3s-killall.sh ] || die "k3s-killall.sh is missing; cannot stop the containers."
+  /usr/local/bin/k3s-killall.sh >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 30); do pgrep -f containerd-shim >/dev/null || break; sleep 1; done
+  if pgrep -f containerd-shim >/dev/null; then
+    pgrep -af containerd-shim | head -5 | sed 's/^/    /' >&2
+    die "Containers are still running. Nothing was erased."
+  fi
+  echo "  all containers stopped"
   systemctl stop smbd nmbd 2>/dev/null || true
 
   say "Copying the apps to $STAGE_DIR"
   mkdir -p "$STAGE_DIR"
   rsync -aAXH --numeric-ids --delete --info=progress2 /srv/ssd/ "$STAGE_DIR/"
-  if [ -n "$(rsync -aAXHn --numeric-ids --delete --itemize-changes /srv/ssd/ "$STAGE_DIR/")" ]; then
+  # Second pass: quick, and picks up anything that moved during the first.
+  rsync -aAXH --numeric-ids --delete /srv/ssd/ "$STAGE_DIR/"
+  local diff
+  diff=$(rsync -aAXHn --numeric-ids --delete --itemize-changes /srv/ssd/ "$STAGE_DIR/")
+  if [ -n "$diff" ]; then
+    echo "  Still changing under the copy (something outside k3s writes here):" >&2
+    echo "$diff" | head -20 | sed 's/^/    /' >&2
     die "The copy does not match /srv/ssd. Nothing was erased."
   fi
   echo "  copy matches"
