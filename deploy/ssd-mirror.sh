@@ -386,9 +386,13 @@ stage1() {
 
   say "Laying out $BACKUP"
   # The share's SSD-250GB folder is a bind of / that still joins its mounts
-  # (setup-browse has not run with the rprivate fix yet), so the build folder
-  # below would show up in there too and stay mounted after umount. Cut it.
-  mount --make-rprivate /srv/browse 2>/dev/null || true
+  # (its fstab line predates the rprivate fix), so anything mounted under
+  # /mnt shows up in there as a linked copy, and unmounting a linked copy
+  # unmounts the original. An earlier run lost /sys/firmware/efi/efivars
+  # that way. Each folder is its own mount; /srv/browse itself is not one.
+  for m in /srv/browse/*; do
+    mountpoint -q "$m" && mount --make-rprivate "$m"
+  done
   umount -R "$NEW" 2>/dev/null || true
   if [ -n "$leftover" ]; then
     for md in $leftover; do
@@ -421,6 +425,9 @@ stage1() {
 
   say "Copying Debian"
   mkdir -p "$NEW"
+  # Private before anything goes under it: the /dev, /proc, /sys and /run
+  # binds below must not leave copies anywhere else.
+  mount --bind "$NEW" "$NEW" && mount --make-private "$NEW"
   mount "$MD_ROOT" "$NEW"
   # -x stays on the root filesystem, but a bind of a folder on it is the same
   # filesystem and rsync walks straight in: /srv/ssd and /1) Archive are binds
@@ -483,6 +490,7 @@ stage1() {
   umount -R "$NEW"
 
   say "Boot entry"
+  mountpoint -q /sys/firmware/efi/efivars || mount -t efivarfs efivarfs /sys/firmware/efi/efivars
   ORDER=$(efibootmgr | sed -n 's/^BootOrder: //p')
   ENTRY=$(add_boot_entry "$BACKUP")
   [ -n "$ENTRY" ] || die "Could not create the boot entry."
