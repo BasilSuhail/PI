@@ -565,7 +565,8 @@ boot_order() { # first entry, second entry
   local n uuid order="$1${2:+,$2}"
   while read -r n uuid; do
     [ -e "/dev/disk/by-partuuid/$uuid" ] || { efibootmgr -q -b "$n" -B; echo "  removed stale Boot$n"; }
-  done < <(efibootmgr -v | sed -n 's/^Boot\([0-9A-F]\{4\}\).*HD([0-9]*,GPT,\([0-9a-fA-F-]*\),.*File(\\EFI\\debian\\.*/\1 \2/p')
+  # The firmware may store the path upper-cased (\EFI\DEBIAN\).
+  done < <(efibootmgr -v | sed -n 's/^Boot\([0-9A-F]\{4\}\).*HD([0-9]*,GPT,\([0-9a-fA-F-]*\),.*File(\\EFI\\[Dd][Ee][Bb][Ii][Aa][Nn]\\.*/\1 \2/p')
   for n in $(efibootmgr | sed -n 's/^BootOrder: //p' | tr ',' ' '); do
     case ",$order," in *",$n,"*) ;; *) efibootmgr | grep -q "^Boot$n" && order="$order,$n" ;; esac
   done

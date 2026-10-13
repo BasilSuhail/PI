@@ -84,8 +84,12 @@ fi
 
 EVENT=${1:-} MD=${2:-} PART=${3:-}
 case "$EVENT" in
-  Fail|FailSpare|DeviceDisappeared)
+  Fail|FailSpare)
     fresh "$EVENT-$(basename "$MD")" && lost "$MD" "$PART" ;;
+  DeviceDisappeared)
+    # The monitor reports this on every restart for names like /dev/md/md127
+    # that udev never made; the array is still there as /dev/md127.
+    [ -b "/dev/$(basename "$MD")" ] || { fresh "$EVENT-$(basename "$MD")" && lost "$MD" ""; } ;;
   DegradedArray)
     # Expected while a newly added disk copies in.
     recovering "$MD" || { fresh "$EVENT-$(basename "$MD")" && lost "$MD" ""; } ;;
