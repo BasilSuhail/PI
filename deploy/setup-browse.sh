@@ -47,7 +47,10 @@ MARK="# pi-browse"
 # partitions can turn up there as a duplicate mount, and those must not become
 # a second folder for a disk that already has one; a plugged-in drive has no
 # other mount, so the second pass finds it and nothing else.
-skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
+#
+# /boot/efi is firmware plumbing. On the SSD mirror it sits on a member disk
+# of its own, and without this it became a top-level "drive" of 1G.
+skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/boot/efi|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
 
 # The physical disk a mounted source belongs to: sda2 -> sda. A source with no
 # parent device names itself.
@@ -131,11 +134,10 @@ for row in "${rows[@]}"; do
   disk=$(disk_of "$source")
   [ -z "$(disk_facts "$disk")" ] && continue   # loop/ram/zram: not a disk
   # "SSD-mirror-root", "SSD-mirror-apps": the mirror's own name, not a size
-  # no shop ever sold.
+  # no shop ever sold. From mdadm, not /dev/md/: udev does not always make it.
   if [[ "$disk" == md* ]]; then
-    for l in /dev/md/*; do
-      [ "$(readlink -f "$l")" = "/dev/$disk" ] && disk_label[$disk]="SSD-mirror-$(basename "$l" | sed 's/.*://')"
-    done
+    l=$(sudo mdadm --detail "/dev/$disk" 2>/dev/null | sed -n 's/^ *Name : \([^ ]*:\)\{0,1\}\([^ ]*\).*/\2/p')
+    [ -n "$l" ] && disk_label[$disk]="SSD-mirror-$l"
   fi
   mounts+=("$target|$disk")
   depth=${target//[^\/]/}
@@ -343,6 +345,7 @@ for stale in "$BROWSE"/*/archives; do
   sudo rmdir "$stale" 2>/dev/null && echo "  removed the old 'archives' directory"
 done
 
+sudo systemctl daemon-reload
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
 sudo chmod 0755 "$BROWSE"
 
