@@ -385,9 +385,23 @@ stage1() {
   stop_apps
 
   say "Laying out $BACKUP"
+  # The share's SSD-250GB folder is a bind of / that still joins its mounts
+  # (setup-browse has not run with the rprivate fix yet), so the build folder
+  # below would show up in there too and stay mounted after umount. Cut it.
+  mount --make-rprivate /srv/browse 2>/dev/null || true
   umount -R "$NEW" 2>/dev/null || true
-  # shellcheck disable=SC2086
-  [ -z "$leftover" ] || { mdadm --stop $leftover >/dev/null; echo "  cleared the last run's half-built mirror"; }
+  if [ -n "$leftover" ]; then
+    for md in $leftover; do
+      while IFS= read -r t; do umount -R "$t" 2>/dev/null || umount -Rl "$t" 2>/dev/null || true; done < <(
+        findmnt -rno SOURCE,TARGET | while read -r src t; do
+          src=$(printf '%b' "$src")
+          [ "${src%%[*}" = "$md" ] && printf '%b\n' "$t"
+        done | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)
+    done
+    # shellcheck disable=SC2086
+    mdadm --stop $leftover >/dev/null || die "Could not stop the last run's mirror: cat /proc/mdstat"
+    echo "  cleared the last run's half-built mirror"
+  fi
   partition "$BACKUP"
   mdadm --create /dev/md/root --name=root --level=1 --metadata=1.2 --bitmap=internal \
     --raid-devices=2 --run "$(part_of "$BACKUP" 2)" missing <<<y
