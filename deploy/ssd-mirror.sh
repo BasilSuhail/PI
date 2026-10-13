@@ -460,8 +460,12 @@ stage1() {
     --bootloader-id=debian --no-nvram --force-extra-removable
   chroot "$NEW" update-grub 2>&1 | sed 's/^/  /'
   grep -q "$(uuid "$MD_ROOT")" "$NEW/boot/grub/grub.cfg" || die "grub.cfg does not boot the mirror."
-  lsinitramfs "$(ls -1 "$NEW"/boot/initrd.img-* | sort -V | tail -1)" | grep -q 'sbin/mdadm' ||
-    die "The initramfs has no mdadm in it; it could not find the mirror."
+  # The whole listing first: grep -q would stop reading at the first match,
+  # and the listing tool calls the broken pipe a failure.
+  local listing
+  listing=$(lsinitramfs "$(ls -1 "$NEW"/boot/initrd.img-* | sort -V | tail -1)")
+  grep -q 'sbin/mdadm' <<<"$listing" || die "The initramfs has no mdadm in it; it could not find the mirror."
+  grep -q 'mdadm.conf' <<<"$listing" || die "The initramfs has no mdadm.conf; it would not know the mirror."
   umount -R "$NEW"
 
   say "Boot entry"
