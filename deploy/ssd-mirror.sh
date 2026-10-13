@@ -60,7 +60,7 @@ die() { echo "  $*" >&2; exit 1; }
 # Mount sources come back as /dev/sdd2[/1) Archive] for a bind; the device is
 # the part before the bracket.
 src_of() { local s; s=$(findmnt -nfo SOURCE "$1" 2>/dev/null) || return 1; echo "${s%%[*}"; }
-disk_of() { echo "/dev/$(lsblk -no PKNAME "$1" | head -1)"; }
+disk_of() { echo "/dev/$(lsblk -dno PKNAME "$1" | head -1)"; }
 part_of() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }
 size_of() { blockdev --getsize64 "$1"; }
 uuid() { blkid -s UUID -o value "$1"; }
@@ -354,7 +354,7 @@ stage1() {
   for md in /sys/block/md[0-9]*; do
     [ -e "$md" ] || continue
     for slave in "$md"/slaves/*; do
-      [ "/dev/$(lsblk -no PKNAME "/dev/$(basename "$slave")")" = "$BACKUP" ] ||
+      [ "/dev/$(lsblk -dno PKNAME "/dev/$(basename "$slave")")" = "$BACKUP" ] ||
         die "$(basename "$md") uses $(basename "$slave"), not the 1TB. Not touching it."
     done
     leftover="$leftover /dev/$(basename "$md")"

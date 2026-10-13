@@ -18,7 +18,7 @@ REPO="~/PI"
 name_of() { mdadm --detail "$1" 2>/dev/null | sed -n 's/^ *Name : \([^ ]*:\)\{0,1\}\([^ ]*\).*/\2/p'; }
 mount_of() { findmnt -nfo TARGET "$1" 2>/dev/null || echo "?"; }
 disk_desc() { # partition -> "Samsung SSD 860 EVO 250GB 232.9G (sde)"
-  local d; d=$(lsblk -no PKNAME "$1" 2>/dev/null | head -1); d=${d:-$(basename "$1")}
+  local d; d=$(lsblk -dno PKNAME "$1" 2>/dev/null | head -1); d=${d:-$(basename "$1")}
   echo "$(lsblk -dno MODEL,SIZE "/dev/$d" 2>/dev/null | xargs) ($d)"
 }
 survivors() {

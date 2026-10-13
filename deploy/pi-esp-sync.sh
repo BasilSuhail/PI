@@ -14,7 +14,7 @@ ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 mapfile -t esps < <(
   for slave in /sys/block/md*/slaves/*; do
     [ -e "$slave" ] || continue
-    lsblk -no PKNAME "/dev/$(basename "$slave")"
+    lsblk -dno PKNAME "/dev/$(basename "$slave")"
   done | sort -u | while read -r d; do
     lsblk -nrpo NAME,PARTTYPE "/dev/$d" | awk -v t="$ESP_TYPE" '$2 == t { print $1 }'
   done
