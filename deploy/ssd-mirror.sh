@@ -348,7 +348,17 @@ stage1() {
   [ -b "$BACKUP" ] && [ "$BACKUP" != "$MAIN" ] || die "The 1TB ($BACKUP_ID) is not here."
   # Unused since consolidate, but an automount may have picked it up.
   unmount_disk "$BACKUP" || die "Could not unmount $BACKUP."
-  grep -q '^md' /proc/mdstat 2>/dev/null && die "An md array already exists (cat /proc/mdstat). Not touching it."
+  # A failed run leaves a half-built mirror on the 1TB; it is erased again
+  # below. An array on any other disk is not this script's to touch.
+  local md slave leftover=""
+  for md in /sys/block/md[0-9]*; do
+    [ -e "$md" ] || continue
+    for slave in "$md"/slaves/*; do
+      [ "/dev/$(lsblk -no PKNAME "/dev/$(basename "$slave")")" = "$BACKUP" ] ||
+        die "$(basename "$md") uses $(basename "$slave"), not the 1TB. Not touching it."
+    done
+    leftover="$leftover /dev/$(basename "$md")"
+  done
   [ -d /sys/firmware/efi ] || die "Not booted in UEFI mode."
   [ $(( $(size_of "$BACKUP") / GIB )) -ge $NEED_GIB ] || die "$BACKUP is smaller than ${NEED_GIB}GiB."
   local apps_used root_used
@@ -370,10 +380,14 @@ stage1() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q mdadm gdisk dosfstools efibootmgr rsync >/dev/null
 
   say "Stopping the apps"
-  trap 'echo "  Stopped. The 250GB is untouched; starting the apps again." >&2; start_apps' EXIT
+  trap 'echo "  Stopped. The 250GB is untouched; starting the apps again." >&2
+        umount -R "$NEW" 2>/dev/null || true; start_apps' EXIT
   stop_apps
 
   say "Laying out $BACKUP"
+  umount -R "$NEW" 2>/dev/null || true
+  # shellcheck disable=SC2086
+  [ -z "$leftover" ] || { mdadm --stop $leftover >/dev/null; echo "  cleared the last run's half-built mirror"; }
   partition "$BACKUP"
   mdadm --create /dev/md/root --name=root --level=1 --metadata=1.2 --bitmap=internal \
     --raid-devices=2 --run "$(part_of "$BACKUP" 2)" missing <<<y
@@ -394,11 +408,20 @@ stage1() {
   say "Copying Debian"
   mkdir -p "$NEW"
   mount "$MD_ROOT" "$NEW"
-  # -x stays on the root filesystem, but /srv/browse/SSD-250GB is a bind of
-  # that same filesystem and would be copied again inside itself. The apps
-  # folder goes to its own mirror below.
-  rsync -aAXHx --numeric-ids --info=progress2 \
-    --exclude='/srv/browse/*/*' --exclude="$NEW/*" --exclude="$LOCAL" --exclude='/lost+found' / "$NEW/"
+  # -x stays on the root filesystem, but a bind of a folder on it is the same
+  # filesystem and rsync walks straight in: /srv/ssd and /1) Archive are binds
+  # of the apps folder, /srv/browse/SSD-250GB of / itself. Each would copy the
+  # apps again (the first run filled 100G that way). Their mount points are
+  # kept empty; the apps folder goes to its own mirror below.
+  local excludes=(--exclude="$LOCAL" --exclude="$NEW/*" --exclude='/lost+found')
+  local t
+  while IFS= read -r t; do
+    [ "$t" = / ] || excludes+=(--exclude="$t/*")
+  done < <(findmnt -rno TARGET,SOURCE | while read -r t src; do
+             src=$(printf '%b' "$src")
+             [ "${src%%[*}" = "$ROOT_SRC" ] && printf '%b\n' "$t"
+           done)
+  rsync -aAXHx --numeric-ids --info=progress2 "${excludes[@]}" / "$NEW/"
   mkdir -p "$NEW/boot/efi"
   mount "$(part_of "$BACKUP" 1)" "$NEW/boot/efi"
   rsync -rt /boot/efi/ "$NEW/boot/efi/"
