@@ -66,6 +66,7 @@ printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "HDD1 (editable)" "$HDD1_DIR" \
                       "HDD2 (editable)" "$HDD2_DIR" \
                       "SSD1 (editable)" "$ARCHIVE_DIR" \
+                      "SSD2 (editable)" "$SPARE_DIR" \
                       "  but read-only" "${PROTECTED[*]}"
 
 sudo mkdir -p "$APPS_DIR/Nextcloud/html" "$APPS_DIR/Nextcloud/db" "$POOL_DIR/Nextcloud/data"
