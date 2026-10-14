@@ -147,7 +147,7 @@ for row in "${rows[@]}"; do
   [[ "$target" == "$MEDIA"/* ]] && { media_rows+=("$row"); continue; }
   [[ "$target" =~ $skip_re ]] && continue
   [[ "$target" == "$BROWSE"/* ]] && continue
-  disk=$(disk_of "$source")
+  disk=$(disk_of "${source%%[*}")   # a bind reads /dev/md126[/1) Archive]
   [ -z "$(disk_facts "$disk")" ] && continue   # loop/ram/zram: not a disk
   mounts+=("$target|$disk|${source%%[*}")
   # "/" is depth 0, so it wins over "/1) Archive" whatever order findmnt gives.
@@ -167,7 +167,7 @@ done
 for row in "${media_rows[@]}"; do
   read -r source target <<<"$row"
   source=$(unraw "$source"); target=$(unraw "$target")
-  disk=$(disk_of "$source")
+  disk=$(disk_of "${source%%[*}")   # a bind reads /dev/md126[/1) Archive]
   [ -n "${disk_root[$disk]:-}" ] && continue   # the OS, mounted a second time
   [ -z "$(disk_facts "$disk")" ] && continue
   mounts+=("$target|$disk|${source%%[*}")
