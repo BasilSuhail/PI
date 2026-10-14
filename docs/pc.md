@@ -26,35 +26,36 @@ the plan was wrong.
 
 | Drive | Model | Holds | Mount |
 |---|---|---|---|
-| SSD1, 250 GB | Samsung 860 EVO | Debian, and nothing else | `/` |
-| SSD2, 1 TB | Crucial BX500 | `1) Archive`: every app's settings and databases, and backups | `/srv/ssd`, bound to `/1) Archive` |
+| SSD1, 250 GB | Samsung 860 EVO | Debian and `1) Archive` (every app's settings, databases and backups), the main half of the mirror | `/` and `/srv/ssd`, bound to `/1) Archive` |
+| SSD2, 512 GB | T-Force | the same again, the mirror's backup half; its leftover ~249G is `/srv/spare` | `/srv/spare` |
 | HDD1, 6 TB | Seagate ST6000VX009 | Jellyfin, downloads | `/srv/storage` |
 | HDD2, 6 TB | WD Purple WD64PURZ | Nextcloud, Immich, backups, ArchiveBox, Kiwix | `/srv/hdd2`, under the `/srv/pool` mergerfs pool |
+| HDD3, 1 TB | WD Blue WD10EZEX | old NTFS disk, kept as it was | `/srv/hdd1` |
 
-All four are mounted by UUID with `nofail`. The `sdX` letters move between
-boots on this board, so nothing may refer to a disk by them.
+All are mounted by UUID with `nofail`. The `sdX` letters move between boots on
+this board, so nothing may refer to a disk by them; the mirror script names
+disks by `/dev/disk/by-id`.
 
-SSD2 was jug2's root disk. Its old Pi system was archived to
-`/srv/hdd2/Backups/jug2-os.tgz` and removed, leaving only `1) Archive`. Its
-fstab line binds `/srv/ssd/1) Archive` to `/1) Archive`, which is where every
-install script looks, so no app needed a path changed. The OS lives on its own
-drive so it can be reinstalled without touching the apps.
+`1) Archive` started on jug2's old 1TB root SSD and moved onto the 250GB when
+the mirror was built. Its fstab line still binds `/srv/ssd/1) Archive` to
+`/1) Archive`, which is where every install script looks, so no app needed a
+path changed. The 1TB SSD left the PC and is now an exFAT backup drive.
 
 ### SSD mirror
 
 `deploy/ssd-mirror.sh` turns the two SSDs into a mirror (mdadm RAID 1): each
 carries an EFI partition, root (100G, `/`), apps (115G, `/srv/ssd`) and its own
 swap, and every write lands on both. Either SSD can die and jug3 keeps running;
-the firmware boots whichever is left. The 250GB is the main disk and the 1TB's
-half is write-mostly, so reads stay on the 250GB. The 1TB's leftover ~700G is
-`/srv/spare`, not mirrored.
+the firmware boots whichever is left. The 250GB is the main disk and the
+512GB's half is write-mostly, so reads stay on the 250GB. The 512GB's leftover
+~249G is `/srv/spare`, not mirrored, and shows in Finder as `SSD-512GB`.
 
 A disk dropping out, or a boot with one missing, posts to Discord with
 @everyone (`pi-raid-alert`, from mdadm's monitor and `pi-raid-check.service`).
 `pi-esp-sync` copies `/boot/efi` to every SSD's EFI partition after each apt
 run, since the firmware reads those before Linux and they cannot be mirrored.
 
-Replacing an SSD (the 1TB is due to become a 512GB):
+Replacing an SSD:
 `ssd-mirror.sh remove /dev/sdX`, power off, swap, power on,
 `ssd-mirror.sh add /dev/sdY --backup`. `ssd-mirror.sh status` shows both
 halves, the copy progress and the boot order. A mirror is not a backup: a

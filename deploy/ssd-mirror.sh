@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Mirrors the two SSDs, so either one can die and jug3 keeps running.
 #
-# Before: the 250GB SSD holds Debian, the 1TB SSD holds "1) Archive". Lose
+# Before: the 250GB SSD holds Debian, a second SSD holds "1) Archive". Lose
 # either and the machine is down until someone rebuilds it.
 #
 # After: both SSDs carry the same three things, and Linux (mdadm RAID 1)
@@ -14,7 +14,7 @@
 #   p4  swap     12G    one per disk, not mirrored
 #   p5  spare   rest    only on a disk with room left over     -> /srv/spare
 #
-# The 250GB stays the main disk: reads come from it. The 1TB's half is marked
+# The 250GB stays the main disk: reads come from it. The backup SSD's half is marked
 # write-mostly, so it takes every write and stays an exact copy without doing
 # the reading. A disk dropping out posts to Discord with @everyone, and so
 # does a boot with only one disk left (pi-raid-alert).
@@ -26,14 +26,14 @@
 #
 #   sudo bash deploy/ssd-mirror.sh check            read-only: where things are, what is next
 #   sudo bash deploy/ssd-mirror.sh consolidate      apps onto the 250GB; it runs everything alone
-#   sudo bash deploy/ssd-mirror.sh stage1           build the mirror on the 1TB, boot it once
+#   sudo bash deploy/ssd-mirror.sh stage1           build the mirror on the backup SSD, boot it once
 #   sudo bash deploy/ssd-mirror.sh stage2           after that boot: add the 250GB, alerts on
 #   sudo bash deploy/ssd-mirror.sh status           both disks, sync progress, boot entries
 #   sudo bash deploy/ssd-mirror.sh add /dev/sdX [--backup]   a new or replacement SSD
 #   sudo bash deploy/ssd-mirror.sh remove /dev/sdX           take an SSD out on purpose
 #
 # Consolidate first: the 250GB runs Debian and the apps on its own, and the
-# 1TB is unused. Stage 1 never touches the 250GB. Its reboot uses BootNext, a
+# backup SSD is unused. Stage 1 never touches the 250GB. Its reboot uses BootNext, a
 # one-time boot: if the mirror does not come up, a power cycle lands back on
 # the 250GB exactly as it was, apps included.
 set -euo pipefail
@@ -266,8 +266,8 @@ check() {
 
 # --- consolidate -------------------------------------------------------------
 
-# Moves the apps onto the 250GB, so it runs everything on its own and the 1TB
-# is free to become the mirror. The 1TB is unmounted, not erased: its copy of
+# Moves the apps onto the 250GB, so it runs everything on its own and the other
+# SSD is free to become the mirror. That SSD is unmounted, not erased: its copy of
 # the apps stays as it was until stage 1.
 consolidate() {
   ROOT_SRC=$(src_of /) || die "Cannot read the root mount."
@@ -287,12 +287,12 @@ consolidate() {
   printf '  %-6s %s\n' from "$BACKUP  $(describe "$BACKUP")  (/srv/ssd, $((apps_used / GIB)) GiB)"
   printf '  %-6s %s\n' to "$MAIN  $(describe "$MAIN")  ($LOCAL, $((root_free / GIB)) GiB free)"
   [ "$root_free" -gt $(( apps_used + 20 * GIB )) ] || die "Not enough room on the 250GB."
-  echo "  The 1TB is unmounted afterwards, not erased. Apps are down for about 10 minutes."
+  echo "  The other SSD is unmounted afterwards, not erased. Apps are down for about 10 minutes."
   printf '  Type MOVE to start: '
   read -r reply
   [ "$reply" = MOVE ] || die "Stopped. Nothing was changed."
 
-  # The first attempt staged a copy on the 6TB. Only a copy; the 1TB still
+  # The first attempt staged a copy on the 6TB. Only a copy; the other SSD still
   # holds the originals.
   if [ -d /srv/storage/.ssd-mirror-stage ]; then
     say "Deleting the old staging copy on the 6TB"
@@ -316,7 +316,7 @@ consolidate() {
   say "/srv/ssd now comes from the 250GB"
   FSTAB_BAK=/etc/fstab.pi-ssd-mirror.bak
   cp /etc/fstab "$FSTAB_BAK"
-  unmount_disk "$BACKUP" || die "Could not unmount the 1TB."
+  unmount_disk "$BACKUP" || die "Could not unmount the other SSD."
   fstab_line /etc/fstab /srv/ssd "$LOCAL /srv/ssd none bind,nofail 0 0"
   systemctl daemon-reload
   mount -a
@@ -329,7 +329,7 @@ consolidate() {
   start_apps
   cat <<NEXT
 
-Done. The 250GB now runs Debian and the apps on its own; the 1TB is not used.
+Done. The 250GB now runs Debian and the apps on its own; the other SSD is not used.
 Give the apps a few minutes, check they all work (dashboard, Jellyfin,
 Nextcloud, Immich), then build the mirror:
 
@@ -350,17 +350,17 @@ stage1() {
   # shellcheck disable=SC1090
   . "$STATE"
   BACKUP=$(readlink -f "$BACKUP_ID")
-  [ -b "$BACKUP" ] && [ "$BACKUP" != "$MAIN" ] || die "The 1TB ($BACKUP_ID) is not here."
+  [ -b "$BACKUP" ] && [ "$BACKUP" != "$MAIN" ] || die "The backup SSD ($BACKUP_ID) is not here."
   # Unused since consolidate, but an automount may have picked it up.
   unmount_disk "$BACKUP" || die "Could not unmount $BACKUP."
-  # A failed run leaves a half-built mirror on the 1TB; it is erased again
+  # A failed run leaves a half-built mirror on the backup SSD; it is erased again
   # below. An array on any other disk is not this script's to touch.
   local md slave leftover=""
   for md in /sys/block/md[0-9]*; do
     [ -e "$md" ] || continue
     for slave in "$md"/slaves/*; do
       [ "/dev/$(lsblk -dno PKNAME "/dev/$(basename "$slave")")" = "$BACKUP" ] ||
-        die "$(basename "$md") uses $(basename "$slave"), not the 1TB. Not touching it."
+        die "$(basename "$md") uses $(basename "$slave"), not the backup SSD. Not touching it."
     done
     leftover="$leftover /dev/$(basename "$md")"
   done
@@ -645,7 +645,7 @@ stage2() {
   main_entry=$(add_disk "$MAIN" main | tail -1)
   prune_swap
 
-  say "1TB as the backup half (write-mostly)"
+  say "$(describe "$BACKUP") as the backup half (write-mostly)"
   write_mostly "$(md_dev root)" "$(part_of "$BACKUP" 2)"
   write_mostly "$(md_dev apps)" "$(part_of "$BACKUP" 3)"
 
@@ -660,7 +660,7 @@ stage2() {
   status
   cat <<NEXT
 
-Stage 2 done. The 250GB is copying itself from the 1TB (the % above); the
+Stage 2 done. The 250GB is copying itself from the backup SSD (the % above); the
 machine is fully usable while it does. Then:
 
   sudo bash $REPO_ROOT/deploy/setup-browse.sh
