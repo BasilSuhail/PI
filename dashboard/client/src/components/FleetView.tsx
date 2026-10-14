@@ -458,11 +458,15 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
           )}
 
           <Sec title="DRIVES" note={`${disks.length} connected`} />
-          {disks.map((d, i) => (
+          {disks.map((d, i) => {
+            // The SSD mirror (deploy/ssd-mirror.sh): / is the live OS, and the
+            // other array is marked as the mirror in its own colour.
+            const mirror = d.device.startsWith('/dev/md') && d.mount !== '/';
+            return (
             <div
-              class="mrow drow"
+              class={`mrow drow${mirror ? ' mirror' : ''}`}
               key={d.device}
-              title={`${d.device} on ${d.mount} — ${pct(d.usedPct)} used${d.busyPct != null ? ` · busy ${Math.round(d.busyPct)}%` : ''}`}
+              title={`${d.device} on ${d.mount}${mirror ? ' (RAID 1 mirror)' : ''} — ${pct(d.usedPct)} used${d.busyPct != null ? ` · busy ${Math.round(d.busyPct)}%` : ''}`}
             >
               {/* Turns while the drive is reading or writing, still when idle,
                   like the fans. 5%: the OS drive's own logging keeps every
@@ -471,19 +475,20 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                 {d.busyPct != null && <span class={`spin${d.busyPct >= 5 ? '' : ' idle'}`} />}
                 {labels[i]}
               </span>
-              <Meter value={d.usedPct} tone={diskTone(d.usedPct)} />
+              <Meter value={d.usedPct} tone={mirror ? 'mirror' : diskTone(d.usedPct)} />
               {/* Used and total rather than a percentage: "29.34 GB / 984.37 GB"
                   answers both "how full" and "how big". Full precision: this row
                   is how a download is watched. */}
               <strong class="fig">{bytes(d.usedBytes)} / {bytes(d.totalBytes)}</strong>
-              <span class="on-disk">{d.mount}</span>
+              <span class={`on-disk${mirror ? ' mirror' : ''}`}>{d.mount === '/' ? 'OS' : mirror ? 'MIRROR' : d.mount}</span>
               {/* Red above 35°: hard drives last longest under about 40°, and the
                   bottom front fan only starts at 40°, so this is the early warning. */}
               {d.tempC != null && (
                 <span class={`on-disk temp${Math.round(d.tempC) >= 40 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
               )}
             </div>
-          ))}
+            );
+          })}
 
           {compact && hw?.fans[0] && (() => {
             const f = hw.fans[0];

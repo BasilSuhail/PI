@@ -252,6 +252,8 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
   padding:1px 3px;line-height:1.35}
 .mfill.aqua{background:var(--sheen),linear-gradient(var(--aqua-1),var(--aqua-2))}
 .mfill.gpu{background:var(--sheen),linear-gradient(var(--gpu-1),var(--gpu-2))}
+.mfill.mirror{background:var(--sheen),linear-gradient(var(--gpu-1),var(--gpu-2))}
+.on-disk.mirror{color:var(--gpu-2);border-color:var(--gpu-2);font-weight:600}
 .on-disk.temp{color:var(--muted)}
 .on-disk.temp.hot{color:#fff;background:var(--crit);border-color:var(--crit);font-weight:600}
 /* Drive rows share one set of columns, so every bar is the same length and
