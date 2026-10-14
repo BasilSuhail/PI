@@ -127,7 +127,7 @@ partition() {
   sgdisk -n1:0:+${ESP_GB}G -t1:EF00 -c1:EFI \
          -n2:0:+${ROOT_GB}G -t2:FD00 -c2:mirror-root \
          -n3:0:+${APPS_GB}G -t3:FD00 -c3:mirror-apps \
-         -n4:0:+${SWAP_GB}G -t4:8200 -c4:swap "$disk" >/dev/null
+         -n4:0:+${SWAP_GB}G -t4:8200 -c4:"$(swap_name "$disk")" "$disk" >/dev/null
   if [ $(( $(size_of "$disk") / GIB - NEED_GIB )) -gt 20 ]; then
     sgdisk -n5:0:0 -t5:8300 -c5:spare "$disk" >/dev/null
   fi
@@ -171,6 +171,11 @@ add_boot_entry() { # disk -> prints the new Boot#### number
   efibootmgr -q -c -d "$disk" -p 1 -L "$label" -l "$loader"
   boot_entry "$label"
 }
+
+# Each disk's swap gets its own name. Two partitions both called "swap" make
+# /dev/disk/by-label/swap point at two devices, and systemd logs "Swap
+# appeared twice ... refusing" on every boot.
+swap_name() { local s; s=$(lsblk -dno SERIAL "$1" | xargs); echo "swap-${s: -8}"; }
 
 write_mostly() { # md, partition
   echo writemostly > "/sys/block/$(basename "$(readlink -f "$1")")/md/dev-$(basename "$2")/state"
@@ -416,7 +421,7 @@ stage1() {
   mkfs.ext4 -q -F -L root "$MD_ROOT"
   mkfs.ext4 -q -F -L apps -m 1 "$MD_APPS"
   mkfs.vfat -F 32 -n EFI "$(part_of "$BACKUP" 1)" >/dev/null
-  mkswap -q -L swap "$(part_of "$BACKUP" 4)"
+  mkswap -q -L "$(swap_name "$BACKUP")" "$(part_of "$BACKUP" 4)"
   SPARE=""
   if [ -b "$(part_of "$BACKUP" 5)" ]; then
     SPARE=$(part_of "$BACKUP" 5)
@@ -543,7 +548,7 @@ add_disk() { # disk, role (main|backup)
   rsync -rt --delete /boot/efi/ "$tmp/"
   umount "$tmp"; rmdir "$tmp"
 
-  mkswap -q -L swap "$(part_of "$disk" 4)"
+  mkswap -q -L "$(swap_name "$disk")" "$(part_of "$disk" 4)"
   echo "UUID=$(blkid -s UUID -o value "$(part_of "$disk" 4)") none swap sw,nofail 0 0" >> /etc/fstab
   swapon "$(part_of "$disk" 4)" || true
   p=$(part_of "$disk" 5)
