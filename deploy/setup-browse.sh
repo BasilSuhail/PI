@@ -126,14 +126,14 @@ kind_of() { # $1 = rotational flag, $2 = device name
 name_for() { basename "$1" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g;s/^-//;s/-$//'; }
 
 echo "==> Reading mounted filesystems"
-# -n no headings, -l list form. SOURCE is the device; anything not under /dev
+# -n no headings, -r raw. SOURCE is the device; anything not under /dev
 # is a pseudo-filesystem or a bind of a directory, and is not a disk.
 #
-# SOURCE first, TARGET second, because `read` splits on whitespace and a mount
-# point may now contain a space ("1) Archive"). A device name never does, so
-# reading the device into its own word and letting the target take the rest of
-# the line is the ordering that cannot mis-split.
-mapfile -t rows < <(findmnt -nlo SOURCE,TARGET | sort -u)
+# Raw output writes a space as \x20, so `read` cannot mis-split: a bind's
+# SOURCE carries its folder too ("/dev/md126[/1) Archive]"), and with plain
+# output that space cut it in two and the archive was never bound.
+mapfile -t rows < <(findmnt -nro SOURCE,TARGET | sort -u)
+unraw() { printf '%b' "$1"; }
 
 declare -A disk_root=()   # disk -> its shallowest mount, the folder's contents
 declare -A disk_depth=()  # depth of that mount, "/" being the shallowest
@@ -142,6 +142,7 @@ mounts=()
 media_rows=()
 for row in "${rows[@]}"; do
   read -r source target <<<"$row"
+  source=$(unraw "$source"); target=$(unraw "$target")
   [[ "$source" == /dev/* ]] || continue
   [[ "$target" == "$MEDIA"/* ]] && { media_rows+=("$row"); continue; }
   [[ "$target" =~ $skip_re ]] && continue
@@ -165,10 +166,11 @@ done
 # after and what is written on the disk itself.
 for row in "${media_rows[@]}"; do
   read -r source target <<<"$row"
+  source=$(unraw "$source"); target=$(unraw "$target")
   disk=$(disk_of "$source")
   [ -n "${disk_root[$disk]:-}" ] && continue   # the OS, mounted a second time
   [ -z "$(disk_facts "$disk")" ] && continue
-  mounts+=("$target|$disk")
+  mounts+=("$target|$disk|${source%%[*}")
   disk_root[$disk]=$target
   disk_depth[$disk]=1
   disk_label[$disk]=$(basename "$target")
