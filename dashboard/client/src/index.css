@@ -256,8 +256,12 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .on-disk.mirror{color:var(--gpu-2);border-color:var(--gpu-2);font-weight:600}
 .on-disk.temp{color:var(--muted)}
 .mrow.drow.has-parts{cursor:pointer}
-.mrow.drow.part{opacity:.75;font-size:.92em}
-.mrow.drow.part>.lbl{padding-left:1ch;white-space:nowrap}
+/* A part sits under its drive in the same columns: the name takes the space
+   of the spinner and "SSD1", so the bar starts where the drive's bar does. */
+.mrow.drow.part{margin-top:-2px}
+.mrow.drow.part>.lbl{flex:0 0 calc(4ch + 14px);box-sizing:border-box;padding-left:8px;white-space:nowrap;opacity:.8}
+.mrow.drow.part>.meter{height:4px}
+.mrow.drow.part>.fig{color:var(--muted)}
 .on-disk.temp.blank{visibility:hidden}
 .on-disk.temp.hot{color:#fff;background:var(--crit);border-color:var(--crit);font-weight:600}
 /* Drive rows share one set of columns, so every bar is the same length and

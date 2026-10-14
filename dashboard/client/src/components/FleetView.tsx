@@ -510,9 +510,9 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                 <span class={`on-disk temp${Math.round(d.tempC) >= 40 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
               )}
             </div>
-            {open && parts.map((p, j) => (
+            {open && parts.map((p) => (
               <div class="mrow drow part" key={`${d.device}:${p.mount}`} title={`${p.mount}${p.copy ? ' — the mirror copy' : ''}`}>
-                <span class="lbl">{j === parts.length - 1 ? '└' : '├'} {p.name}</span>
+                <span class="lbl">{p.name}</span>
                 <Meter value={p.totalBytes ? (p.usedBytes / p.totalBytes) * 100 : 0} tone={mirror ? 'mirror' : diskTone(0)} />
                 <strong class="fig">{p.copy ? '(copy)' : `${bytes(p.usedBytes)} / ${bytes(p.totalBytes)}`}</strong>
                 <span class="on-disk">{p.mount}</span>

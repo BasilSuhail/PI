@@ -330,7 +330,7 @@ const asPhysical = (
   const sum = (rs: DiskStatsValue[]) => rs.reduce((a, r) => a + r.usedBytes, 0);
   const mirrored = sum(rows.filter(inArray));
   const part = (r: DiskStatsValue, copy = false) => ({
-    name: r.mount === '/' ? 'Debian' : inArray(r) ? 'apps' : r.mount.split('/').pop() || r.mount,
+    name: r.mount === '/' ? 'OS' : inArray(r) ? 'apps' : r.mount.split('/').pop() || r.mount,
     mount: r.mount, usedBytes: r.usedBytes, totalBytes: r.totalBytes, copy,
   });
   const drive = (disk: string, own: DiskStatsValue[], mount: string, mirror: boolean): DiskStatsValue => {
