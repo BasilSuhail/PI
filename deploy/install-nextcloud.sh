@@ -9,6 +9,8 @@
 #                        except the app folders (PROTECTED below).
 #   ARCHIVE_DIR  the SSD archive, shown to the admin writable, except
 #                APPS_DIR (PROTECTED below).
+#   SPARE_DIR  the mirror's backup SSD's leftover space, not mirrored,
+#              shown to the admin writable as SSD2.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +20,7 @@ POOL_DIR="${POOL_DIR:-/srv/pool}"
 HDD1_DIR="${HDD1_DIR:-/srv/storage}"
 HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
+SPARE_DIR="${SPARE_DIR:-/srv/spare}"
 OWNER="${OWNER:-$(id -un)}"
 OWNER_UID="$(id -u "$OWNER")"
 
@@ -88,7 +91,10 @@ done
 # The disk tops, not recursively: new folders can be made there, and the app
 # folders keep their permissions. Then every other top-level folder, whole.
 is_protected() { local p; for p in "${PROTECTED[@]}"; do [ "$1" = "$p" ] && return 0; done; return 1; }
-for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR"; do
+# A fresh filesystem's top is root's: the login user takes it, as on the
+# other disks, so Finder can write there too.
+[ "$(stat -c %u "$SPARE_DIR")" = 0 ] && sudo chown "$OWNER:$OWNER" "$SPARE_DIR"
+for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR" "$SPARE_DIR"; do
   grant "$disk"
   for d in "$disk"/*/; do
     d="${d%/}"
@@ -148,6 +154,7 @@ sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__HDD1_DIR__|${HDD1_DIR}|g" \
     -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
     -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
+    -e "s|__SPARE_DIR__|${SPARE_DIR}|g" \
     "${REPO_ROOT}/k8s/nextcloud.yaml" | apply_guarded
 
 echo "==> Waiting for the database and cache"
@@ -206,7 +213,7 @@ occ config:system:set defaultapp --value=files >/dev/null
 occ config:system:set excluded_directories 0 --value=Vaultwarden >/dev/null
 echo "  apps             storage only; opens straight to Files; admin can impersonate"
 
-# The admin's three disks, as external storage visible to the admin only.
+# The admin's four disks, as external storage visible to the admin only.
 # What is read-only is decided in the pod (read-only mounts over the app
 # folders), so none are flagged read-only in Nextcloud, which would block the
 # whole disk. Names have no spaces: they pass through a shell inside the pod.
@@ -246,6 +253,7 @@ detach /Pictures    SSD1
 attach /HDD1 /mnt/hdd1 rw
 attach /HDD2 /mnt/hdd2 rw
 attach /SSD1 /mnt/ssd1 rw
+attach /SSD2 /mnt/ssd2 rw
 # The admin's own folder on HDD2 becomes their Personal files, so it counts.
 HDD2_DIR="$HDD2_DIR" POOL_DIR="$POOL_DIR" bash "$REPO_ROOT/deploy/nextcloud-admin-home.sh"
 
