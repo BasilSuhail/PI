@@ -468,6 +468,35 @@ def read_drive_temps():
     return temps
 
 
+def read_mirrors():
+    """{mdN: {"main": disk, "backup": disk}} for each mirror array.
+
+    The console shows the SSDs as the two physical drives they are, not as the
+    arrays on them: main is the member that is not write-mostly.
+    """
+    out = {}
+    try:
+        arrays = [n for n in os.listdir("/sys/block") if re.fullmatch(r"md\d+", n)]
+    except OSError:
+        return out
+    for md in arrays:
+        base = f"/sys/block/{md}/md"
+        main = backup = None
+        try:
+            entries = [e for e in os.listdir(base) if e.startswith("dev-")]
+        except OSError:
+            continue
+        for e in sorted(entries):
+            disk = os.path.basename(os.path.dirname(os.path.realpath(f"/sys/class/block/{e[4:]}")))
+            if "write_mostly" in (_read(f"{base}/{e}/state") or ""):
+                backup = backup or disk
+            else:
+                main = main or disk
+        if main:
+            out[md] = {"main": main, "backup": backup}
+    return out
+
+
 def _md_disks():
     """{mdN: the physical disk its row stands for}, for the SSD mirror.
 
@@ -671,6 +700,7 @@ def read_hw():
         "volts": read_volts(),
         "driveTemps": _with_md(read_drive_temps()),
         "driveBusy": _with_md(dict(read_drive_busy())),
+        "mirrors": read_mirrors(),
         "gpu": read_gpu(),
         "wifi": read_wifi(),
     }

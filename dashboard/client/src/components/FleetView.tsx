@@ -239,8 +239,9 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   // are handed out in whatever order the SATA ports answer, and they changed
   // across one reboot, which would swap HDD1 and HDD2. Mount points come from
   // fstab by UUID and do not move.
+  const rank = (d: FleetNode['disks'][number]) => (d.mount === '/' && !d.mirror ? 0 : d.mirror ? 1 : 2);
   const disks = [...node.disks].sort((a, b) =>
-    (a.mount === '/' ? 0 : 1) - (b.mount === '/' ? 0 : 1)
+    rank(a) - rank(b)
     || mountRank(a.mount) - mountRank(b.mount)
     || a.mount.localeCompare(b.mount),
   );
@@ -469,9 +470,9 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
 
           <Sec title="DRIVES" note={`${disks.length} connected`} />
           {disks.map((d, i) => {
-            // The SSD mirror (deploy/ssd-mirror.sh): / is the live OS, and the
-            // other array is marked as the mirror in its own colour.
-            const mirror = d.device.startsWith('/dev/md') && d.mount !== '/';
+            // The SSD mirror (deploy/ssd-mirror.sh): the main SSD is the live
+            // OS, the backup SSD is marked as the mirror in its own colour.
+            const mirror = d.mirror === true;
             return (
             <div
               class={`mrow drow${mirror ? ' mirror' : ''}`}
@@ -490,7 +491,7 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                   answers both "how full" and "how big". Full precision: this row
                   is how a download is watched. */}
               <strong class="fig">{bytes(d.usedBytes)} / {bytes(d.totalBytes)}</strong>
-              <span class={`on-disk${mirror ? ' mirror' : ''}`}>{d.mount === '/' ? 'OS' : mirror ? 'MIRROR' : d.mount}</span>
+              <span class={`on-disk${mirror ? ' mirror' : ''}`}>{mirror ? 'MIRROR' : d.mount === '/' ? 'OS' : d.mount}</span>
               {/* Red above 35°: hard drives last longest under about 40°, and the
                   bottom front fan only starts at 40°, so this is the early warning. */}
               {d.tempC != null && (

@@ -66,6 +66,8 @@ export interface DiskStats {
   tempC?: number | null;
   /** % of the last few seconds spent reading or writing. Null until the agent has two readings. */
   busyPct?: number | null;
+  /** The backup SSD of the mirror: every write lands on it too. */
+  mirror?: boolean;
 }
 
 /**
@@ -98,6 +100,8 @@ export interface HwStats {
   driveTemps: Record<string, number>;
   /** % of the last few seconds each drive spent reading or writing. Absent on an older agent. */
   driveBusy?: Record<string, number>;
+  /** mdN -> its main and backup (write-mostly) disks. Absent on an older agent. */
+  mirrors?: Record<string, { main: string; backup: string | null }>;
   gpu: GpuStats | null;
   wifi: Array<{ iface: string; signalDbm: number }>;
 }
