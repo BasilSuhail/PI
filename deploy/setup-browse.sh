@@ -55,11 +55,22 @@ skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/boot/efi|/mnt/new|/var/lib/docker.*|/va
 # The physical disk a mounted source belongs to: sda2 -> sda. A source with no
 # parent device names itself.
 disk_of() {
-  local parent
-  # A mirror (deploy/ssd-mirror.sh) is one drive however many disks hold it,
-  # and /sys/block/mdN answers for it like a disk does.
-  [[ "$1" == /dev/md* ]] && { basename "$(readlink -f "$1")"; return; }
-  parent=$(lsblk -no pkname "$1" 2>/dev/null || true)
+  local parent md m
+  # A mirror (deploy/ssd-mirror.sh) belongs to its main disk, the member that
+  # is not write-mostly: the 250GB holds Debian and the apps, and the backup
+  # SSD's half is the same files again, not something to browse twice.
+  if [[ "$1" == /dev/md* ]]; then
+    md=$(basename "$(readlink -f "$1")")
+    for m in /sys/block/"$md"/md/dev-*; do
+      [ -e "$m/state" ] || continue
+      grep -q write_mostly "$m/state" && continue
+      parent=$(lsblk -dno pkname "/dev/${m##*/dev-}" 2>/dev/null || true)
+      [ -n "$parent" ] && { echo "$parent"; return; }
+    done
+    echo "$md"; return
+  fi
+  # -d: a mirror member partition would list the array under it as well.
+  parent=$(lsblk -dno pkname "$1" 2>/dev/null || true)
   echo "${parent:-$(basename "$1")}"
 }
 
@@ -92,9 +103,13 @@ capacity_of() {
     return
   fi
   gb=$(( (bytes + 500000000) / 1000000000 ))
-  sold=""
+  # The nearest size within 8%: a 512GB disk is "512GB", not "500GB".
+  sold="" best=""
   for c in 120 128 250 256 500 512 750 768; do
-    if (( gb >= c * 92 / 100 && gb <= c * 108 / 100 )); then sold=$c; break; fi
+    if (( gb >= c * 92 / 100 && gb <= c * 108 / 100 )); then
+      d=$(( gb > c ? gb - c : c - gb ))
+      if [ -z "$best" ] || (( d < best )); then sold=$c; best=$d; fi
+    fi
   done
   echo "${sold:-$gb}GB"
 }
@@ -133,14 +148,10 @@ for row in "${rows[@]}"; do
   [[ "$target" == "$BROWSE"/* ]] && continue
   disk=$(disk_of "$source")
   [ -z "$(disk_facts "$disk")" ] && continue   # loop/ram/zram: not a disk
-  # "SSD-mirror-root", "SSD-mirror-apps": the mirror's own name, not a size
-  # no shop ever sold. From mdadm, not /dev/md/: udev does not always make it.
-  if [[ "$disk" == md* ]]; then
-    l=$(sudo mdadm --detail "/dev/$disk" 2>/dev/null | sed -n 's/^ *Name : \([^ ]*:\)\{0,1\}\([^ ]*\).*/\2/p')
-    [ -n "$l" ] && disk_label[$disk]="SSD-mirror-$l"
-  fi
-  mounts+=("$target|$disk")
+  mounts+=("$target|$disk|${source%%[*}")
+  # "/" is depth 0, so it wins over "/1) Archive" whatever order findmnt gives.
   depth=${target//[^\/]/}
+  [ "$target" = / ] && depth=""
   if [ -z "${disk_root[$disk]:-}" ] || [ ${#depth} -lt ${disk_depth[$disk]} ]; then
     disk_root[$disk]=$target
     disk_depth[$disk]=${#depth}
@@ -311,15 +322,21 @@ for disk in "${ordered[@]}"; do
   # Same-disk filesystems beyond the root, bound inside at their real path so
   # the root bind does not shadow them. Cross-disk mounts stay out — see the
   # header for why showing the empty underlying directory is the honest view.
-  for m in "${mounts[@]}"; do
-    IFS='|' read -r target mdisk <<<"$m"
+  # Shallowest first, and one path per filesystem: /1) Archive and /srv/ssd
+  # are the same apps filesystem, so only "1) Archive" is bound, at the top.
+  declare -A seen_dev=()
+  while IFS='|' read -r target mdisk mdev; do
     [ "$mdisk" = "$disk" ] || continue
     [ "$target" = "${disk_root[$disk]}" ] && continue
+    [ -n "${seen_dev[$mdev]:-}" ] && continue
+    seen_dev[$mdev]=1
     nested="$point$target"
     sudo mkdir -p "$nested"
     bind "$target" "$nested"
     echo "  ${name}${target}  <-  $target"
-  done
+  done < <(for m in "${mounts[@]}"; do t=${m%%|*}; d=${t//[^\/]/}; printf '%s %s\n' "${#d}" "$m"; done |
+             sort -n -k1,1 | cut -d' ' -f2-)
+  unset seen_dev
 done
 
 # Nothing here binds the archive. It is a plain directory at the root of the
