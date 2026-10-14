@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { useState } from 'preact/hooks';
 import type { FleetNode, ProcessRow } from '../../../shared/fleet';
 import { bytes, bytesPerSec, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts, swapTone } from '../lib/format';
@@ -207,6 +208,13 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   compact?: boolean;
 }) => {
   const [sort, setSort] = useState<SortKey>('cpuPct');
+  // Mirror SSDs whose parts are showing; closed by default.
+  const [openDrives, setOpenDrives] = useState<Set<string>>(new Set());
+  const toggleDrive = (device: string) => setOpenDrives((s) => {
+    const next = new Set(s);
+    if (!next.delete(device)) next.add(device);
+    return next;
+  });
   const unreachable = node.online && !!node.error;
 
   if (!node.online || unreachable) {
@@ -473,11 +481,15 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             // The SSD mirror (deploy/ssd-mirror.sh): the main SSD is the live
             // OS, the backup SSD is marked as the mirror in its own colour.
             const mirror = d.mirror === true;
+            const parts = d.parts ?? [];
+            const open = parts.length > 0 && openDrives.has(d.device);
             return (
+            <Fragment key={d.device}>
             <div
-              class={`mrow drow${mirror ? ' mirror' : ''}`}
+              class={`mrow drow${mirror ? ' mirror' : ''}${parts.length ? ' has-parts' : ''}`}
               key={d.device}
-              title={`${d.device} on ${d.mount}${mirror ? ' (RAID 1 mirror)' : ''} — ${pct(d.usedPct)} used${d.busyPct != null ? ` · busy ${Math.round(d.busyPct)}%` : ''}`}
+              onClick={parts.length ? () => toggleDrive(d.device) : undefined}
+              title={`${d.device} on ${d.mount}${mirror ? ' (RAID 1 mirror)' : ''} — ${pct(d.usedPct)} used${d.busyPct != null ? ` · busy ${Math.round(d.busyPct)}%` : ''}${parts.length ? ` · click to ${open ? 'hide' : 'show'} what is on it` : ''}`}
             >
               {/* Turns while the drive is reading or writing, still when idle,
                   like the fans. 5%: the OS drive's own logging keeps every
@@ -498,6 +510,16 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
                 <span class={`on-disk temp${Math.round(d.tempC) >= 40 ? ' hot' : ''}`}>{Math.round(d.tempC)}°</span>
               )}
             </div>
+            {open && parts.map((p, j) => (
+              <div class="mrow drow part" key={`${d.device}:${p.mount}`} title={`${p.mount}${p.copy ? ' — the mirror copy' : ''}`}>
+                <span class="lbl">{j === parts.length - 1 ? '└' : '├'} {p.name}</span>
+                <Meter value={p.totalBytes ? (p.usedBytes / p.totalBytes) * 100 : 0} tone={mirror ? 'mirror' : diskTone(0)} />
+                <strong class="fig">{p.copy ? '(copy)' : `${bytes(p.usedBytes)} / ${bytes(p.totalBytes)}`}</strong>
+                <span class="on-disk">{p.mount}</span>
+                <span class="on-disk temp blank" />
+              </div>
+            ))}
+            </Fragment>
             );
           })}
 

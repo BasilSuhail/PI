@@ -68,6 +68,9 @@ export interface DiskStats {
   busyPct?: number | null;
   /** The backup SSD of the mirror: every write lands on it too. */
   mirror?: boolean;
+  /** What is on a mirror SSD, shown when its row is opened. `copy`: the
+   *  mirror's copy of a part the main SSD holds. */
+  parts?: Array<{ name: string; mount: string; usedBytes: number; totalBytes: number; copy?: boolean }>;
 }
 
 /**

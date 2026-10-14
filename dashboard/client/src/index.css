@@ -255,6 +255,10 @@ h1{font-size:23px;letter-spacing:-.035em;color:var(--ink);text-wrap:balance}
 .mfill.mirror{background:var(--sheen),linear-gradient(var(--gpu-1),var(--gpu-2))}
 .on-disk.mirror{color:var(--gpu-2);border-color:var(--gpu-2);font-weight:600}
 .on-disk.temp{color:var(--muted)}
+.mrow.drow.has-parts{cursor:pointer}
+.mrow.drow.part{opacity:.75;font-size:.92em}
+.mrow.drow.part>.lbl{padding-left:1ch;white-space:nowrap}
+.on-disk.temp.blank{visibility:hidden}
 .on-disk.temp.hot{color:#fff;background:var(--crit);border-color:var(--crit);font-weight:600}
 /* Drive rows share one set of columns, so every bar is the same length and
    the figures, mounts and temperatures line up down the list. The figure fits

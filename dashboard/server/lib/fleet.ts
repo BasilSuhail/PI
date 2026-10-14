@@ -329,19 +329,25 @@ const asPhysical = (
   const onDisk = (r: DiskStatsValue, disk: string | null) => !inArray(r) && parentDisk(dev(r)) === disk;
   const sum = (rs: DiskStatsValue[]) => rs.reduce((a, r) => a + r.usedBytes, 0);
   const mirrored = sum(rows.filter(inArray));
-  const drive = (disk: string, usedBytes: number, mount: string, mirror: boolean): DiskStatsValue => {
+  const part = (r: DiskStatsValue, copy = false) => ({
+    name: r.mount === '/' ? 'Debian' : inArray(r) ? 'apps' : r.mount.split('/').pop() || r.mount,
+    mount: r.mount, usedBytes: r.usedBytes, totalBytes: r.totalBytes, copy,
+  });
+  const drive = (disk: string, own: DiskStatsValue[], mount: string, mirror: boolean): DiskStatsValue => {
     const totalBytes = size.get(disk) ?? 0;
+    const usedBytes = mirrored + sum(own);
     return {
       mount, device: `/dev/${disk}`, totalBytes, usedBytes,
       usedPct: totalBytes ? (usedBytes / totalBytes) * 100 : 0,
       rotational: false, tempC: temps[disk] ?? null, busyPct: busy[disk] ?? null, mirror,
+      parts: [...rows.filter(inArray).map((r) => part(r, mirror)), ...own.map((r) => part(r))],
     };
   };
-  const out = [drive(main, mirrored + sum(rows.filter((r) => onDisk(r, main))), '/', false)];
+  const out = [drive(main, rows.filter((r) => onDisk(r, main)), '/', false)];
   if (backup) {
     const extra = rows.filter((r) => onDisk(r, backup));
     // Its own mount, the spare, is what Files opens for this drive.
-    out.push(drive(backup, mirrored + sum(extra), extra[0]?.mount ?? '/', true));
+    out.push(drive(backup, extra, extra[0]?.mount ?? '/', true));
   }
   return [...out, ...rows.filter((r) => !inArray(r) && !onDisk(r, main) && !onDisk(r, backup))];
 };
