@@ -468,6 +468,46 @@ def read_drive_temps():
     return temps
 
 
+def _md_disks():
+    """{mdN: the physical disk its row stands for}, for the SSD mirror.
+
+    An array has no sensor and no io_ticks of its own. The array holding /
+    stands for the main SSD (the member that is not write-mostly), any other
+    for the backup SSD (the write-mostly one), so the console's OS row and
+    MIRROR row each show a real drive's temperature and activity.
+    """
+    out = {}
+    try:
+        root_dev = os.stat("/").st_dev
+        arrays = [n for n in os.listdir("/sys/block") if re.fullmatch(r"md\d+", n)]
+    except OSError:
+        return out
+    for md in arrays:
+        base = f"/sys/block/{md}/md"
+        try:
+            entries = [e for e in os.listdir(base) if e.startswith("dev-")]
+            is_root = os.stat(f"/dev/{md}").st_rdev == root_dev
+        except OSError:
+            continue
+        members = []
+        for e in entries:
+            part = e[4:]
+            disk = os.path.basename(os.path.dirname(os.path.realpath(f"/sys/class/block/{part}")))
+            members.append((disk, "write_mostly" in (_read(f"{base}/{e}/state") or "")))
+        pick = [d for d, wm in members if wm != is_root] or [d for d, _ in members]
+        if pick:
+            out[md] = sorted(pick)[0]
+    return out
+
+
+def _with_md(values):
+    """values keyed by physical disk, plus each mirror array under its disk's."""
+    for md, disk in _md_disks().items():
+        if disk in values:
+            values[md] = values[disk]
+    return values
+
+
 _busy_last = {"at": 0.0, "ticks": {}, "value": {}}
 
 
@@ -629,8 +669,8 @@ def read_hw():
         "cpuWatts": read_cpu_watts(),
         "fans": read_fans(),
         "volts": read_volts(),
-        "driveTemps": read_drive_temps(),
-        "driveBusy": read_drive_busy(),
+        "driveTemps": _with_md(read_drive_temps()),
+        "driveBusy": _with_md(dict(read_drive_busy())),
         "gpu": read_gpu(),
         "wifi": read_wifi(),
     }

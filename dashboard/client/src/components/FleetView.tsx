@@ -415,6 +415,16 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
               )}
             </>
           )}
+
+          {/* Left column, under Graphics: the right one grows with every drive. */}
+          <div class="net-strip">
+            <span class="lbl dim">{wired || wifi.length === 0 ? 'NET' : 'WI-FI'}</span>
+            <NetGraph series={netHistory} />
+            <span class="net-rates">
+              ↓ {bytesPerSec(node.net.reduce((a, i) => a + i.rxBps, 0))} · ↑ {bytesPerSec(node.net.reduce((a, i) => a + i.txBps, 0))}
+            </span>
+            {wifi[0] && <span class="on-disk" title={wifi[0].iface}>{wifi[0].signalDbm} dBm</span>}
+          </div>
         </div>
 
         <div class="col">
@@ -518,14 +528,6 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             </>
           )}
 
-          <div class="net-strip">
-            <span class="lbl dim">{wired || wifi.length === 0 ? 'NET' : 'WI-FI'}</span>
-            <NetGraph series={netHistory} />
-            <span class="net-rates">
-              ↓ {bytesPerSec(node.net.reduce((a, i) => a + i.rxBps, 0))} · ↑ {bytesPerSec(node.net.reduce((a, i) => a + i.txBps, 0))}
-            </span>
-            {wifi[0] && <span class="on-disk" title={wifi[0].iface}>{wifi[0].signalDbm} dBm</span>}
-          </div>
         </div>
       </div>
 
