@@ -8,6 +8,7 @@ built from Kuma's own database instead of guessed. Read-only on the database.
   sudo python3 deploy/kuma-import-json.py 24 "New name=keyword" ... > kuma.json
 
 Import it in Kuma under Settings > Backup > Import with "Skip existing".
+Kuma imports monitors paused: press Resume on each one after.
 Never "Overwrite": that deletes every monitor and its history.
 """
 import json
@@ -37,7 +38,8 @@ version = json.loads(version) if str(version).startswith('"') else version
 
 # Kuma's export names (monitor.toJSON), which is what its import reads.
 base = {
-    "description": m.get("description"),
+    # The template's description is about its own drive, not the clone's.
+    "description": None,
     "type": m.get("type"),
     "url": m.get("url"),
     "method": m.get("method") or "GET",
