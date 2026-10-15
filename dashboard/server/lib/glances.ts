@@ -36,12 +36,21 @@ const coreCount = new Map<string, number>();
 export const fetchCpu = async (host: string): Promise<CpuStats | null> => {
   const [cpu, percpu, load] = await Promise.all([
     get<CpuSample>(host, 'cpu'),
-    get<Array<{ total?: number }>>(host, 'percpu'),
+    get<Array<{ total?: number; idle?: number; user?: number; system?: number }>>(host, 'percpu'),
     get<{ min1?: number; min5?: number; min15?: number }>(host, 'load'),
   ]);
   if (!cpu) return null;
 
-  const perCore = Array.isArray(percpu) ? percpu.map((c) => round(c.total ?? 0)) : [];
+  // The same empty window hits each core: idle, user and system all 0, which
+  // Glances turns into a total of 100. On a fresh dashboard every thread read
+  // 100% beside a CPU of 0%. Such a core takes its last good reading, or 0.
+  const prevCores = lastGoodCpu.get(host)?.stats.perCore ?? [];
+  const perCore = Array.isArray(percpu)
+    ? percpu.map((c, i) =>
+        (c.idle ?? 0) === 0 && (c.user ?? 0) === 0 && (c.system ?? 0) === 0
+          ? prevCores[i] ?? 0
+          : round(c.total ?? 0))
+    : [];
 
   const stats: CpuStats = {
     cores: cpu.cpucore ?? perCore.length,

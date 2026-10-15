@@ -9,6 +9,8 @@
 #                        except the app folders (PROTECTED below).
 #   ARCHIVE_DIR  the SSD archive, shown to the admin writable, except
 #                APPS_DIR (PROTECTED below).
+#   SPARE_DIR  the mirror's backup SSD's leftover space, not mirrored,
+#              shown to the admin writable as SSD2.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +20,7 @@ POOL_DIR="${POOL_DIR:-/srv/pool}"
 HDD1_DIR="${HDD1_DIR:-/srv/storage}"
 HDD2_DIR="${HDD2_DIR:-/srv/hdd2}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$(dirname "$APPS_DIR")}"
+SPARE_DIR="${SPARE_DIR:-/srv/spare}"
 OWNER="${OWNER:-$(id -un)}"
 OWNER_UID="$(id -u "$OWNER")"
 
@@ -63,6 +66,7 @@ printf '  %-18s %s\n' "code+config (SSD)" "$APPS_DIR/Nextcloud/html" \
                       "HDD1 (editable)" "$HDD1_DIR" \
                       "HDD2 (editable)" "$HDD2_DIR" \
                       "SSD1 (editable)" "$ARCHIVE_DIR" \
+                      "SSD2 (editable)" "$SPARE_DIR" \
                       "  but read-only" "${PROTECTED[*]}"
 
 sudo mkdir -p "$APPS_DIR/Nextcloud/html" "$APPS_DIR/Nextcloud/db" "$POOL_DIR/Nextcloud/data"
@@ -88,7 +92,10 @@ done
 # The disk tops, not recursively: new folders can be made there, and the app
 # folders keep their permissions. Then every other top-level folder, whole.
 is_protected() { local p; for p in "${PROTECTED[@]}"; do [ "$1" = "$p" ] && return 0; done; return 1; }
-for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR"; do
+# A fresh filesystem's top is root's: the login user takes it, as on the
+# other disks, so Finder can write there too.
+[ "$(stat -c %u "$SPARE_DIR")" = 0 ] && sudo chown "$OWNER:$OWNER" "$SPARE_DIR"
+for disk in "$HDD1_DIR" "$HDD2_DIR" "$ARCHIVE_DIR" "$SPARE_DIR"; do
   grant "$disk"
   for d in "$disk"/*/; do
     d="${d%/}"
@@ -138,6 +145,12 @@ DOMAIN="cloud.${TAILNET}"
 # Where the tailscale ingress proxy connects from: the pod ranges of the nodes.
 POD_CIDRS="$(kube get nodes -o jsonpath='{.items[*].spec.podCIDR}')"
 [ -n "$POD_CIDRS" ] || { echo "Could not read the cluster's pod range from the nodes." >&2; exit 1; }
+# The cloud machine's tailnet address, for the pod's hostAliases: empty on the
+# very first install, before the ingress has joined the tailnet.
+CLOUD_ALIAS="$(sudo tailscale status --json 2>/dev/null | jq -c --arg d "$DOMAIN." '
+  [.Peer // {} | .[] | select(.DNSName == $d and ((.TailscaleIPs // []) | length) > 0)
+   | {ip: .TailscaleIPs[0], hostnames: [$d | rtrimstr(".")]}] | .[:1]')" || CLOUD_ALIAS="[]"
+[ -n "$CLOUD_ALIAS" ] || CLOUD_ALIAS="[]"
 
 echo "==> Manifests"
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
@@ -148,6 +161,8 @@ sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__HDD1_DIR__|${HDD1_DIR}|g" \
     -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
     -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
+    -e "s|__SPARE_DIR__|${SPARE_DIR}|g" \
+    -e "s|__CLOUD_ALIAS__|${CLOUD_ALIAS}|g" \
     "${REPO_ROOT}/k8s/nextcloud.yaml" | apply_guarded
 
 echo "==> Waiting for the database and cache"
@@ -170,9 +185,10 @@ fi
 echo "==> Settings"
 # Background jobs come from the cron container, which sleeps through quiet
 # hours. The maintenance window (UTC) is when Nextcloud runs its heavy daily
-# jobs: 19:00 UTC is the 20:00–24:00 slot the other apps' schedules use.
+# jobs: 06:00 UTC, the morning slot every automatic job on the machine uses.
+# Nothing automatic runs at night or in the evening; people do.
 occ background:cron >/dev/null
-occ config:system:set maintenance_window_start --type=integer --value=19 >/dev/null
+occ config:system:set maintenance_window_start --type=integer --value=6 >/dev/null
 echo "  background jobs  every 5 min, paused 00:00–06:00"
 # New accounts start empty: no sample documents, photos or templates.
 occ config:system:set skeletondirectory --value= >/dev/null
@@ -191,11 +207,36 @@ for app in activity app_api circles comments contactsinteraction dashboard \
            updatenotification user_status weather_status webhook_listeners; do
   occ app:disable "$app" >/dev/null 2>&1 || true
 done
+# Impersonate: the admin opens any account as that person, from the Users
+# page, to look after a family member's files. Changes go through Nextcloud,
+# so their own view stays in step, which the admin's whole-disk view of the
+# data folder cannot do. Only admins can impersonate.
+occ app:install impersonate >/dev/null 2>&1 || occ app:enable impersonate >/dev/null 2>&1 || true
 # With the dashboard gone, a login lands on the files.
 occ config:system:set defaultapp --value=files >/dev/null
-echo "  apps             storage only; opens straight to Files"
+# The vault's backups (on HDD2 and in the SSD's Apps) are not readable by
+# Nextcloud, on purpose. A folder it cannot open has no size, and that left
+# the whole disk showing "Pending". Leaving every folder named Vaultwarden out
+# of Nextcloud fixes the sizes and keeps the vault out of the file browser.
+occ config:system:set excluded_directories 0 --value=Vaultwarden >/dev/null
+echo "  apps             storage only; opens straight to Files; admin can impersonate"
 
-# The admin's three disks, as external storage visible to the admin only.
+# Nextcloud Office: Word, Excel, PowerPoint and ODF files open and edit in the
+# browser and the phone app, through the built-in Collabora server
+# (richdocumentscode) inside this pod, so there is no second app to run. The
+# viewers cover PDFs, pictures, video and text. The first install downloads
+# the document server, a few hundred MB.
+for app in viewer files_pdfviewer text richdocuments richdocumentscode; do
+  occ app:install "$app" >/dev/null 2>&1 || occ app:enable "$app" >/dev/null 2>&1 || true
+done
+if occ richdocuments:activate-config >/dev/null 2>&1; then
+  echo "  office           on: documents open in the browser"
+else
+  echo "  office           installed, but the document server did not answer;"
+  echo "                   paste: sudo k3s kubectl -n pi exec deploy/nextcloud -c nextcloud -- su -s /bin/sh www-data -c 'php occ richdocuments:activate-config'"
+fi
+
+# The admin's four disks, as external storage visible to the admin only.
 # What is read-only is decided in the pod (read-only mounts over the app
 # folders), so none are flagged read-only in Nextcloud, which would block the
 # whole disk. Names have no spaces: they pass through a shell inside the pod.
@@ -208,7 +249,12 @@ attach() { # mount point, path in the pod, ro|rw
   if [ -n "$id" ]; then
     # Earlier versions of this script flagged the HDDs read-only.
     occ files_external:option "$id" readonly "$([ "$3" = ro ] && echo true || echo false)" >/dev/null 2>&1 || true
-    printf '  %-16s already attached\n' "$1"
+    # Who may see it is enforced on every run, not only when it is created. A
+    # mount carried over from another machine kept whatever it had, and one
+    # with no applicable user is visible to every account: a family member
+    # could browse the whole disk, backups included.
+    occ files_external:applicable --add-user="$ADMIN_USER" "$id" >/dev/null
+    printf '  %-16s already attached, admin only\n' "$1"
     return 0
   fi
   id=$(occ files_external:create "$1" local null::null -c "datadir=$2" | grep -o '[0-9]\+' | tail -1)
@@ -230,6 +276,9 @@ detach /Pictures    SSD1
 attach /HDD1 /mnt/hdd1 rw
 attach /HDD2 /mnt/hdd2 rw
 attach /SSD1 /mnt/ssd1 rw
+attach /SSD2 /mnt/ssd2 rw
+# The admin's own folder on HDD2 becomes their Personal files, so it counts.
+HDD2_DIR="$HDD2_DIR" POOL_DIR="$POOL_DIR" bash "$REPO_ROOT/deploy/nextcloud-admin-home.sh"
 
 echo
 echo "==> Done"

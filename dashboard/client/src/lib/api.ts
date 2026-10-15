@@ -1,7 +1,7 @@
 /** Thin fetch layer plus the polling hook the views use. */
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { AppTile, TorrentState, ContainerRow, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
+import type { AppTile, TorrentState, ContainerRow, ContentStatus, CredentialStatus, DirListing, DirRoots, FleetNode, ProcessRow } from '../../../shared/fleet';
 
 const json = async <T>(path: string): Promise<T> => {
   const res = await fetch(path, { cache: 'no-store' });
@@ -14,6 +14,7 @@ const json = async <T>(path: string): Promise<T> => {
 
 export const getNodes = () => json<FleetNode[]>('/api/nodes');
 export const getApps = () => json<AppTile[]>('/api/apps');
+export const getStatus = () => json<ContentStatus | null>('/api/status');
 export const getCredentials = () => json<CredentialStatus[]>('/api/credentials');
 export const getProcesses = (id: string, limit = 30) =>
   json<ProcessRow[]>(`/api/nodes/${encodeURIComponent(id)}/processes?limit=${limit}`);
@@ -101,21 +102,37 @@ export const useHistory = (nodes: FleetNode[] | null, cap = 40) => {
   return store.current;
 };
 
-export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => {
+/**
+ * What a machine draws, from whatever it can measure. A Pi's PMIC covers the
+ * whole board. A desktop has no such meter: the CPU package and the GPU are the
+ * two parts that report, so their sum is what is shown, and it is null rather
+ * than zero when neither does.
+ */
+export const nodeWatts = (node: FleetNode): number | null => {
+  if (node.power) return node.power.watts;
+  const parts = [node.hw?.cpuWatts, node.hw?.gpu?.powerW].filter((w): w is number => w != null);
+  return parts.length ? parts.reduce((a, w) => a + w, 0) : null;
+};
+
+/** A rolling series per node of any one reading. A null reading is skipped. */
+export const useSeries = (nodes: FleetNode[] | null, pick: (n: FleetNode) => number | null | undefined, cap = 40) => {
   const store = useRef(new Map<string, number[]>());
   useEffect(() => {
     if (!nodes) return;
     for (const node of nodes) {
-      const w = node.power?.watts;
-      if (w == null) continue;
+      const v = pick(node);
+      if (v == null) continue;
       const series = store.current.get(node.id) ?? [];
-      series.push(w);
+      series.push(v);
       if (series.length > cap) series.shift();
       store.current.set(node.id, series);
     }
+    // `pick` is a module-level function at every call site.
   }, [nodes, cap]);
   return store.current;
 };
+
+export const usePowerHistory = (nodes: FleetNode[] | null, cap = 40) => useSeries(nodes, nodeWatts, cap);
 
 export const useNetHistory = (nodes: FleetNode[] | null, cap = 60) => {
   const store = useRef(new Map<string, Array<[number, number]>>());

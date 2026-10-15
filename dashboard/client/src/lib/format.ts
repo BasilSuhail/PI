@@ -40,16 +40,17 @@ export const bytesPerSec = (n: number | null | undefined): string =>
   n == null ? '—' : `${bytes(n, 1)}/s`;
 
 /**
- * Installed RAM, rounded to the nearest sane capacity: 7.9 GiB reads "8 GB".
- * Binary on purpose and the one thing here that is: memory really is sold in
- * powers of two, so this is the nominal chip size, not a measurement. Every
- * measured figure beside it goes through `bytes` and is decimal.
+ * Installed RAM, rounded up to the next even GiB: 7.9 GiB reads "8 GB", and
+ * the PC's 4+8+4+8 sticks (23.4 GiB after the kernel's share) read "24 GB".
+ * Not to a power of two: mixed sticks sum to sizes like 12 or 24, which that
+ * rounded up to 16 and 32. Binary on purpose and the one thing here that is,
+ * since sticks are sold in GiB; every measured figure beside it goes through
+ * `bytes` and is decimal.
  */
 export const capacity = (totalBytes: number | null | undefined): string => {
   if (!totalBytes) return '—';
   const gb = totalBytes / 1024 ** 3;
-  const rounded = [1, 2, 4, 8, 16, 32, 64, 128].find((c) => gb <= c * 1.02);
-  return `${rounded ?? Math.round(gb)} GB`;
+  return `${gb < 1.5 ? Math.ceil(gb) : Math.ceil(gb / 2) * 2} GB`;
 };
 
 export const uptime = (sec: number | null | undefined): string => {

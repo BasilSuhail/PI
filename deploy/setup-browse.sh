@@ -47,13 +47,30 @@ MARK="# pi-browse"
 # partitions can turn up there as a duplicate mount, and those must not become
 # a second folder for a disk that already has one; a plugged-in drive has no
 # other mount, so the second pass finds it and nothing else.
-skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
+#
+# /boot/efi is firmware plumbing. On the SSD mirror it sits on a member disk
+# of its own, and without this it became a top-level "drive" of 1G.
+skip_re='^(/proc.*|/sys.*|/run.*|/dev.*|/boot/efi|/mnt/new|/var/lib/docker.*|/var/lib/kubelet.*|/var/lib/rancher.*|/snap.*)$'
 
 # The physical disk a mounted source belongs to: sda2 -> sda. A source with no
 # parent device names itself.
 disk_of() {
-  local parent
-  parent=$(lsblk -no pkname "$1" 2>/dev/null || true)
+  local parent md m
+  # A mirror (deploy/ssd-mirror.sh) belongs to its main disk, the member that
+  # is not write-mostly: the 250GB holds Debian and the apps, and the backup
+  # SSD's half is the same files again, not something to browse twice.
+  if [[ "$1" == /dev/md* ]]; then
+    md=$(basename "$(readlink -f "$1")")
+    for m in /sys/block/"$md"/md/dev-*; do
+      [ -e "$m/state" ] || continue
+      grep -q write_mostly "$m/state" && continue
+      parent=$(lsblk -dno pkname "/dev/${m##*/dev-}" 2>/dev/null || true)
+      [ -n "$parent" ] && { echo "$parent"; return; }
+    done
+    echo "$md"; return
+  fi
+  # -d: a mirror member partition would list the array under it as well.
+  parent=$(lsblk -dno pkname "$1" 2>/dev/null || true)
   echo "${parent:-$(basename "$1")}"
 }
 
@@ -86,9 +103,13 @@ capacity_of() {
     return
   fi
   gb=$(( (bytes + 500000000) / 1000000000 ))
-  sold=""
+  # The nearest size within 8%: a 512GB disk is "512GB", not "500GB".
+  sold="" best=""
   for c in 120 128 250 256 500 512 750 768; do
-    if (( gb >= c * 92 / 100 && gb <= c * 108 / 100 )); then sold=$c; break; fi
+    if (( gb >= c * 92 / 100 && gb <= c * 108 / 100 )); then
+      d=$(( gb > c ? gb - c : c - gb ))
+      if [ -z "$best" ] || (( d < best )); then sold=$c; best=$d; fi
+    fi
   done
   echo "${sold:-$gb}GB"
 }
@@ -105,14 +126,14 @@ kind_of() { # $1 = rotational flag, $2 = device name
 name_for() { basename "$1" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g;s/^-//;s/-$//'; }
 
 echo "==> Reading mounted filesystems"
-# -n no headings, -l list form. SOURCE is the device; anything not under /dev
+# -n no headings, -r raw. SOURCE is the device; anything not under /dev
 # is a pseudo-filesystem or a bind of a directory, and is not a disk.
 #
-# SOURCE first, TARGET second, because `read` splits on whitespace and a mount
-# point may now contain a space ("1) Archive"). A device name never does, so
-# reading the device into its own word and letting the target take the rest of
-# the line is the ordering that cannot mis-split.
-mapfile -t rows < <(findmnt -nlo SOURCE,TARGET | sort -u)
+# Raw output writes a space as \x20, so `read` cannot mis-split: a bind's
+# SOURCE carries its folder too ("/dev/md126[/1) Archive]"), and with plain
+# output that space cut it in two and the archive was never bound.
+mapfile -t rows < <(findmnt -nro SOURCE,TARGET | sort -u)
+unraw() { printf '%b' "$1"; }
 
 declare -A disk_root=()   # disk -> its shallowest mount, the folder's contents
 declare -A disk_depth=()  # depth of that mount, "/" being the shallowest
@@ -121,14 +142,17 @@ mounts=()
 media_rows=()
 for row in "${rows[@]}"; do
   read -r source target <<<"$row"
+  source=$(unraw "$source"); target=$(unraw "$target")
   [[ "$source" == /dev/* ]] || continue
   [[ "$target" == "$MEDIA"/* ]] && { media_rows+=("$row"); continue; }
   [[ "$target" =~ $skip_re ]] && continue
   [[ "$target" == "$BROWSE"/* ]] && continue
-  disk=$(disk_of "$source")
+  disk=$(disk_of "${source%%[*}")   # a bind reads /dev/md126[/1) Archive]
   [ -z "$(disk_facts "$disk")" ] && continue   # loop/ram/zram: not a disk
-  mounts+=("$target|$disk")
+  mounts+=("$target|$disk|${source%%[*}")
+  # "/" is depth 0, so it wins over "/1) Archive" whatever order findmnt gives.
   depth=${target//[^\/]/}
+  [ "$target" = / ] && depth=""
   if [ -z "${disk_root[$disk]:-}" ] || [ ${#depth} -lt ${disk_depth[$disk]} ]; then
     disk_root[$disk]=$target
     disk_depth[$disk]=${#depth}
@@ -142,10 +166,11 @@ done
 # after and what is written on the disk itself.
 for row in "${media_rows[@]}"; do
   read -r source target <<<"$row"
-  disk=$(disk_of "$source")
+  source=$(unraw "$source"); target=$(unraw "$target")
+  disk=$(disk_of "${source%%[*}")   # a bind reads /dev/md126[/1) Archive]
   [ -n "${disk_root[$disk]:-}" ] && continue   # the OS, mounted a second time
   [ -z "$(disk_facts "$disk")" ] && continue
-  mounts+=("$target|$disk")
+  mounts+=("$target|$disk|${source%%[*}")
   disk_root[$disk]=$target
   disk_depth[$disk]=1
   disk_label[$disk]=$(basename "$target")
@@ -255,7 +280,10 @@ bind() { # source, destination
   # second "1) Archive" and "2) Plugged in" beside it. A drive's folder should
   # show that drive as it was when the tree was built, and nothing else.
   sudo mount --make-rprivate "$2"
-  printf '%s  %s  none  bind,nofail  0  0  %s\n' \
+  # The fstab line carries the same flag, or the boot-time bind is a shared
+  # peer again and grows the copies back: jug3 showed "1) Archive" inside
+  # SSD-250GB as well as SSD-1TB after a reboot.
+  printf '%s  %s  none  bind,rprivate,nofail  0  0  %s\n' \
     "$(fstab_escape "$1")" "$(fstab_escape "$2")" "$MARK" | sudo tee -a "$FSTAB" >/dev/null
 }
 
@@ -296,15 +324,21 @@ for disk in "${ordered[@]}"; do
   # Same-disk filesystems beyond the root, bound inside at their real path so
   # the root bind does not shadow them. Cross-disk mounts stay out — see the
   # header for why showing the empty underlying directory is the honest view.
-  for m in "${mounts[@]}"; do
-    IFS='|' read -r target mdisk <<<"$m"
+  # Shallowest first, and one path per filesystem: /1) Archive and /srv/ssd
+  # are the same apps filesystem, so only "1) Archive" is bound, at the top.
+  declare -A seen_dev=()
+  while IFS='|' read -r target mdisk mdev; do
     [ "$mdisk" = "$disk" ] || continue
     [ "$target" = "${disk_root[$disk]}" ] && continue
+    [ -n "${seen_dev[$mdev]:-}" ] && continue
+    seen_dev[$mdev]=1
     nested="$point$target"
     sudo mkdir -p "$nested"
     bind "$target" "$nested"
     echo "  ${name}${target}  <-  $target"
-  done
+  done < <(for m in "${mounts[@]}"; do t=${m%%|*}; d=${t//[^\/]/}; printf '%s %s\n' "${#d}" "$m"; done |
+             sort -n -k1,1 | cut -d' ' -f2-)
+  unset seen_dev
 done
 
 # Nothing here binds the archive. It is a plain directory at the root of the
@@ -330,6 +364,7 @@ for stale in "$BROWSE"/*/archives; do
   sudo rmdir "$stale" 2>/dev/null && echo "  removed the old 'archives' directory"
 done
 
+sudo systemctl daemon-reload
 sudo chown "$OWNER:$(id -gn "$OWNER")" "$BROWSE"
 sudo chmod 0755 "$BROWSE"
 

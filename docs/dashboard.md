@@ -88,6 +88,8 @@ GET /api/nodes
 GET /api/nodes/:id/processes?limit=30
 GET /api/nodes/:id/containers
 GET /api/apps
+GET /api/status    the Status tab: who is using which app, Jellyfin and Kiwix totals,
+                   read from /run/pi-status/status.json (pi-when content, every 30 s)
 ```
 
 Two rules the design has to respect:
@@ -133,7 +135,7 @@ Three things about it are not obvious:
 
 - **No registry, and nothing to push to.** pi2 builds its own image with buildkit, run with `--oci-worker=false --containerd-worker=true` so its worker is k3s' own containerd. The image is written directly into the `k8s.io` namespace the kubelet reads — no tar, no copy, no second container runtime on the board, and no other machine involved in a deploy. `buildkitd` and `buildctl` are 102MB installed and the daemon is **not** enabled at boot: it runs for the length of a build and is stopped afterwards, because RAM is the scarce thing here and disk is not. The tag is the commit: reusing a tag under `imagePullPolicy: IfNotPresent` leaves the old image in place and reports success.
 - **The key's expiry is on the page.** Tailscale will not tell a token when it dies, and the API scope to ask for the tailnet's key list is one this token deliberately does not have. So the installer records the date beside the key in the same Secret, `kube.ts`'s neighbour `expiry.ts` reads it back from the environment, and the Fleet strip carries a tile with the date and the days left. Grey, then orange inside two weeks, then red. Without it the only signal is the fleet emptying one morning, because both probes check a static path that answers 200 whatever the key is doing.
-- **Node discovery changes hands.** Under systemd the server shells out to the local `tailscale` CLI. A pod has no tailscaled socket, so it uses the Tailscale API and needs `TAILSCALE_API_KEY` in a Secret. **API keys expire — 90 days at most.** When one does, `/api/nodes` returns 502 and the page says so rather than quietly emptying.
+- **Node discovery changes hands.** Under systemd the server shells out to the local `tailscale` CLI. A pod has no tailscaled socket, so it uses the Tailscale API through a read-only OAuth client (`TAILSCALE_OAUTH_CLIENT_ID` and `_SECRET` in a Secret; `deploy/dashboard-oauth.sh` sets it up). An OAuth client never expires and can only read devices. The older `TAILSCALE_API_KEY` still works, but API keys last 90 days at most and carry their owner's full admin rights; when one lapses `/api/nodes` returns 502 and the page says so rather than quietly emptying.
 - **Cluster credentials get simpler, not harder.** The systemd install writes a token into `/etc/pi-console.env`. A pod needs neither: kubelet sets `KUBERNETES_SERVICE_HOST` and projects a token for the ServiceAccount, and `kube.ts` reads that when the environment carries nothing.
 
 `dial.ts` needed no change. It rewrites a machine's own tailnet address to loopback, which was the fix for #84, and a pod's interfaces never match a tailnet address so the rewrite simply stops applying. Measured from a pod on pi2: pi1 over the tailnet, pi2 over its LAN address, and pi2's own tailnet address all answered, the last in 0.06s.

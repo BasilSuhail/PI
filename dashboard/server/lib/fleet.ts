@@ -30,6 +30,7 @@ const offlineNode = (device: TailnetDevice, ip: string | null): FleetNode => ({
   power: null,
   disks: [],
   net: [],
+  hw: null,
   capabilities: [],
   topProcesses: [],
 });
@@ -236,7 +237,8 @@ const buildNode = async (
     stale,
     lastSeen: device.lastSeen,
     role: roleFor(device, roles),
-    model: probe.shim?.model ?? null,
+    // A Pi names its board; a desktop has no device tree, so its CPU stands in.
+    model: probe.shim?.model ?? probe.shim?.hw?.cpuModel ?? null,
     os: probe.system.os,
     arch: probe.system.arch,
     kernel: probe.system.kernel,
@@ -248,6 +250,7 @@ const buildNode = async (
     disks: withRotation(probe.disks, probe.shim),
     cache,
     net: probe.net,
+    hw: probe.shim?.hw ?? null,
     capabilities,
     topProcesses: topBySortableMetric(probe.topProcesses),
   };
@@ -258,7 +261,7 @@ const buildNode = async (
  * alone would hide a process that is idle but holds a lot of memory, so the
  * union of the leaders in every sortable column is sent instead.
  */
-const CARD_ROWS = 6;
+const CARD_ROWS = 8;
 
 const topBySortableMetric = (procs: ProcessRow[]): ProcessRow[] => {
   const keep = new Map<number, ProcessRow>();
@@ -293,10 +296,60 @@ const withRotation = (
   shim: Awaited<ReturnType<typeof fetchShim>>,
 ): DiskStatsValue[] => {
   const spins = new Map((shim?.disks ?? []).map((d) => [d.device, d.rotational]));
-  return disks.map((d) => ({
-    ...d,
-    rotational: spins.get(parentDisk(d.device.replace(/^\/dev\//, ''))) ?? null,
-  }));
+  const temps = shim?.hw?.driveTemps ?? {};
+  const busy = shim?.hw?.driveBusy ?? {};
+  const rows = disks.map((d) => {
+    const disk = parentDisk(d.device.replace(/^\/dev\//, ''));
+    return {
+      ...d, rotational: spins.get(disk) ?? null, tempC: temps[disk] ?? null, busyPct: busy[disk] ?? null,
+    };
+  });
+  return asPhysical(rows, shim);
+};
+
+/**
+ * The SSD mirror shown as the two drives it is. Glances lists filesystems, so
+ * the mirror arrived as its two arrays (OS 105 GB, apps 121 GB) and the backup
+ * SSD's spare as a third "drive". Here: the main SSD carries both arrays, the
+ * backup SSD the same again plus its spare, each at its real size.
+ */
+const asPhysical = (
+  rows: DiskStatsValue[],
+  shim: Awaited<ReturnType<typeof fetchShim>>,
+): DiskStatsValue[] => {
+  const mirrors = shim?.hw?.mirrors ?? {};
+  const arrays = Object.keys(mirrors);
+  if (!arrays.length) return rows;
+  const { main, backup } = mirrors[arrays[0]];
+  const size = new Map((shim?.disks ?? []).map((d) => [d.device, d.sizeBytes]));
+  const temps = shim?.hw?.driveTemps ?? {};
+  const busy = shim?.hw?.driveBusy ?? {};
+  const dev = (r: DiskStatsValue) => r.device.replace(/^\/dev\//, '');
+  const inArray = (r: DiskStatsValue) => arrays.includes(dev(r));
+  const onDisk = (r: DiskStatsValue, disk: string | null) => !inArray(r) && parentDisk(dev(r)) === disk;
+  const sum = (rs: DiskStatsValue[]) => rs.reduce((a, r) => a + r.usedBytes, 0);
+  const mirrored = sum(rows.filter(inArray));
+  const part = (r: DiskStatsValue, copy = false) => ({
+    name: r.mount === '/' ? 'OS' : inArray(r) ? 'apps' : r.mount.split('/').pop() || r.mount,
+    mount: r.mount, usedBytes: r.usedBytes, totalBytes: r.totalBytes, copy,
+  });
+  const drive = (disk: string, own: DiskStatsValue[], mount: string, mirror: boolean): DiskStatsValue => {
+    const totalBytes = size.get(disk) ?? 0;
+    const usedBytes = mirrored + sum(own);
+    return {
+      mount, device: `/dev/${disk}`, totalBytes, usedBytes,
+      usedPct: totalBytes ? (usedBytes / totalBytes) * 100 : 0,
+      rotational: false, tempC: temps[disk] ?? null, busyPct: busy[disk] ?? null, mirror,
+      parts: [...rows.filter(inArray).map((r) => part(r, mirror)), ...own.map((r) => part(r))],
+    };
+  };
+  const out = [drive(main, rows.filter((r) => onDisk(r, main)), '/', false)];
+  if (backup) {
+    const extra = rows.filter((r) => onDisk(r, backup));
+    // Its own mount, the spare, is what Files opens for this drive.
+    out.push(drive(backup, extra, extra[0]?.mount ?? '/', true));
+  }
+  return [...out, ...rows.filter((r) => !inArray(r) && !onDisk(r, main) && !onDisk(r, backup))];
 };
 
 type DiskStatsValue = FleetNode['disks'][number];

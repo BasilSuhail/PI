@@ -8,7 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 
-import type { NodeRole, TorrentState } from '../../shared/fleet';
+import type { NodeRole, TorrentCounts, TorrentState } from '../../shared/fleet';
 
 const TIMEOUT_MS = 3000;
 
@@ -130,14 +130,58 @@ const askGluetun = async <T>(path: string): Promise<T | null> => {
 const fetchVpn = async (): Promise<TorrentState['vpn']> => {
   const [status, ip] = await Promise.all([
     askGluetun<{ status?: string }>('/v1/vpn/status'),
-    askGluetun<{ public_ip?: string; country?: string }>('/v1/publicip/ip'),
+    askGluetun<{ public_ip?: string; country?: string; city?: string }>('/v1/publicip/ip'),
   ]);
   if (!status && !ip) return null;
   return {
     status: status?.status ?? null,
     publicIp: ip?.public_ip ?? null,
     country: ip?.country ?? null,
+    city: ip?.city ?? null,
+    // gluetun's open routes do not say whose server it is. This is the
+    // VPN_SERVICE_PROVIDER in k8s/qbittorrent.yaml; change both together.
+    provider: 'AirVPN',
   };
+};
+
+/**
+ * The client's own list, through the Service's web port. The WebUI lets the
+ * cluster network in without a login (deploy/install-torrent.sh), and this
+ * pod's requests to a cluster IP arrive from it, the same way the installer's
+ * settings calls do.
+ */
+const QBITTORRENT = 'http://qbittorrent.pi.svc.cluster.local';
+
+const GROUPS: Record<string, keyof Omit<TorrentCounts, 'downSpeed'>> = {
+  downloading: 'downloading', forcedDL: 'downloading', metaDL: 'downloading', forcedMetaDL: 'downloading',
+  allocating: 'downloading', checkingDL: 'downloading', moving: 'downloading',
+  stalledDL: 'stalled',
+  uploading: 'seeding', forcedUP: 'seeding', stalledUP: 'seeding', checkingUP: 'seeding',
+  queuedDL: 'queued', queuedUP: 'queued', checkingResumeData: 'queued',
+  // qBittorrent 5 says stopped, 4 said paused.
+  stoppedDL: 'stopped', stoppedUP: 'stopped', pausedDL: 'stopped', pausedUP: 'stopped',
+  error: 'errored', missingFiles: 'errored',
+};
+
+const fetchTorrents = async (): Promise<TorrentCounts | null> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch(`${QBITTORRENT}/api/v2/torrents/info`, { signal: controller.signal, cache: 'no-store' });
+    if (!res.ok) return null;
+    const list = (await res.json()) as { state?: string; dlspeed?: number }[];
+    const counts: TorrentCounts = { downloading: 0, stalled: 0, seeding: 0, queued: 0, stopped: 0, errored: 0, downSpeed: 0 };
+    for (const t of list) {
+      const group = GROUPS[t.state ?? ''];
+      if (group) counts[group] += 1;
+      counts.downSpeed += t.dlspeed ?? 0;
+    }
+    return counts;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 export const fetchTorrentState = async (): Promise<TorrentState> => {
@@ -163,7 +207,9 @@ export const fetchTorrentState = async (): Promise<TorrentState> => {
       reachable: true,
       // Only worth asking when something is meant to be running. Asking a
       // stopped workload costs a two-second timeout to learn nothing.
-      vpn: wanted > 0 ? await fetchVpn() : null,
+      ...(wanted > 0
+        ? await Promise.all([fetchVpn(), fetchTorrents()]).then(([vpn, torrents]) => ({ vpn, torrents }))
+        : { vpn: null, torrents: null }),
     };
   } catch {
     return { wanted: 0, ready: 0, reachable: false, vpn: null };

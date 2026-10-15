@@ -36,7 +36,7 @@ if [ ! -d /sys/class/net/"$IFACE" ]; then
 fi
 
 echo "==> Before"
-iw dev "$IFACE" get power_save 2>/dev/null | sed 's/^/  /' || echo "  iw could not read it"
+/usr/sbin/iw dev "$IFACE" get power_save 2>/dev/null | sed 's/^/  /' || echo "  iw could not read it"
 
 # 2 is NetworkManager's "disable". 3 is enable, 0 is "use the default", and the
 # default is on — so leaving this unset is not neutral.
@@ -76,7 +76,7 @@ fi
 # applies on the next boot; this is what makes the change true right now.
 echo "==> Now"
 sudo iw dev "$IFACE" set power_save off
-iw dev "$IFACE" get power_save | sed 's/^/  /'
+/usr/sbin/iw dev "$IFACE" get power_save | sed 's/^/  /'
 
 echo
 echo "Want: 'Power save: off'. If it still says on, NetworkManager reapplied it"

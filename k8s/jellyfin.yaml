@@ -165,20 +165,44 @@ spec:
       port: 80
       targetPort: http
 ---
+# The home network, for a TV that has no Tailscale client. k3s's built-in load
+# balancer publishes this on port 8096 of the machine's own LAN address, so a
+# TV in the house opens http://<the machine's LAN address>:8096 — Jellyfin's
+# usual port, which its TV apps try first. Nothing outside the house can
+# reach it: the router forwards no port to it. This is separate from Funnel
+# (below), the internet route for those outside. It is also the fastest
+# route for anyone at home, with nothing between the TV and the server.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin-lan
+  namespace: pi
+spec:
+  type: LoadBalancer
+  selector:
+    app: jellyfin
+  ports:
+    - name: http
+      port: 8096
+      targetPort: http
+---
 # Its own tailnet machine, the same shape as Uptime and Vault: a root path and
 # a real certificate, because Jellyfin's clients assume they own the root.
 #
-# Tailnet only: reachable by this tailnet and the users the machine is shared
-# with, never the public internet. The cost is Chromecast, which has no
-# Tailscale client — the phone tells it "fetch from jellyfin.<tailnet>.ts.net"
-# and the Chromecast, on plain WiFi, gets nothing back. Casting would need
-# Funnel (the annotation tailscale.com/funnel: "true"), which puts the login
-# page on the open internet; it is off on purpose (#179).
+# Funnel is on: the login page is on the open internet at the same name.
+# One remote user's provider slows Tailscale to about 0.5 Mbit/s, and through
+# Funnel the same films play smoothly (#198). It is guarded: jellyfin-guard
+# switches it off and posts to Discord when strangers try to log in (#179).
+# Kept here because a reinstall would otherwise switch it off silently. To
+# drop it, delete the annotation and run:
+#   sudo k3s kubectl -n pi annotate ingress jellyfin tailscale.com/funnel-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: jellyfin
   namespace: pi
+  annotations:
+    tailscale.com/funnel: "true"
 spec:
   ingressClassName: tailscale
   defaultBackend:

@@ -206,15 +206,45 @@ export const fetchTailnetDevices = async (): Promise<TailnetDevice[]> => {
   return devices.filter((d) => d.os === 'linux' && !isClusterInfra(d.tags));
 };
 
+/**
+ * An OAuth client never expires, where an API key lasts 90 days at most and
+ * carries its owner's full admin rights. The client is made read-only
+ * (devices:core:read) and swapped for a one-hour token on demand.
+ */
+let oauthToken: { value: string; until: number } | null = null;
+
+const oauthBearer = async (id: string, secret: string): Promise<string> => {
+  if (oauthToken && Date.now() < oauthToken.until) return oauthToken.value;
+  const res = await fetch(`${API_BASE}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: id, client_secret: secret, grant_type: 'client_credentials' }),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Tailscale OAuth token request returned ${res.status}`);
+  const { access_token, expires_in } = (await res.json()) as { access_token: string; expires_in?: number };
+  // Renewed five minutes early, so a request never leaves with a dying token.
+  oauthToken = { value: access_token, until: Date.now() + ((expires_in ?? 3600) - 300) * 1000 };
+  return access_token;
+};
+
+const bearer = async (): Promise<string | null> => {
+  const id = process.env.TAILSCALE_OAUTH_CLIENT_ID;
+  const secret = process.env.TAILSCALE_OAUTH_CLIENT_SECRET;
+  if (id && secret) return oauthBearer(id, secret);
+  return process.env.TAILSCALE_API_KEY || null;
+};
+
 const discoverDevices = async (): Promise<TailnetDevice[]> => {
-  const key = process.env.TAILSCALE_API_KEY;
+  const key = await bearer();
   const tailnet = process.env.TAILSCALE_TAILNET ?? '-';
 
   if (!key) {
     const local = await fetchViaLocalCli();
     if (local) return local;
     throw new Error(
-      'no TAILSCALE_API_KEY, and the local tailscale CLI is unavailable — cannot discover nodes',
+      'no Tailscale OAuth client or API key, and the local tailscale CLI is unavailable — cannot discover nodes',
     );
   }
 

@@ -62,6 +62,51 @@ export interface DiskStats {
   usedPct: number;
   /** Spins, rather than flashes. Null when the agent is too old to say. */
   rotational?: boolean | null;
+  /** Null until drivetemp is loaded, or for a drive it cannot read. */
+  tempC?: number | null;
+  /** % of the last few seconds spent reading or writing. Null until the agent has two readings. */
+  busyPct?: number | null;
+  /** The backup SSD of the mirror: every write lands on it too. */
+  mirror?: boolean;
+  /** What is on a mirror SSD, shown when its row is opened. `copy`: the
+   *  mirror's copy of a part the main SSD holds. */
+  parts?: Array<{ name: string; mount: string; usedBytes: number; totalBytes: number; copy?: boolean }>;
+}
+
+/**
+ * Hardware a Pi does not have, read by the shim on a desktop board. Every part
+ * is optional in practice: an empty list or a null means the driver is not
+ * installed yet, and the card leaves that row out rather than inventing it.
+ */
+export interface GpuStats {
+  name: string;
+  utilPct: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  tempC: number | null;
+  powerW: number | null;
+  fanPct: number | null;
+  /** NVENC and NVDEC load: what a Jellyfin transcode shows up as. */
+  encoderPct: number | null;
+  decoderPct: number | null;
+}
+
+export interface HwStats {
+  cpuModel: string | null;
+  /** CPU package power. Needs root to read on current kernels, so usually null. */
+  cpuWatts: number | null;
+  /** `managed`: the fan controller sets this one, so 0 rpm means switched off. */
+  fans: Array<{ label: string; rpm: number; managed?: boolean }>;
+  /** Only rails the sensor driver has labelled, and therefore scaled. */
+  volts: Array<{ label: string; volts: number }>;
+  /** Keyed by block device: sda, nvme0n1. */
+  driveTemps: Record<string, number>;
+  /** % of the last few seconds each drive spent reading or writing. Absent on an older agent. */
+  driveBusy?: Record<string, number>;
+  /** mdN -> its main and backup (write-mostly) disks. Absent on an older agent. */
+  mirrors?: Record<string, { main: string; backup: string | null }>;
+  gpu: GpuStats | null;
+  wifi: Array<{ iface: string; signalDbm: number }>;
 }
 
 export interface NetStats {
@@ -99,6 +144,8 @@ export interface FleetNode {
   power: PowerStats | null;
   disks: DiskStats[];
   net: NetStats[];
+  /** Null from an agent older than the desktop sensors. */
+  hw: HwStats | null;
 
   capabilities: Capability[];
   /** Busiest few, for the card's table. Full list stays on the detail route. */
@@ -165,7 +212,55 @@ export interface TorrentState {
     /** The address traffic is leaving from. AirVPN's, not yours. */
     publicIp: string | null;
     country: string | null;
+    /** Where that exit server is. Absent from an older console. */
+    city?: string | null;
+    /** Whose server it is, as k8s/qbittorrent.yaml configures it. */
+    provider?: string | null;
   } | null;
+  /**
+   * What the client holds, by qBittorrent's own state. Null while it is off or
+   * not answering; absent from an older console.
+   */
+  torrents?: TorrentCounts | null;
+}
+
+/** Each torrent counted once, in the group its state puts it in. */
+export interface TorrentCounts {
+  downloading: number;
+  stalled: number;
+  seeding: number;
+  queued: number;
+  stopped: number;
+  errored: number;
+  /** Bytes per second, all torrents together. */
+  downSpeed: number;
+}
+
+/** One person using one app right now. Written by `pi-when content` on the PC. */
+export interface ActiveUse {
+  /** The app as the Status tab names it: Jellyfin, Nextcloud, Immich, Torrent... */
+  app: string;
+  who: string;
+  what: string;
+  device: string;
+}
+
+/** The Status tab's feed. Null parts are ones the PC could not read. */
+export interface ContentStatus {
+  /** Unix seconds the PC wrote this. */
+  ts: number;
+  active: ActiveUse[];
+  jellyfin: { films: number; series: number; episodes: number; bytes: number | null } | null;
+  /** Each account's files, from occ. Users biggest first. */
+  nextcloud?: { bytes: number; users: Array<{ name: string; bytes: number }> } | null;
+  /** Absent from a PC without an Immich key. Users biggest first. */
+  immich?: {
+    photos: number;
+    videos: number;
+    bytes: number;
+    users: Array<{ name: string; photos: number; videos: number; bytes: number }>;
+  } | null;
+  kiwix: { books: number; bytes: number } | null;
 }
 
 /**

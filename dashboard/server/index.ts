@@ -19,6 +19,7 @@ import { credentialStatus } from './lib/expiry';
 import { dialHost } from './lib/dial';
 import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
+import { fetchContentStatus } from './lib/status';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
 
@@ -86,6 +87,11 @@ const readBody = async (req: IncomingMessage): Promise<string> => {
 const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): Promise<boolean> => {
   if (url.pathname === '/api/nodes') {
     sendJson(req, res, 200, await fetchFleet());
+    return true;
+  }
+
+  if (url.pathname === '/api/status') {
+    sendJson(req, res, 200, await fetchContentStatus());
     return true;
   }
 
@@ -336,7 +342,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
 server.listen(PORT, () => {
   console.log(`pi-console listening on :${PORT}`);
-  if (!process.env.TAILSCALE_API_KEY) {
-    console.warn('TAILSCALE_API_KEY is not set — /api/nodes will return 502');
+  if (!process.env.TAILSCALE_API_KEY && !process.env.TAILSCALE_OAUTH_CLIENT_ID) {
+    console.warn('no Tailscale OAuth client or TAILSCALE_API_KEY — /api/nodes will return 502');
   }
 });

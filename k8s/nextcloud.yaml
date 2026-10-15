@@ -192,6 +192,10 @@ spec:
       enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # Nextcloud Office calls Nextcloud back on its public address, and
+      # MagicDNS does not resolve inside a pod: the cloud name, pointed at its
+      # tailnet address (install-nextcloud.sh fills it in).
+      hostAliases: __CLOUD_ALIAS__
       containers:
         - name: nextcloud
           image: docker.io/library/nextcloud:34.0.4-apache@sha256:20298c35b8fed1d9cbbc55dad09976424696856f06f1984fba951d8184b7bfce
@@ -248,7 +252,7 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            # The admin's three disks (install-nextcloud.sh attaches them as
+            # The admin's four disks (install-nextcloud.sh attaches them as
             # external storage for the admin only). The HDDs are writable
             # except the app folders, each mounted read-only on top at its
             # real place: Jellyfin's library, torrents still seeding, Immich,
@@ -285,6 +289,8 @@ spec:
             - name: ssd1-apps
               mountPath: /mnt/ssd1/Apps
               readOnly: true
+            - name: ssd2
+              mountPath: /mnt/ssd2
           resources:
             requests:
               memory: 256Mi
@@ -292,8 +298,10 @@ spec:
             # A ceiling on both axes, as Immich has: Jellyfin keeps its CPU
             # priority (k8s/jellyfin.yaml) and a runaway preview job stays a
             # slow job, not an unusable board.
+            # 3Gi: Nextcloud Office's document server runs in this container
+            # too, a few hundred MB plus each open document.
             limits:
-              memory: 2Gi
+              memory: 3Gi
               cpu: 1500m
           # status.php answers for localhost, which the image puts in
           # trusted_domains itself; the pod IP a probe would send is not.
@@ -344,7 +352,7 @@ spec:
               mountPath: /var/www/html
             - name: data
               mountPath: /var/www/html/data
-            # The admin's three disks (install-nextcloud.sh attaches them as
+            # The admin's four disks (install-nextcloud.sh attaches them as
             # external storage for the admin only). The HDDs are writable
             # except the app folders, each mounted read-only on top at its
             # real place: Jellyfin's library, torrents still seeding, Immich,
@@ -381,6 +389,8 @@ spec:
             - name: ssd1-apps
               mountPath: /mnt/ssd1/Apps
               readOnly: true
+            - name: ssd2
+              mountPath: /mnt/ssd2
           resources:
             requests:
               memory: 64Mi
@@ -443,6 +453,12 @@ spec:
         - name: ssd1-apps
           hostPath:
             path: __APPS_DIR__
+            type: Directory
+        # The mirror's backup SSD's leftover space (deploy/ssd-mirror.sh),
+        # not mirrored: shown to the admin as SSD2.
+        - name: ssd2
+          hostPath:
+            path: __SPARE_DIR__
             type: Directory
 ---
 # Its own tailnet machine: https://cloud.<tailnet>.ts.net with a real

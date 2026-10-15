@@ -179,7 +179,7 @@ spec:
             - name: POSTGRES_INITDB_ARGS
               value: "--data-checksums"
             # The default assumes the data directory is on an SSD, and here it
-            # is — __APPS_DIR__ is the 1TB. If this ever moves to the 6TB, set
+            # is — __APPS_DIR__ is on the SSD mirror. If this ever moves to an HDD, set
             # this to HDD or every query pays for the wrong random_page_cost.
             - name: DB_STORAGE_TYPE
               value: SSD

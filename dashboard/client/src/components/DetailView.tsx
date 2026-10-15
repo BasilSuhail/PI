@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
-import { Alert, Back, Box, Cpu, Disk, List, Mem, Net, Power, Thermo, Wifi } from './icons';
+import { Alert, Back, Box, Cpu, Disk, Gauge, List, Mem, Net, Power, Refresh, Thermo, Wifi } from './icons';
 import type { ContainerRow, FleetNode, ProcessRow } from '../../../shared/fleet';
-import { getContainers, getProcesses, usePoll } from '../lib/api';
+import { getContainers, getProcesses, nodeWatts, usePoll } from '../lib/api';
 import { bytes, bytesPerSec, capacity, cpuTone, diskTone, pct, uptime } from '../lib/format';
 import { Meter, PanelTitle, Sparkline, StatusDot } from './primitives';
 
@@ -53,6 +53,17 @@ export const DetailView = ({
   const cacheBytes = mem ? Math.max(mem.availableBytes - (mem.totalBytes - mem.usedBytes), 0) : 0;
   const freeBytes = mem ? mem.totalBytes - mem.usedBytes - cacheBytes : 0;
 
+  // A desktop's extra hardware. Each panel below appears only when the agent
+  // read the thing, so a Pi's detail page is what it always was.
+  const gpu = node.hw?.gpu ?? null;
+  const fans = node.hw?.fans ?? [];
+  const drawW = nodeWatts(node);
+  // Every temperature the machine reports beside the CPU's, hottest first.
+  const otherTemps = [
+    ...(gpu?.tempC != null ? [{ name: 'GPU', c: gpu.tempC }] : []),
+    ...node.disks.filter((d) => d.tempC != null).map((d) => ({ name: d.mount, c: d.tempC as number })),
+  ].sort((a, b) => b.c - a.c);
+
   return (
     <div class="page-stack">
       <button class="back-link" onClick={onBack}>
@@ -68,7 +79,8 @@ export const DetailView = ({
             {node.name} <span class="title-chip">{node.role}</span>
           </h1>
           <p class="subhead">
-            {node.tailscaleIp} · {node.model ?? node.os ?? 'unknown hardware'} · up {uptime(node.uptimeSec)}
+            {node.tailscaleIp} · {node.model ?? node.os ?? 'unknown hardware'}
+            {gpu ? ` · ${gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/i, '')}` : ''} · up {uptime(node.uptimeSec)}
           </p>
         </div>
         <StatusDot online={node.online} />
@@ -133,6 +145,13 @@ export const DetailView = ({
             {temp > 80 ? 'thermal zone hot' : 'thermal zone nominal'}
             <strong>limit 85°</strong>
           </div>
+          {otherTemps.map((t) => (
+            <div class="sensor-row" key={t.name}>
+              <span>{t.name}</span>
+              <Meter value={(t.c / 90) * 100} tone={t.c >= 70 ? 'red' : t.c >= 55 ? 'orange' : 'aqua'} />
+              <strong>{Math.round(t.c)}°</strong>
+            </div>
+          ))}
         </section>
 
         <section class="panel memory-panel">
@@ -172,11 +191,29 @@ export const DetailView = ({
               </span>
             </div>
           </section>
+        ) : drawW != null ? (
+          // A desktop: no meter for the whole machine, so this is the CPU
+          // package from its own energy counter, plus the GPU if it reports.
+          <section class="panel power-panel">
+            <PanelTitle icon={<Power />} title="Power draw" meta="RAPL counter" />
+            <div class="power-number">
+              <strong>{drawW.toFixed(1)} W</strong>
+              <span>{gpu?.powerW != null ? 'cpu + gpu' : 'cpu package'}</span>
+            </div>
+            <div class="power-detail">
+              <span>
+                cpu <b>{node.hw?.cpuWatts != null ? `${node.hw.cpuWatts.toFixed(1)} W` : '—'}</b>
+              </span>
+              <span>
+                gpu <b>{gpu?.powerW != null ? `${gpu.powerW.toFixed(1)} W` : 'not reported'}</b>
+              </span>
+            </div>
+          </section>
         ) : (
           <section class="panel power-panel">
             <PanelTitle icon={<Power />} title="Power draw" meta="unavailable" />
             <div class="offline-copy">
-              <span>No PMIC on this hardware</span>
+              <span>No power reading on this machine</span>
             </div>
           </section>
         )}
@@ -191,10 +228,57 @@ export const DetailView = ({
             <strong>{pct(disk.usedPct)}</strong>
             <span>
               {bytes(disk.usedBytes)} / {bytes(disk.totalBytes)}
+              {disk.tempC != null ? ` · ${Math.round(disk.tempC)}°` : ''}
             </span>
           </div>
         ))}
       </section>
+
+      {(gpu || fans.length > 0) && (
+        <div class="detail-grid lower">
+          {gpu && (
+            <section class="panel">
+              <PanelTitle icon={<Gauge />} title="Graphics" meta={gpu.name.replace(/^NVIDIA\s+(GeForce\s+)?/i, '')} />
+              {([
+                ['load', gpu.utilPct],
+                ['vram', gpu.memTotalBytes ? ((gpu.memUsedBytes ?? 0) / gpu.memTotalBytes) * 100 : null],
+                ['encode', gpu.encoderPct],
+                ['decode', gpu.decoderPct],
+              ] as Array<[string, number | null]>).filter(([, v]) => v != null).map(([name, v]) => (
+                <div class="sensor-row" key={name}>
+                  <span>{name}</span>
+                  <Meter value={v as number} tone="gpu" />
+                  <strong>{pct(v)}</strong>
+                </div>
+              ))}
+              <div class="panel-foot">
+                <span>temp</span>
+                <strong>{gpu.tempC != null ? `${Math.round(gpu.tempC)}°` : '—'}</strong>
+                <span>vram</span>
+                <strong>{bytes(gpu.memUsedBytes)} / {bytes(gpu.memTotalBytes)}</strong>
+                <span>fan</span>
+                <strong>{gpu.fanPct != null ? `${Math.round(gpu.fanPct)}%` : '—'}</strong>
+              </div>
+            </section>
+          )}
+          {fans.length > 0 && (
+            <section class="panel">
+              <PanelTitle
+                icon={<Refresh />}
+                title="Fans"
+                meta={fans.some((f) => f.managed) ? 'by temperature' : 'BIOS curve'}
+              />
+              {fans.map((f) => (
+                <div class="sensor-row" key={f.label}>
+                  <span>{f.label}</span>
+                  <Meter value={Math.min(100, (f.rpm / 3000) * 100)} tone={f.rpm ? 'aqua' : ''} />
+                  <strong>{f.rpm ? `${f.rpm.toLocaleString()} rpm` : 'off'}</strong>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
 
       <div class="detail-grid lower">
         <section class="panel full-panel">

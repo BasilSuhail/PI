@@ -579,18 +579,18 @@ on an idle board.
 make archivebox
 ```
 
-ArchiveBox on pi2 at `https://archivebox.<tailnet>.ts.net`. Feed it URLs —
-one at a time, a browser history export, or an RSS feed — and it saves full
-copies: HTML snapshots, PDFs, screenshots, media, git repos. It uses wget,
-yt-dlp, and a headless browser under the hood.
+ArchiveBox 0.9 at `https://archivebox.<tailnet>.ts.net`. Feed it URLs —
+from the browser extension, one at a time, a bookmarks export, or an RSS
+feed — and it saves full copies: HTML snapshots, PDFs, screenshots, media,
+git repos. It uses wget, yt-dlp, and a headless Chrome under the hood.
 
-The same SSD/6TB split. The SQLite index lives on the SSD for fast random
-reads; the archived content lives on the 6TB for capacity. The installer
-symlinks the database from the 6TB back to the SSD so ArchiveBox sees one
-directory while the files sit on two drives.
+The same SSD/data-drive split, as two mounts: `/data` (the SQLite index,
+config, logs and personas) on the SSD, `/data/archive` (the saved content)
+on the data drive.
 
-`make archivebox` asks for an admin password on the first run. It needs
-`make uptime` first for the Tailscale operator.
+`make archivebox` asks for an admin username and password before the first
+start. It needs `make uptime` first for the Tailscale operator. Run over a
+0.7 install, it renames the old folders aside and starts a fresh collection.
 
 </details>
 

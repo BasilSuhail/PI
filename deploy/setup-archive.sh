@@ -55,7 +55,11 @@ fi
 
 echo "==> Creating $ARCHIVE (${free_gb}GB free)"
 sudo mkdir -p "$ARCHIVE"
-sudo chown -R "$OWNER:$(id -gn "$OWNER")" "$ARCHIVE"
+# The top folder only. Recursive, this re-owned every app's data the first
+# time it was re-run over a populated archive: Nextcloud's config passed from
+# www-data to the login user and the web server could no longer write it.
+# What an app keeps under Apps/ is owned by whoever that app runs as.
+sudo chown "$OWNER:$(id -gn "$OWNER")" "$ARCHIVE"
 
 # Boards set up before that decision still carry the seeded folders. Clear
 # them out — but only the ones this script made, and only while they are
@@ -71,7 +75,9 @@ done
 [ -n "$removed" ] && echo "==> Removed empty seeded folders:$removed"
 # Group-writable and setgid, so anything added later inherits the group rather
 # than depending on whichever daemon happened to write the file.
-sudo chmod -R 2775 "$ARCHIVE"
+# Top folder only, for the reason above: recursive, it also made the vault
+# backups world-readable and every database file executable.
+sudo chmod 2775 "$ARCHIVE"
 
 echo
 df -h "$ARCHIVE" | sed 's/^/  /'

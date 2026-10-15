@@ -87,8 +87,10 @@ sudo systemctl daemon-reload
 # Deliberately not enabled at boot. buildkitd is wanted for the length of a
 # build and holds tens of MB the rest of the time; on these boards RAM is the
 # scarce thing. Started here, stopped on the way out however this exits.
+# buildkitd exits 1 on SIGTERM even after a clean build, so systemd marks it
+# failed and the morning report lists it; reset-failed clears that.
 sudo systemctl restart buildkit.service
-trap 'sudo systemctl stop buildkit.service 2>/dev/null || true' EXIT
+trap 'sudo systemctl stop buildkit.service 2>/dev/null; sudo systemctl reset-failed buildkit.service 2>/dev/null || true' EXIT
 
 for _ in $(seq 1 20); do
   sudo buildctl --addr "$BUILDKIT_ADDR" debug workers >/dev/null 2>&1 && break
@@ -109,6 +111,41 @@ sudo buildctl --addr "$BUILDKIT_ADDR" build \
   --local dockerfile="$SRC_DIR" \
   --output "type=image,name=${IMAGE}:${TAG}"
 
+echo "==> Status tab feed"
+# Who is using which app comes from the journal and Jellyfin, which only root
+# on the PC can read. pi-when writes it to /run/pi-status every 30 seconds and
+# the pod reads that directory (k8s/dashboard.yaml).
+sudo install -d /usr/local/lib/pi
+sudo install -m 755 "${REPO_ROOT}/deploy/pi-when.py" /usr/local/lib/pi/pi-when
+sudo ln -sf /usr/local/lib/pi/pi-when /usr/local/bin/pi-when
+sudo tee /etc/systemd/system/pi-status.service >/dev/null <<UNIT
+[Unit]
+Description=Status tab: who is using which app, what Jellyfin and Kiwix hold
+After=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi/pi-when content
+Nice=10
+UNIT
+sudo tee /etc/systemd/system/pi-status.timer >/dev/null <<UNIT
+[Unit]
+Description=Refresh the Status tab every 30 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable --now pi-status.timer >/dev/null
+sudo systemctl start pi-status.service
+sudo test -s /run/pi-status/status.json && echo "  /run/pi-status/status.json written" \
+  || echo "  no status file yet: sudo journalctl -u pi-status -n 20"
+
 echo "==> Cluster access for the node labels"
 kube apply -f "${REPO_ROOT}/k8s/dashboard-node-reader.yaml"
 
@@ -118,8 +155,10 @@ echo "==> Manifests"
 # until it does.
 kube create namespace pi --dry-run=client -o yaml | kube apply -f - >/dev/null
 
-# Tailscale caps API keys at 90 days and will not tell a token its own expiry,
-# so the date is recorded beside the key and the console reads it back.
+# An install from before the OAuth client holds an API key instead (switch with
+# deploy/dashboard-oauth.sh). Tailscale caps those at 90 days and will not tell
+# a token its own expiry, so the date is recorded beside the key and the
+# console reads it back.
 # Without it the fleet simply empties one morning with nothing said.
 #
 # Not asked for. 90 days is both the maximum Tailscale allows and the default
@@ -141,20 +180,12 @@ fi
 
 if ! kube -n pi get secret pi-console-tailscale >/dev/null 2>&1; then
   echo
-  echo "  A pod has no tailscaled socket, so node discovery uses the Tailscale API."
-  echo "  Make a key at https://login.tailscale.com/admin/settings/keys"
-  echo "  Under API access tokens, not the auth keys above them."
-  echo "  It is not echoed, and it goes into a Secret rather than onto this board."
-  # Prompt printed separately rather than passed to read -p: the secret scanner
-  # reads a prompt string next to a variable as a credential in the source.
-  printf '  Tailscale API key: '
-  IFS= read -rs TS_KEY
-  echo
-  [ -n "$TS_KEY" ] || { echo "  No key given — stopping." >&2; exit 1; }
-  kube -n pi create secret generic pi-console-tailscale \
-    --from-literal=api-key="$TS_KEY" --from-literal=expires="$TS_EXPIRES" >/dev/null
-  unset TS_KEY
-  echo "  secret created, expiry recorded as ${TS_EXPIRES}"
+  echo "  A pod has no tailscaled socket, so node discovery uses the Tailscale API,"
+  echo "  through a read-only OAuth client that never expires. Make one at"
+  echo "  https://login.tailscale.com/admin/settings/oauth (Devices: Core, Read only)."
+  NO_RESTART=1 bash "${REPO_ROOT}/deploy/dashboard-oauth.sh"
+elif kube -n pi get secret pi-console-tailscale -o jsonpath="{.data.oauth-id}" | grep -q .; then
+  echo "  tailscale OAuth client present — nothing expires"
 elif ! kube -n pi get secret pi-console-tailscale -o jsonpath="{.data.expires}" | grep -q .; then
   # A Secret written before the console could show an expiry. Ask for the date
   # alone rather than making someone mint a fresh key to record one.
