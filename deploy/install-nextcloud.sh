@@ -232,7 +232,11 @@ done
 # The built-in server answers through Nextcloud's own address. Installing it
 # from the command line does not set that address, and with it empty
 # activate-config finds nothing ("Could not detect any host").
-occ config:app:set richdocuments wopi_url --value="'https://${DOMAIN}/apps/richdocumentscode/proxy.php?req='" >/dev/null
+# The image installs store apps under custom_apps, which is also their web
+# path; /apps/... answers Nextcloud's 404 page.
+CODE_PATH="$(occ app:getpath richdocumentscode 2>/dev/null | tr -d '\r')"
+CODE_PATH="${CODE_PATH#/var/www/html}"
+occ config:app:set richdocuments wopi_url --value="'https://${DOMAIN}${CODE_PATH:-/custom_apps/richdocumentscode}/proxy.php?req='" >/dev/null
 if occ richdocuments:activate-config >/dev/null 2>&1; then
   echo "  office           on: documents open in the browser"
 else
