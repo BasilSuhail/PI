@@ -229,6 +229,10 @@ echo "  apps             storage only; opens straight to Files; admin can impers
 for app in viewer files_pdfviewer text richdocuments richdocumentscode; do
   occ app:install "$app" >/dev/null 2>&1 || occ app:enable "$app" >/dev/null 2>&1 || true
 done
+# The built-in server answers through Nextcloud's own address. Installing it
+# from the command line does not set that address, and with it empty
+# activate-config finds nothing ("Could not detect any host").
+occ config:app:set richdocuments wopi_url --value="'https://${DOMAIN}/apps/richdocumentscode/proxy.php?req='" >/dev/null
 if occ richdocuments:activate-config >/dev/null 2>&1; then
   echo "  office           on: documents open in the browser"
 else
