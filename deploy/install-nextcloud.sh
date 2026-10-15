@@ -237,6 +237,10 @@ done
 CODE_PATH="$(occ app:getpath richdocumentscode 2>/dev/null | tr -d '\r')"
 CODE_PATH="${CODE_PATH#/var/www/html}"
 occ config:app:set richdocuments wopi_url --value="'https://${DOMAIN}${CODE_PATH:-/custom_apps/richdocumentscode}/proxy.php?req='" >/dev/null
+# The first request starts the document server, which takes longer than the
+# five seconds activate-config waits: wake it first.
+kube -n pi exec deploy/nextcloud -c nextcloud -- curl -s -m 90 -o /dev/null \
+  "https://${DOMAIN}${CODE_PATH:-/custom_apps/richdocumentscode}/proxy.php?req=/hosting/capabilities" || true
 if occ richdocuments:activate-config >/dev/null 2>&1; then
   echo "  office           on: documents open in the browser"
 else
