@@ -145,6 +145,12 @@ DOMAIN="cloud.${TAILNET}"
 # Where the tailscale ingress proxy connects from: the pod ranges of the nodes.
 POD_CIDRS="$(kube get nodes -o jsonpath='{.items[*].spec.podCIDR}')"
 [ -n "$POD_CIDRS" ] || { echo "Could not read the cluster's pod range from the nodes." >&2; exit 1; }
+# The cloud machine's tailnet address, for the pod's hostAliases: empty on the
+# very first install, before the ingress has joined the tailnet.
+CLOUD_ALIAS="$(sudo tailscale status --json 2>/dev/null | jq -c --arg d "$DOMAIN." '
+  [.Peer // {} | .[] | select(.DNSName == $d and ((.TailscaleIPs // []) | length) > 0)
+   | {ip: .TailscaleIPs[0], hostnames: [$d | rtrimstr(".")]}] | .[:1]')" || CLOUD_ALIAS="[]"
+[ -n "$CLOUD_ALIAS" ] || CLOUD_ALIAS="[]"
 
 echo "==> Manifests"
 sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
@@ -156,6 +162,7 @@ sed -e "s|__APPS_DIR__|${APPS_DIR}|g" \
     -e "s|__HDD2_DIR__|${HDD2_DIR}|g" \
     -e "s|__ARCHIVE_DIR__|${ARCHIVE_DIR}|g" \
     -e "s|__SPARE_DIR__|${SPARE_DIR}|g" \
+    -e "s|__CLOUD_ALIAS__|${CLOUD_ALIAS}|g" \
     "${REPO_ROOT}/k8s/nextcloud.yaml" | apply_guarded
 
 echo "==> Waiting for the database and cache"
@@ -213,6 +220,21 @@ occ config:system:set defaultapp --value=files >/dev/null
 # of Nextcloud fixes the sizes and keeps the vault out of the file browser.
 occ config:system:set excluded_directories 0 --value=Vaultwarden >/dev/null
 echo "  apps             storage only; opens straight to Files; admin can impersonate"
+
+# Nextcloud Office: Word, Excel, PowerPoint and ODF files open and edit in the
+# browser and the phone app, through the built-in Collabora server
+# (richdocumentscode) inside this pod, so there is no second app to run. The
+# viewers cover PDFs, pictures, video and text. The first install downloads
+# the document server, a few hundred MB.
+for app in viewer files_pdfviewer text richdocuments richdocumentscode; do
+  occ app:install "$app" >/dev/null 2>&1 || occ app:enable "$app" >/dev/null 2>&1 || true
+done
+if occ richdocuments:activate-config >/dev/null 2>&1; then
+  echo "  office           on: documents open in the browser"
+else
+  echo "  office           installed, but the document server did not answer;"
+  echo "                   paste: sudo k3s kubectl -n pi exec deploy/nextcloud -c nextcloud -- su -s /bin/sh www-data -c 'php occ richdocuments:activate-config'"
+fi
 
 # The admin's four disks, as external storage visible to the admin only.
 # What is read-only is decided in the pod (read-only mounts over the app

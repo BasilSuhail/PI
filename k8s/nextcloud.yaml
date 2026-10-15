@@ -192,6 +192,10 @@ spec:
       enableServiceLinks: false
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
+      # Nextcloud Office calls Nextcloud back on its public address, and
+      # MagicDNS does not resolve inside a pod: the cloud name, pointed at its
+      # tailnet address (install-nextcloud.sh fills it in).
+      hostAliases: __CLOUD_ALIAS__
       containers:
         - name: nextcloud
           image: docker.io/library/nextcloud:34.0.4-apache@sha256:20298c35b8fed1d9cbbc55dad09976424696856f06f1984fba951d8184b7bfce
@@ -294,8 +298,10 @@ spec:
             # A ceiling on both axes, as Immich has: Jellyfin keeps its CPU
             # priority (k8s/jellyfin.yaml) and a runaway preview job stays a
             # slow job, not an unusable board.
+            # 3Gi: Nextcloud Office's document server runs in this container
+            # too, a few hundred MB plus each open document.
             limits:
-              memory: 2Gi
+              memory: 3Gi
               cpu: 1500m
           # status.php answers for localhost, which the image puts in
           # trusted_domains itself; the pod IP a probe would send is not.
