@@ -13,6 +13,13 @@ runs `--release` after the process exits, so a crash or a kill lands there too.
 
 Stdlib only. Config: /etc/pi-fans.json (written once by install-fan-curve.sh,
 then left alone so it can be tuned). State for the dashboard: /run/pi-fans.json.
+
+Manual speeds from the dashboard arrive in /run/pi-fans-manual/manual.json,
+{"pwm4": 0..255}, written by the agent. A fan set there holds that speed until
+it is put back on auto, with two limits: the CPU fan never goes below its
+floor, and once the CPU, GPU or a drive passes MANUAL_LIMIT the temperature
+curve wins whenever it asks for more. /run empties at a reboot, so every fan
+starts on auto.
 """
 
 import json
@@ -26,6 +33,11 @@ import time
 HWMON = os.environ.get("HWMON_ROOT", "/sys/class/hwmon")
 CONF = os.environ.get("FANS_CONF", "/etc/pi-fans.json")
 STATE = os.environ.get("FANS_STATE", "/run/pi-fans.json")
+MANUAL = os.environ.get("FANS_MANUAL", "/run/pi-fans-manual/manual.json")
+# Past these, a manual speed no longer holds a fan below what the curve asks.
+# The drives wear faster from the mid 40s. Read as conf["manual_limit"] when
+# the config has one.
+MANUAL_LIMIT = {"cpu": 70, "gpu": 75, "drive": 45}
 INTERVAL_SEC = 3
 GPU_EVERY_SEC = 10
 NVIDIA_SMI = shutil.which("nvidia-smi")
@@ -193,16 +205,39 @@ def release(conf=None):
         pass
 
 
-def publish(conf, duties, case_on, temps):
-    """What the dashboard shows: a name per fan, and that it is managed."""
+def load_manual(conf):
+    """{header: duty} for the fans set by hand. The file is written by a less
+    privileged process, so anything that is not a known header with a whole
+    duty from 0 to 255 is ignored."""
+    try:
+        with open(MANUAL) as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        p: raw[p] for p in headers(conf)
+        if isinstance(raw.get(p), int) and not isinstance(raw[p], bool) and 0 <= raw[p] <= 255
+    }
+
+
+def publish(conf, duties, case_on, temps, manual=(), held=False):
+    """What the dashboard shows: a name per fan, that it is managed, whether it
+    is set by hand, and the lowest speed it keeps turning at."""
     fans = {}
-    named = [(conf["cpu"]["pwm"], conf["cpu"]["label"])]
-    named += [(p, f["label"]) for p, f in conf["case"]["pwms"].items()]
-    for p, label in named:
-        fans["fan" + p[3:]] = {"label": label, "duty": duties.get(p), "managed": True}
+    cpu = conf["cpu"]
+    named = [(cpu["pwm"], cpu["label"], cpu["min"], False)]
+    named += [(p, f["label"], conf["case"]["start"], True) for p, f in conf["case"]["pwms"].items()]
+    for p, label, lowest, can_stop in named:
+        fans["fan" + p[3:]] = {
+            "label": label, "duty": duties.get(p), "managed": True,
+            "pwm": p, "manual": p in manual, "min": lowest, "canStop": can_stop,
+        }
     tmp = STATE + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"fans": fans, "caseOn": case_on, "temps": temps, "ts": int(time.time())}, f)
+        json.dump({"fans": fans, "caseOn": case_on, "temps": temps, "manualHeld": held,
+                   "ts": int(time.time())}, f)
     os.replace(tmp, STATE)
 
 
@@ -237,6 +272,20 @@ def step(conf, path, state):
             [ramp(t, c.get("ramp", c["on"])[src], c["full"][src], c["start"], c["max"]) for src, t in watched.items()]
         ) if on else 0
 
+    manual = load_manual(conf)
+    limit = {**MANUAL_LIMIT, **conf.get("manual_limit", {})}
+    held = bool(manual) and any(readings.get(src) is not None and readings[src] >= lim for src, lim in limit.items())
+    if held != state.get("held", False):
+        log("manual speeds %s: %s" % ("overridden by heat" if held else "back",
+                                       ", ".join("%s %.0f°" % (k, v) for k, v in readings.items() if v is not None)))
+        state["held"] = held
+    for p, duty in manual.items():
+        # Between off and a fan's lowest speed it stalls, and the CPU fan never stops.
+        lowest = k["min"] if p == k["pwm"] else c["start"]
+        if duty or p == k["pwm"]:
+            duty = max(duty, lowest)
+        duties[p] = max(duty, duties[p]) if held else duty
+
     kicks = []
     for p, duty in duties.items():
         prev = state["last"].get(p)
@@ -255,7 +304,7 @@ def step(conf, path, state):
             write(os.path.join(path, p), duties[p])
             state["last"][p] = duties[p]
 
-    publish(conf, duties, state["case_on"], {"cpu": cpu, "gpu": gpu, "drive": drive})
+    publish(conf, duties, state["case_on"], {"cpu": cpu, "gpu": gpu, "drive": drive}, manual, held)
 
 
 def run(once=False):

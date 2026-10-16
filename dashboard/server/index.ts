@@ -19,6 +19,7 @@ import { credentialStatus } from './lib/expiry';
 import { dialHost } from './lib/dial';
 import { fetchCache, fetchListing, fetchRoots, openStream, postUpload, postWrite } from './lib/files';
 import { fetchFleet } from './lib/fleet';
+import { postFan } from './lib/shim';
 import { fetchContentStatus } from './lib/status';
 import { fetchContainers, fetchProcesses } from './lib/glances';
 import { fetchTailnetDevices, ipv4Of } from './lib/tailnet';
@@ -208,6 +209,23 @@ const handleApi = async (req: IncomingMessage, url: URL, res: ServerResponse): P
             req.headers['content-length'] ?? '0',
           )
         : await postWrite(host, JSON.parse(await readBody(req)));
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      sendJson(req, res, upstream.status, { error: upstream.statusText || text });
+      return true;
+    }
+    sendJson(req, res, 200, JSON.parse(text || '{}'));
+    return true;
+  }
+
+  const fan = url.pathname.match(/^\/api\/nodes\/([^/]+)\/fan$/);
+  if (fan && req.method === 'POST') {
+    const host = await addressFor(decodeURIComponent(fan[1]));
+    if (!host) {
+      sendJson(req, res, 404, { error: 'unknown node' });
+      return true;
+    }
+    const upstream = await postFan(host, JSON.parse(await readBody(req)));
     const text = await upstream.text();
     if (!upstream.ok) {
       sendJson(req, res, upstream.status, { error: upstream.statusText || text });

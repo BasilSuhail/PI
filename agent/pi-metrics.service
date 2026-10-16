@@ -49,6 +49,12 @@ CacheDirectory=pi-thumbs
 Environment=THUMB_DIR=/var/cache/pi-thumbs
 Environment=THUMB_CACHE_MAX_MB=500
 
+# Fan speeds set by hand on the dashboard, read by pi-fans (fan-curve.py).
+# Kept when this service restarts; /run empties at a reboot, so every fan
+# starts on auto.
+RuntimeDirectory=pi-fans-manual
+RuntimeDirectoryPreserve=yes
+
 # It reads two sysfs files, shells out to vcgencmd, and walks the browse roots
 # to size them. ProtectSystem=strict keeps every one of those read-only, so a
 # bug in the scanner cannot write anything anywhere.

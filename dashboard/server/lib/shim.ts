@@ -4,6 +4,17 @@ import type { HwStats, PowerStats, ThrottleState } from '../../shared/fleet';
 
 export const SHIM_PORT = 9101;
 
+/**
+ * A fan's speed by hand, or `pct: null` for back to auto. Passed through: the
+ * agent checks the header and the fan controller enforces the limits.
+ */
+export const postFan = (host: string, body: unknown) =>
+  fetch(`http://${host}:${SHIM_PORT}/fan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
 const TIMEOUT_MS = 3000;
 
 interface ShimResponse {

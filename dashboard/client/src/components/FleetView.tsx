@@ -2,7 +2,7 @@ import { Fragment } from 'preact';
 import { useState } from 'preact/hooks';
 import type { FleetNode, ProcessRow } from '../../../shared/fleet';
 import { bytes, bytesPerSec, capacity, celsius, cpuTone, diskTone, memTone, pct, relative, uptime, watts, swapTone } from '../lib/format';
-import { nodeWatts } from '../lib/api';
+import { nodeWatts, setFan } from '../lib/api';
 import { Chevron } from './icons';
 import { Meter, StatusDot } from './primitives';
 
@@ -215,6 +215,18 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
     if (!next.delete(device)) next.add(device);
     return next;
   });
+  // The fan whose slider is showing, and a speed sent but not yet reported
+  // back: the controller applies it within a few seconds, the next poll shows it.
+  const [openFan, setOpenFan] = useState<string | null>(null);
+  const [fanDraft, setFanDraft] = useState<{ pwm: string; pct: number | null } | null>(null);
+  const [fanError, setFanError] = useState<string | null>(null);
+  const sendFan = (pwm: string, pct: number | null) => {
+    setFanDraft({ pwm, pct });
+    setFanError(null);
+    setFan(node.id, pwm, pct)
+      .catch((err: unknown) => setFanError(err instanceof Error ? err.message : 'not changed'))
+      .finally(() => setTimeout(() => setFanDraft((d) => (d?.pwm === pwm ? null : d)), 6000));
+  };
   const unreachable = node.online && !!node.error;
 
   if (!node.online || unreachable) {
@@ -293,11 +305,17 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
   // nobody watches a 3.3 V rail on a home server.
   const boardCells = [
     // A managed fan at 0 rpm was switched off by the controller, not lost.
-    ...(hw?.fans ?? []).map((f) => (f.rpm > 0
-      ? { k: f.label.toUpperCase(), v: f.rpm.toLocaleString(), u: 'rpm', spin: true }
-      : { k: f.label.toUpperCase(), v: 'off', u: '', spin: false })),
-    ...(gpu?.fanPct != null ? [{ k: 'GPU FAN', v: String(Math.round(gpu.fanPct)), u: '%', spin: false }] : []),
+    ...(hw?.fans ?? []).map((f) => ({
+      ...(f.rpm > 0
+        ? { k: f.label.toUpperCase(), v: f.rpm.toLocaleString(), u: 'rpm', spin: true }
+        : { k: f.label.toUpperCase(), v: 'off', u: '', spin: false }),
+      // Only a fan the controller takes manual speeds for opens a slider.
+      fan: f.pwm ? f : undefined,
+    })),
+    // Set by the card itself; the driver offers no control without a display.
+    ...(gpu?.fanPct != null ? [{ k: 'GPU FAN', v: String(Math.round(gpu.fanPct)), u: '%', spin: false, fan: undefined }] : []),
   ];
+  const ctlFan = (hw?.fans ?? []).find((f) => f.pwm && f.pwm === openFan);
   const wifi = hw?.wifi ?? [];
   const wired = node.net.length > 0 && node.net.every((n) => !n.iface.startsWith('wl'));
 
@@ -541,13 +559,64 @@ const NodeCard = ({ node, onOpen, tempHistory, powerHistory, netHistory, gpuTemp
             <>
               <Sec title="FANS" note={`${boardCells.filter((c) => c.v !== 'off').length} turning${hw?.fans.some((f) => f.managed) ? ' · by temperature' : ''}`} />
               <div class="board">
-                {boardCells.map((c) => (
+                {boardCells.map((c) => c.fan ? (
+                  <button
+                    type="button"
+                    class={`bcell fan-pick${openFan === c.fan.pwm ? ' sel' : ''}`}
+                    key={c.k}
+                    aria-expanded={openFan === c.fan.pwm}
+                    onClick={() => { setOpenFan(openFan === c.fan!.pwm ? null : c.fan!.pwm!); setFanError(null); }}
+                  >
+                    <em>{c.k}{c.fan.manual && <i class="fan-hand">MANUAL</i>}</em>
+                    <b>{c.spin && <span class="spin" />}{c.v}<small>{c.u}</small></b>
+                  </button>
+                ) : (
                   <div class="bcell" key={c.k}>
                     <em>{c.k}</em>
                     <b>{c.spin && <span class="spin" />}{c.v}<small>{c.u}</small></b>
                   </div>
                 ))}
               </div>
+              {ctlFan && (() => {
+                const pwm = ctlFan.pwm!;
+                const draft = fanDraft?.pwm === pwm ? fanDraft : null;
+                const manual = draft ? draft.pct != null : !!ctlFan.manual;
+                const low = ctlFan.canStop ? 0 : ctlFan.minPct ?? 0;
+                const shown = draft?.pct ?? ctlFan.pct ?? 0;
+                // Between off and the lowest speed a fan stalls, so a slider
+                // let go there lands on the lowest speed instead.
+                const snap = (v: number) => (v > 0 && v < (ctlFan.minPct ?? 0) ? ctlFan.minPct ?? 0 : v);
+                return (
+                  <div class="fan-ctl">
+                    <div class="mrow">
+                      <span class="lbl">{ctlFan.label}</span>
+                      <input
+                        type="range" class="fan-slider" min={low} max={100} step={1} value={shown}
+                        style={{ '--v': `${((shown - low) / (100 - low)) * 100}%` }}
+                        aria-label={`${ctlFan.label} speed`}
+                        onInput={(e) => setFanDraft({ pwm, pct: Number((e.target as HTMLInputElement).value) })}
+                        onChange={(e) => sendFan(pwm, snap(Number((e.target as HTMLInputElement).value)))}
+                      />
+                      <strong class="fig">{shown}%</strong>
+                      <div class="seg">
+                        <button type="button" class={manual ? '' : 'on'} onClick={() => sendFan(pwm, null)}>Auto</button>
+                        {ctlFan.canStop && (
+                          <button type="button" class={manual && shown === 0 ? 'on' : ''} onClick={() => sendFan(pwm, 0)}>Off</button>
+                        )}
+                      </div>
+                    </div>
+                    <p class="fan-note">
+                      {fanError
+                        ? `Not changed: ${fanError}`
+                        : manual && hw?.fansHeld
+                          ? 'Too hot: the temperature curve is overriding manual speeds until it cools.'
+                          : manual
+                            ? `Set by hand until Auto or a restart.${ctlFan.canStop ? '' : ' The CPU fan never stops.'} Heat still takes over.`
+                            : `Auto: follows the temperature. Drag to set it by hand${ctlFan.canStop ? ', or switch it off' : ''}.`}
+                    </p>
+                  </div>
+                );
+              })()}
             </>
           )}
 

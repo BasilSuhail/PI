@@ -393,6 +393,10 @@ def read_cpu_model():
 
 
 FANS_STATE = os.environ.get("FANS_STATE", "/run/pi-fans.json")
+# Manual speeds for deploy/fan-curve.py. systemd creates the directory for
+# this service (RuntimeDirectory in pi-metrics.service), the one place under
+# /run it may write.
+FANS_MANUAL = os.environ.get("FANS_MANUAL", "/run/pi-fans-manual/manual.json")
 
 
 def read_fans():
@@ -417,12 +421,64 @@ def read_fans():
             known = managed.get("fan%d" % index) if on_board else None
             if rpm <= 0 and not known:
                 continue
-            fans.append({
+            fan = {
                 "label": (known or {}).get("label") or label or "fan %d" % index,
                 "rpm": rpm,
                 "managed": bool(known),
-            })
+            }
+            # A controller older than manual speeds reports no header.
+            if known and known.get("pwm"):
+                fan.update({
+                    "pwm": known["pwm"],
+                    "pct": round((known.get("duty") or 0) * 100 / 255),
+                    "manual": bool(known.get("manual")),
+                    "minPct": round((known.get("min") or 0) * 100 / 255),
+                    "canStop": bool(known.get("canStop")),
+                })
+            fans.append(fan)
     return fans
+
+
+def fans_held():
+    """True while heat overrides the speeds set by hand."""
+    try:
+        with open(FANS_STATE) as f:
+            return bool(json.load(f).get("manualHeld"))
+    except (OSError, ValueError):
+        return False
+
+
+def set_fan(body):
+    """A fan's speed by hand ({"pwm": "pwm4", "pct": 0-100}), or back to the
+    temperature curve ({"pwm": "pwm4", "pct": null}). The controller enforces
+    the limits (the CPU fan's floor, heat overriding); this only checks that
+    the header is one it controls."""
+    try:
+        with open(FANS_STATE) as f:
+            known = {v.get("pwm") for v in json.load(f).get("fans", {}).values()}
+    except (OSError, ValueError):
+        raise Refused(404, "no fan controller is running")
+    pwm, pct = body.get("pwm"), body.get("pct")
+    if pwm not in known or not pwm:
+        raise Refused(400, "not a fan the controller sets")
+    if pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100):
+        raise Refused(400, "speed must be 0 to 100, or null for auto")
+    try:
+        with open(FANS_MANUAL) as f:
+            manual = json.load(f)
+        if not isinstance(manual, dict):
+            manual = {}
+    except (OSError, ValueError):
+        manual = {}
+    if pct is None:
+        manual.pop(pwm, None)
+    else:
+        manual[pwm] = round(pct * 255 / 100)
+    tmp = FANS_MANUAL + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(manual, f)
+    os.replace(tmp, FANS_MANUAL)
+    return {"pwm": pwm, "manual": pct is not None}
 
 
 def read_volts():
@@ -697,6 +753,7 @@ def read_hw():
         "cpuModel": read_cpu_model(),
         "cpuWatts": read_cpu_watts(),
         "fans": read_fans(),
+        "fansHeld": fans_held(),
         "volts": read_volts(),
         "driveTemps": _with_md(read_drive_temps()),
         "driveBusy": _with_md(dict(read_drive_busy())),
@@ -1412,6 +1469,13 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 result = do_write(str(body.get("op", "")), body)
                 self._send(json.dumps(result).encode())
+                return
+
+            if route == "/fan":
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > 1024:
+                    raise Refused(413, "that request is too large")
+                self._send(json.dumps(set_fan(json.loads(self.rfile.read(length) or b"{}"))).encode())
                 return
 
             if route == "/upload":

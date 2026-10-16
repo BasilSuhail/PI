@@ -133,6 +133,12 @@ encodes H.264 and HEVC; it has no AV1.
 The three case fans stop fully at 0%. Stopping the service, or any failure,
 hands every header back to the BIOS curve.
 
+On the dashboard, clicking a fan opens a slider: Auto, Off (case fans only)
+or a speed by hand. A manual speed holds until Auto or a reboot, with two
+limits: the CPU fan never stops, and once the CPU passes 70°, the GPU 75° or a
+drive 45°, the temperature curve wins whenever it asks for more. The GPU's own
+fan is set by the card and is not controllable on a headless driver.
+
 ---
 
 ## What moved, and what it cost

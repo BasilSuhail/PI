@@ -198,6 +198,19 @@ export const upload = async (id: string, path: string, file: File): Promise<void
  */
 export const getTorrent = () => json<TorrentState>('/api/torrent');
 
+/** A fan's speed by hand (0-100), or `null` to hand it back to the temperature curve. */
+export const setFan = async (id: string, pwm: string, pct: number | null): Promise<void> => {
+  const res = await fetch(`/api/nodes/${encodeURIComponent(id)}/fan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pwm, pct }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  }
+};
+
 export const setTorrent = async (running: boolean): Promise<TorrentState> => {
   const res = await fetch('/api/torrent', {
     method: 'POST',

@@ -95,8 +95,18 @@ export interface HwStats {
   cpuModel: string | null;
   /** CPU package power. Needs root to read on current kernels, so usually null. */
   cpuWatts: number | null;
-  /** `managed`: the fan controller sets this one, so 0 rpm means switched off. */
-  fans: Array<{ label: string; rpm: number; managed?: boolean }>;
+  /**
+   * `managed`: the fan controller sets this one, so 0 rpm means switched off.
+   * The rest come from a controller that takes manual speeds: its header, the
+   * speed it is at, whether that was set by hand, the lowest speed it keeps
+   * turning at, and whether it may be switched off.
+   */
+  fans: Array<{
+    label: string; rpm: number; managed?: boolean;
+    pwm?: string; pct?: number; manual?: boolean; minPct?: number; canStop?: boolean;
+  }>;
+  /** Heat is overriding the manual speeds. Absent on an older agent. */
+  fansHeld?: boolean;
   /** Only rails the sensor driver has labelled, and therefore scaled. */
   volts: Array<{ label: string; volts: number }>;
   /** Keyed by block device: sda, nvme0n1. */
