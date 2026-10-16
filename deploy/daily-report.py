@@ -47,6 +47,10 @@ DISK_TROUBLE = re.compile(r"I/O error|EXT4-fs error|Buffer I/O|critical medium e
                           r"Remounting filesystem read-only|blk_update_request", re.I)
 # What makes an app's log line an error.
 POD_ERROR = re.compile(r"\b(ERR|ERROR|FATAL|CRIT|CRITICAL|PANIC|panic|Exception|Traceback)\b")
+# Error lines that are normal. Nextcloud saves a file's record by trying an
+# insert and updating when the row already exists; Postgres still logs the
+# refused insert. Nextcloud Office does this hourly for its cached discovery.
+POD_NORMAL = re.compile(r'unique constraint "(oc_filecache_extended_pkey|fs_storage_path_hash)"')
 
 
 def sh(args, timeout=60):
@@ -209,7 +213,7 @@ def errors():
             logs = sh(KUBECTL + ["-n", ns, "logs", name, "-c", c["name"], "--since=24h"], timeout=120)
             for l in logs.splitlines():
                 # Stack-trace lines repeat the error above them.
-                if l.startswith((" ", "\t")) or not POD_ERROR.search(l):
+                if l.startswith((" ", "\t")) or not POD_ERROR.search(l) or POD_NORMAL.search(l):
                     continue
                 key = "%s: %s" % (app, signature(l))
                 seen[key] = seen.get(key, 0) + 1
